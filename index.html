@@ -1,0 +1,2225 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <!-- Supabase/Firebase kaldırıldı: serverless yapıya geri dönüldü -->
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+<!-- PWA & Apple Web App -->
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="openchat"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="theme-color" content="#FF7B7B"/>
+<link rel="manifest" href="manifest.json"/>
+<!-- Apple touch icons -->
+<link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png"/>
+<link rel="apple-touch-icon" sizes="512x512" href="icons/icon-512.png"/>
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png"/>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
+<title>openchat</title>
+<!-- 🛡️ [MED-03] Content Security Policy — XSS saldırılarının etkisini minimize eder -->
+<!-- 🛡️ [MED-03 / KRİTİK FIX] Content Security Policy
+     script-src: Ana uygulama kodu artık inline DEĞİL, app.js dosyasından
+     yükleniyor (<script src="app.js">). Bu sayede 'self' zaten yeterli —
+     ana kod için ayrı bir SHA-256 hash'i tutmaya/güncellemeye GEREK YOK.
+     app.js'i her düzenlediğinizde CSP'ye dokunmanıza gerek kalmaz.
+     Aşağıdaki 'unsafe-hashes' + hash listesi SADECE HTML içine gömülü
+     onclick/onerror gibi inline event-handler'lar için geçerlidir.
+     NOT: Eğer ileride yeni bir statik onclick="..." eklerseniz, o
+     attribute'un SHA-256 hash'ini hesaplayıp bu listeye eklemeniz gerekir
+     (dinamik/şablonlu onclick'lerden — ör. her hesap için farklı üretilen
+     onclick="loginAs('${key}')" gibi — mümkünse addEventListener'a
+     geçilmesi önerilir, çünkü her farklı değer farklı bir hash üretir ve
+     önceden tek tek listelenemez).
+     🛡️ [MED-03] connect-src 'self' zaten /api/bootstrap-key, /api/config ve
+     /api/identity gibi YENİ serverless uçlara (aynı origin) fetch atılmasına
+     izin verir — ayrıca bir şey eklemeye gerek yoktur. wss:// girişi ise
+     MQTT broker'ının origin'iyle BİREBİR eşleşmelidir: /api/config artık
+     mqttBroker'ı Vercel Env'den döndürdüğü için, broker sağlayıcınızı
+     değiştirirseniz bu satırı da güncellemeniz gerekir (statik bir meta
+     etiketi env değişkenini otomatik okuyamaz — daha sağlam bir çözüm için
+     CSP'yi vercel.json/Edge Middleware üzerinden HTTP header olarak,
+     process.env.MQTT_BROKER ile üretmeyi değerlendirin). -->
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'self';
+    script-src 'self' https://unpkg.com 'unsafe-hashes' 'sha256-IvUf/j5cuNDz3sxD/u2bbHGl6NwoHiSsz0R4Q3cTuBw=' 'sha256-DWGnfeEbNwv9jwlHlQYTnLGJDp+Tj0ejUw4Rj1RitQU=' 'sha256-S4bpmtS7OYV/malYqZUITz53d0KteTPoS/jCmTOk8ro=' 'sha256-xJrZG9n1FygJXkmPxLxTH8OEhV76O8fVuxds874nbfg=' 'sha256-InkM0l5BOcAV9jYIF10RwVHItiIwY0a+FkAMxHcQPow=' 'sha256-DHtb1CYR9axiy/zRgWk/psvmLS5uq+AkVJwj6iSbYMk=' 'sha256-5oi4h9xAN2dTRQhmsXol4hg2135f6YQpU7BkenU4O+M=' 'sha256-J3E/f5d5/34F5BtKnKVAEVBCvXQxyJ2AMqr6muiQtZ8=' 'sha256-/ij4MxMEGaNnAzbnXoZf8TIg/SmFd9sumqifTXh+UPc=' 'sha256-f3EjXRs8J6Yn1Xeb9tBSes2d39B8S3rJ/IBaFZzNnpM=' 'sha256-EcAgGREOOc1mNCuAqE2xO4Gk/hBqdehoK3DVv4IVQm4=' 'sha256-P0pRQKX0HinN3n4okEEis4QOgSCmHrFBGtXa7/lqzNA=' 'sha256-phGdiCp0/pWWnwa8Oy0lw1olbjVK454ufG2KE5jaQJM=' 'sha256-EZ++dmiicTPJEOXkEf6+SofRLM8h6t5jrZjA2AK5P4A=' 'sha256-pAlgQ4EycuIXi8+JgDqJLM0xeXc/MPOG21NhEIT9U3E=' 'sha256-Nijp/v1yoZipFx79lmuR/YgbiGe2znNpntCCDJr/1k8=' 'sha256-kSbbCC7t+BD/7SYmCfZ5fKRWtdWL7/u+VmlsWax/K60=' 'sha256-XDHgZyW7IUGHzxQn2m9x6uRYLONHTubUbOrn787bkGA=' 'sha256-vSBZsmi2iivP9pJeUJWSTnOifiD1i1WWUoLGpRYeKMs=' 'sha256-HNz1hCy7o/d6BL1A0RZTi9gh+6pIA1gvKnK+VlWp1C8=' 'sha256-mXoUGq5Am8d1OXdR3P1YTQeYRv83AwCmzwyclnjWOJg=' 'sha256-30wxdX1hqFD1vAVRLIKKZnApRBgF4l0dERfNX7KnkKI=' 'sha256-IwCuiVyXSw5XjBCLAWK72ARVdInu2Z/Cf9BLe4tbG/A=' 'sha256-bdJSANIYyo0E+vqeuDxI3/0C2M8Hr7hnRP2PD0P/3y8=' 'sha256-+erodhSWnnIlHsBwh19SbBuJInbAYf5koVyrJMcG6S8=' 'sha256-ivs9iXhWZhmeL7cwJtSqD8lfuhx0Kt8qcQQl9mS5G44=' 'sha256-8sGOxawpqL0FZpHU1lnqfrsA77OETq9d9JBx0YqtzLU=' 'sha256-V/addRRUItZ6Hh4QTsUgihrxpszlRVTZBBCdeP43jeA=' 'sha256-WMBYi/TrZy7dsyHjt//THkhBY9ya+U0kVg6YJWrHu/o=' 'sha256-DD7dKOAipiG8aamt+4kb503DasE26kxgKK/taus2Eao=' 'sha256-vcbEjgV+Xc4avVbFwX/NPtjcediK4d5xgaUnzCTDeHE=' 'sha256-uccJSazmdcF/mMtJyx4qHt0AZGvhK0T1XRRP941Mneg=' 'sha256-Kd7NkbcsRU79poxKfniTazpXpg6bFIQWy8pDVMaBknM=' 'sha256-6wasJN8UlR/BvmzMnBodP/owDvyA+IFoCMN2tpAEp2g=' 'sha256-Zp7yKoLksfpLGoTMEMk65h0Gb8ntcLZ5T8wIpljf5dA=' 'sha256-9pXtbsgDi9Pfg2/ZJI/pgWPFaqTchKztx+PSNes/++g=' 'sha256-04Nwxq0I11CG2q+MGRVNbZzBqq648ldb0GHvOY1tcZs=' 'sha256-AmM+MIXdTU2ujrj/GG5KXtTy7orcXmF12oufjuYSnP4=' 'sha256-vWEsDPPwx/VjuH7/dHNaFlXRrCnSjPkJVtdoE+20Uuc=' 'sha256-WlQc7YRbqSniBofvmGn+YaxXSsWx+LaG9Y82WBeSvNo=' 'sha256-bCF9jk/ca5F256ykwWkQrYAM60QAhW5hDrE3EkbTrYQ=' 'sha256-rdJlkZGshxH2Iovry4g5oAb/9EWmbnrkgKPBP2G0flU=' 'sha256-Ju0A7yACC2/A+WHtT32gRICwgCv+AO/1QMhrncoA4LI=' 'sha256-qzNw7624DGvrgzEnXlau+3KX19+SDYGaZjV1oE14voA=' 'sha256-k38yLnsc0War16j1Qme8KO2OQZXA1pL6vPjSoYMXHjE=' 'sha256-rtI6IHrMmYrxlhuvUZdYf0qIU0eNjUdSMDjsbaINDWw=' 'sha256-inudtaFpzc4a03uuBrYDuXUetMjBw69a3+X4meD8r2s=' 'sha256-jpc5af794uH3BwHLPXcUIWZjOLKaV2pOokcz44+eavI=' 'sha256-sKc/l4mgfhDX+AD15wyEvQtSVkD7A+dzJNpFkcv0jq8=' 'sha256-ylhdR+I5GHNg2Zx6GgxoQKxCnlQZaPNnbDiToK5y7+s=' 'sha256-bAhrDRx87WvklHl0jJGUT+dRKuFnefAu3cdKAZ9N7hY=' 'sha256-xNHYQh54+MsAotH/P/2cSGLfhviUeqXP1kXE33UKVm0=' 'sha256-4l0mWdj/ygF3jH9E1IJVL8VZCqe/XCmFMR3UqaN7bq8=' 'sha256-hVwcw/aRcEWcc4vUWgALwUjzKkkeMG5J/9g24eMK5h8=' 'sha256-GMZFxzwQK6nX5B6DIze+5rfiYOlwvCybZzd4q5etv+4=' 'sha256-RtLOJOdv5HDUchREU47hrvbSfNXSOs5fqf+gaSpQqf8=' 'sha256-ZJ3LB11cDdbE8tQe779CfT/OT7uAcZXAxl5+w7Y5Mro=' 'sha256-Ao54pfJgHz90puiIUm7cU+FWyFpMoCwpmcgae0VXOLc=' 'sha256-JpkpMyYkX4TELQI1PpX/x1ni1B9XSq1yhO4mt6dCoHE=' 'sha256-rIUoRckt98sC7aI+cTbi+GZjnmQ2fgHWF1rKhjU6bno=' 'sha256-B0/uJzcxayenpppoGmGwuzjkU8e+K3fgJm2GKQv/n9I=' 'sha256-NbTjNRf7cMsQtpFP5mQ4eNs7z7tlE6jKOuDQIhJtl54=' 'sha256-OK3p3KxcQzvkXZIBwD0DCY0NzoC0foq9oQFkE6Aj4ME=' 'sha256-QsHBQ98PXTC3wAj1O877jTr7mBF+tRk+dzrrYmmSV1w=' 'sha256-xW2LwE6JH4Upyv3irrojUEiqRrYPlWMsmcDiJV0sLlQ=' 'sha256-GzdgO/cCmxgn6y+UvQGjMEtcK1v8nlzQUD41YFBMCmM=' 'sha256-kDkI/Hq0uLd5ugj91v92WT/TVnw5rSoWREvQFz8pil0=' 'sha256-1lWpQcJhb98x+ETIFvZ8zZxb/L14WF6foxoMMhp/FCQ=' 'sha256-B1QaQ/NSYb91ozzPOcacTIt2zUENFZR5kFc2Q4kj+w4=' 'sha256-emRjCrIs4UE8YKHLrUXwfHswSDclJC9gT/MUfduZSnk=' 'sha256-ILgBI9BtpHqb5ZKDzXzH3ECBDDsIhn+JTobBCSfas6A=' 'sha256-PUTQ7qyVA84i4yi2/sBjEkXv0Dd8NDFHrglr8pmTM+U=' 'sha256-jHF5hTIlMDyGZRAsNK0HO/WFYrwPvI2I1q0o1xKKB6I=' 'sha256-NdYem/e14sX7LWk3l8wGScGgNaqPxASSY3CT1BtpOBU=' 'sha256-dSINsq7m6CMgVg6l9D6uB6rLjAYOcDAMX+91uFA6uLA=' 'sha256-q0WzkPM+1UGUFrO09BGLp1UacP9T/hWfDPydrpoDjlw=' 'sha256-A1zC/JhUzuHsPWr8+7iWZijANz3VS0dLimuD/PTvZT0=';
+    style-src 'self' https://fonts.googleapis.com 'unsafe-inline';
+    font-src https://fonts.gstatic.com data:;
+    connect-src 'self' wss://broker.emqx.io:8084 blob:;
+    worker-src 'self' blob:;
+    img-src 'self' data: https: blob:;
+    media-src 'self' blob: data:;
+    object-src 'none';
+    base-uri 'self';">
+<!-- 🛡️ [MED-07] Subresource Integrity — CDN kaynağı değiştirilirse zararlı kod çalışmaz -->
+<!-- 🛡️ [FIX] SRI hash mqtt@5.3.4 için güncellenmiştir. Tarayıcı hash uyuşmazlığında
+     scripti yüklememekte ve mqtt undefined kalmakta, bu da line 1289'da TypeError'a yol açmaktaydı.
+     Doğru hash'i öğrenmek için: curl -sL https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js | openssl dgst -sha384 -binary | base64 -->
+<script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"
+  crossorigin="anonymous"></script>
+<style>
+/* ── LIGHT THEME — openchat ── */
+:root {
+  --bg:#FF7B7B; --panel:#FFD0D0; --primary:#2D1414; --ph:#1A0505;
+  --sec:rgba(45,20,20,.12); --text:#1A0505; --muted:#7A3030;
+  --danger:#c03537; --ok:#2d7a4a; --border:rgba(45,20,20,.18);
+  --r:8px; --sh:0 2px 10px rgba(45,20,20,.12);
+  --input-bg:#FFB5B5; --hover:rgba(45,20,20,.1); --tab-bg:#FF9090;
+  --msg-ot-bg:#FFE8E8; --sys-bg:#fff0e0; --sys-text:#7a3000; --sys-border:#ffcc88;
+  --call-bg:#3d1010; --call-border:#2a0a0a; --call-ctrl:#2a0a0a;
+  --acc-hover:rgba(45,20,20,.1); --sidebar-bg:#FF9090; --sidebar-border:rgba(45,20,20,.15);
+  --ch-bg:#FFF0F0; --input-area:#FFB5B5;
+}
+/* ── DARK THEME — openchat ── */
+html.dark {
+  --bg:#0D0D0D; --panel:#1A1A1A; --primary:#FF7B7B; --ph:#FF9B9B;
+  --sec:rgba(255,123,123,.18); --text:#FF7B7B; --muted:#CC6060;
+  --danger:#ff4444; --ok:#44bb77; --border:#2A2A2A;
+  --input-bg:#222222; --hover:#2A2A2A; --tab-bg:#1A1A1A;
+  --msg-ot-bg:#1E1E1E; --sys-bg:#1a0a0a; --sys-text:#ff9b9b; --sys-border:#7a2a2a;
+  --call-bg:#0D0D0D; --call-border:#1A1A1A; --call-ctrl:#1A1A1A;
+  --acc-hover:#2A2A2A; --sidebar-bg:#111111; --sidebar-border:#2A2A2A;
+  --ch-bg:#0D0D0D; --input-area:#222222;
+  --sh:0 2px 10px rgba(0,0,0,.6);
+}
+
+*{box-sizing:border-box;font-family:'gg sans','Noto Sans','Helvetica Neue',Helvetica,Arial,sans-serif}
+body{margin:0;background:var(--bg);color:var(--text);height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;transition:background .2s,color .2s}
+/* Ana panel — yuvarlak köşeli kart görünümü */
+html.dark body{background:#000}
+@media(min-width:769px){
+  #mainApp{
+    margin:14px;
+    border-radius:22px;
+    overflow:hidden;
+    box-shadow:0 20px 60px rgba(0,0,0,.4);
+    height:calc(100dvh - 28px)!important;
+  }
+}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-thumb{background:rgba(0,0,0,.2);border-radius:3px}
+::-webkit-scrollbar-track{background:transparent}
+html.dark ::-webkit-scrollbar-thumb{background:rgba(255,123,123,.2)}
+input,button{padding:10px 16px;border-radius:var(--r);border:1px solid var(--border);outline:none;font-size:14px;transition:.15s}
+input{background:var(--input-bg);color:var(--text);}
+input::placeholder{color:var(--muted);}
+input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(255,123,123,.2)}
+button{background:var(--primary);color:#fff;border:none;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;letter-spacing:.01em}
+button:hover{background:var(--ph)} button:disabled{opacity:.5;cursor:not-allowed}
+.btn-d{background:var(--danger)!important}.btn-d:hover{background:#c03537!important}
+.btn-ok{background:var(--ok)!important}.btn-ok:hover{background:#2d8a49!important}
+.btn-sec{background:var(--sec)!important;color:var(--primary)!important;font-weight:600}.btn-sec:hover{filter:brightness(.95)}
+html.dark .btn-sec{background:rgba(255,123,123,.2)!important;color:#FF9B9B!important}
+
+/* ══════════════════════════════════════════════════
+   🖥️ MASAÜSTÜ LAYOUT — Beta 3.5 — WhatsApp Style
+   ══════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap');
+
+/* MASAÜSTÜ FONT OVERRIDE */
+@media(min-width:769px){
+  *{font-family:'Outfit','gg sans','Noto Sans',sans-serif!important}
+}
+
+/* ═══════════════════════════════════════════════════════
+   MASAÜSTÜ ANA YAPI: header yok — tam ekran 3 kolon
+   [Nav Rail 72px] | [Sidebar 340px] | [Chat Alan Kalan]
+   ═══════════════════════════════════════════════════════ */
+
+/* Global header — SADECE MOBİLDE GÖRÜNÜR */
+.header{
+  height:58px;background:var(--panel);
+  display:none; /* masaüstünde gizle */
+  justify-content:space-between;align-items:center;
+  padding:0 16px;border-bottom:1px solid var(--border);
+  z-index:10;position:relative;
+}
+.header h1{margin:0;font-size:17px;font-weight:900;color:var(--primary);letter-spacing:-.6px;display:flex;align-items:center;gap:8px}
+@media(max-width:768px){
+  .header{display:flex!important}
+}
+
+/* Ana uygulama — masaüstünde tam ekran */
+#mainApp{height:100vh!important;display:flex!important;flex-direction:row!important}
+
+/* App container — masaüstünde header olmadan */
+@media(min-width:769px){
+  .app{
+    display:flex;flex:1;height:100vh;overflow:hidden;
+    flex-direction:row;
+  }
+}
+@media(max-width:768px){
+  .app{display:flex;flex:1;height:calc(100vh - 58px);overflow:hidden}
+}
+
+/* DARK THEME TOGGLE */
+.theme-toggle{display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 10px;border-radius:20px;border:1px solid var(--border);background:var(--input-bg);transition:.15s;user-select:none}
+.theme-toggle:hover{background:var(--hover)}
+.theme-toggle-icon{font-size:15px;transition:transform .35s}
+html.dark .theme-toggle-icon{transform:rotate(180deg)}
+.theme-toggle-label{font-size:12px;font-weight:600;color:var(--muted)}
+
+/* ═══════════════════════════════════════════════════════
+   NAV RAIL — Sol İkon Çubuğu (WhatsApp masaüstü stili)
+   ═══════════════════════════════════════════════════════ */
+#desktopNavRail{
+  width:72px;
+  background:var(--panel);
+  border-right:1px solid var(--border);
+  display:none;
+  flex-direction:column;
+  align-items:center;
+  padding:10px 0 14px;
+  z-index:20;
+  flex-shrink:0;
+  height:100vh;
+  overflow:hidden;
+}
+@media(min-width:769px){#desktopNavRail{display:flex}}
+html.dark #desktopNavRail{background:#111111}
+
+/* Logo */
+.dnr-logo{
+  width:46px;height:46px;border-radius:50%;
+  overflow:hidden;margin-bottom:16px;
+  flex-shrink:0;cursor:default;
+  transition:transform .2s;
+  box-shadow:0 4px 18px rgba(255,123,123,.4);
+}
+.dnr-logo:hover{transform:scale(1.06)}
+.dnr-logo img{width:100%;height:100%;object-fit:cover}
+
+/* Nav item */
+.dnr-item{
+  width:48px;height:48px;border-radius:50%;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  cursor:pointer;transition:all .18s cubic-bezier(.4,0,.2,1);
+  position:relative;color:var(--muted);margin-bottom:2px;
+  border:none;background:transparent;font-size:20px;outline:none;
+}
+.dnr-item:hover{background:var(--hover);color:var(--text);transform:scale(1.06)}
+.dnr-item.active{background:var(--sec);color:var(--primary);box-shadow:0 0 0 1px rgba(255,123,123,.25)}
+html.dark .dnr-item.active{background:rgba(255,123,123,.22);box-shadow:0 0 14px rgba(255,123,123,.25)}
+/* Tooltip label */
+.dnr-item::after{
+  content:attr(data-tip);
+  position:absolute;left:58px;
+  background:#1e293b;color:#fff;
+  font-size:11px;font-weight:600;
+  padding:4px 8px;border-radius:6px;
+  white-space:nowrap;pointer-events:none;
+  opacity:0;transition:opacity .15s;
+  z-index:9999;
+}
+html.dark .dnr-item::after{background:#0f172a}
+.dnr-item:hover::after{opacity:1}
+.dnr-item .dnr-badge{
+  position:absolute;top:5px;right:5px;
+  background:var(--danger);color:#fff;
+  font-size:9px;font-weight:700;
+  min-width:16px;height:16px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  border:2px solid var(--panel);padding:0 3px;pointer-events:none;
+}
+
+/* Spacer */
+.dnr-spacer{flex:1}
+
+/* Bottom section */
+.dnr-bottom{
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  padding-top:8px;border-top:1px solid var(--border);width:100%;
+}
+
+/* Profile avatar in nav rail */
+.dnr-av{
+  width:40px;height:40px;border-radius:50%;
+  background:var(--primary);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:800;overflow:hidden;
+  cursor:pointer;transition:transform .2s;
+  border:2px solid transparent;margin-top:2px;
+}
+.dnr-av:hover{transform:scale(1.1);border-color:var(--primary)}
+.dnr-av img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.dnr-profile-wrap{position:relative}
+.dnr-online-dot{
+  position:absolute;bottom:-1px;right:-1px;
+  width:11px;height:11px;border-radius:50%;
+  background:var(--ok);border:2px solid var(--panel);
+  box-shadow:0 0 0 1px rgba(0,0,0,.2);
+}
+html.dark .dnr-online-dot{border-color:#111111}
+.dnr-online-dot.busy{background:#ef4444}
+.dnr-online-dot.away{background:#f59e0b}
+.dnr-online-dot.dnd{background:#7c3aed}
+.dnr-online-dot.offline{background:#6b7280}
+
+/* ═══════════════════════════════════════════════════════
+   SİDEBAR — paneller
+   ═══════════════════════════════════════════════════════ */
+.sidebar{
+  width:320px;min-width:320px;
+  background:var(--sidebar-bg);
+  border-right:1px solid rgba(255,255,255,.08);
+  display:flex;flex-direction:column;
+  transition:background .2s;overflow:hidden;position:relative;
+  box-shadow:1px 0 0 rgba(0,0,0,.25);
+}
+html.dark .sidebar{background:#111111;border-right:1px solid rgba(255,255,255,.07)}
+html:not(.dark) .sidebar{border-right:1px solid rgba(0,0,0,.08)}
+
+/* Sidebar panel — her sekme için bir panel */
+.sv-panel{display:none;flex-direction:column;flex:1;overflow:hidden;}
+.sv-panel.active{display:flex}
+/* Profil paneli mobilde kaydırılabilir */
+#panelProfile{overflow-y:auto;-webkit-overflow-scrolling:touch}
+
+/* Panel header */
+.sv-panel-header{
+  padding:14px 16px 10px;
+  display:flex;align-items:center;justify-content:space-between;
+  flex-shrink:0;border-bottom:1px solid var(--sidebar-border);
+}
+.sv-panel-title{font-size:17px;font-weight:800;color:var(--text);letter-spacing:-.3px}
+.sv-icon-btn{
+  width:34px;height:34px;border-radius:50%;
+  background:none;border:none;color:var(--muted);
+  font-size:17px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:.15s;
+}
+.sv-icon-btn:hover{background:var(--hover);color:var(--text);transform:scale(1.12);filter:brightness(1.2)}
+
+/* Profil paneli özel stiller */
+.sv-profile-banner{
+  height:80px;
+  background:linear-gradient(135deg,#FF7B7B 0%,#FF4444 100%);
+  position:relative;flex-shrink:0;
+}
+html.dark .sv-profile-banner{background:linear-gradient(135deg,#3d1010 0%,#1a0505 100%)}
+.sv-profile-av-wrap{
+  position:relative;width:68px;height:68px;
+  margin:-34px auto 0;
+  flex-shrink:0;cursor:pointer;
+}
+.sv-profile-av{
+  width:68px;height:68px;border-radius:50%;
+  background:var(--primary);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:28px;font-weight:800;overflow:hidden;
+  border:4px solid var(--sidebar-bg);
+  box-shadow:0 4px 16px rgba(0,0,0,.2);
+  transition:transform .2s;
+}
+.sv-profile-av-wrap:hover .sv-profile-av{transform:scale(1.05)}
+.sv-profile-av img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.sv-profile-av-edit{
+  position:absolute;bottom:2px;right:2px;
+  width:22px;height:22px;border-radius:50%;
+  background:var(--primary);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;border:2px solid var(--sidebar-bg);
+}
+.sv-profile-body{padding:12px 20px 16px}
+.sv-profile-name{
+  text-align:center;font-size:16px;font-weight:700;
+  color:var(--text);margin:10px 0 4px;
+}
+.sv-profile-token{
+  text-align:center;font-size:10px;color:var(--muted);
+  font-family:monospace;cursor:pointer;margin-bottom:16px;
+}
+.sv-profile-token:hover{color:var(--primary)}
+.sv-section-label{
+  font-size:10px;font-weight:800;text-transform:uppercase;
+  letter-spacing:.7px;color:var(--muted);margin-bottom:8px;
+}
+.sv-profile-name-edit{
+  display:flex;gap:8px;align-items:center;margin-bottom:14px;
+}
+.sv-profile-name-edit input{
+  flex:1;height:38px;padding:0 12px;border-radius:10px;font-size:13px;
+}
+.sv-profile-name-edit button{
+  height:38px;padding:0 14px;border-radius:10px;font-size:12px;font-weight:700;
+}
+/* Durum butonları */
+.sv-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:0}
+.sv-status-btn{
+  padding:9px 12px;border-radius:12px;border:1.5px solid var(--border);
+  background:var(--input-bg);color:var(--text);
+  font-size:12px;font-weight:600;cursor:pointer;
+  display:flex;align-items:center;gap:7px;
+  transition:all .15s;text-align:left;
+}
+.sv-status-btn:hover{border-color:var(--primary);background:var(--sec)}
+.sv-status-btn.active{border-color:var(--primary);background:var(--sec);color:var(--primary)}
+html.dark .sv-status-btn.active{background:rgba(88,101,242,.18)}
+.sv-status-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+/* Özel Durum (Custom Status) */
+.sv-custom-status-wrap{margin-top:12px;position:relative;overflow:visible;z-index:1}
+.sv-custom-status-input-row{display:flex;gap:6px;align-items:center}
+.sv-custom-status-emoji-btn{
+  width:36px;height:36px;border-radius:10px;flex-shrink:0;
+  background:var(--input-bg);border:1px solid var(--border);
+  font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:.15s;color:var(--text);
+}
+.sv-custom-status-emoji-btn:hover{background:var(--hover);border-color:var(--primary)}
+.sv-custom-status-text{
+  flex:1;height:36px;padding:0 10px;border-radius:10px;
+  font-size:13px;background:var(--input-bg);border:1px solid var(--border);
+  color:var(--text);outline:none;transition:.15s;
+}
+.sv-custom-status-text:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(255,123,123,.15)}
+.sv-custom-status-save{
+  height:36px;padding:0 12px;border-radius:10px;font-size:12px;font-weight:700;
+  background:var(--primary);color:#fff;border:none;cursor:pointer;flex-shrink:0;transition:.15s;
+}
+.sv-custom-status-save:hover{background:var(--ph)}
+/* Emoji picker için custom status */
+#csEmojiPicker{
+  position:absolute;top:44px;left:0;z-index:9999;
+  background:var(--panel);border:1px solid var(--border);
+  border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.18);
+  padding:10px;width:280px;display:none;
+  max-height:260px;overflow:hidden;
+}
+#csEmojiPicker.open{display:block}
+.cs-emoji-search{
+  width:100%;padding:6px 10px;border-radius:8px;
+  border:1px solid var(--border);background:var(--input-bg);
+  color:var(--text);font-size:12px;outline:none;margin-bottom:8px;
+}
+.cs-emoji-cats{display:flex;gap:3px;margin-bottom:6px;border-bottom:1px solid var(--border);padding-bottom:6px;overflow-x:auto;scrollbar-width:none}
+.cs-emoji-cats::-webkit-scrollbar{display:none}
+.cs-emoji-cat{padding:3px 6px;border-radius:7px;cursor:pointer;font-size:16px;flex-shrink:0;transition:.12s}
+.cs-emoji-cat:hover,.cs-emoji-cat.active{background:var(--sec)}
+.cs-emoji-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;max-height:180px;overflow-y:auto}
+.cs-emoji-btn{width:32px;height:32px;border-radius:7px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;transition:.12s;background:none;border:none}
+.cs-emoji-btn:hover{background:var(--sec);transform:scale(1.15)}
+/* Mevcut durum göstergesi — profile panelde isim altı */
+.sv-current-custom-status{
+  text-align:center;font-size:12px;color:var(--muted);
+  margin-top:4px;min-height:18px;display:flex;align-items:center;justify-content:center;gap:4px;
+  cursor:pointer;transition:color .15s;
+}
+.sv-current-custom-status:hover{color:var(--primary)}
+.sv-add-section{
+  padding:12px 14px;border-bottom:1px solid var(--sidebar-border);
+  flex-shrink:0;background:var(--sidebar-bg);
+}
+.sv-add-row{display:flex;gap:8px;margin-top:8px}
+.sv-add-row input{
+  flex:1;height:36px;padding:0 12px;
+  border-radius:18px;font-size:13px;
+}
+.sv-add-row button{
+  height:36px;padding:0 14px;
+  border-radius:18px;font-size:12px;font-weight:700;flex-shrink:0;
+}
+#addStatus{font-size:11px;padding:4px 14px 0;color:var(--muted);min-height:16px}
+
+/* Sohbetler listesi bölüm başlığı */
+.sv-list-section{
+  font-size:10px;font-weight:800;text-transform:uppercase;
+  letter-spacing:.7px;color:var(--muted);
+  padding:10px 14px 4px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:space-between;
+}
+
+/* Legacy - backward compat */
+.sv-sidebar-header{display:none}
+.sv-add-friend-row{display:none}
+.sv-status-row{display:none}
+.tabs{display:none}
+.prof{display:none}
+.prof-banner{display:none}
+.prof-body{display:none}
+.prof-top{display:none}
+.prof-actions-row{display:none}
+.prof-add-row{display:none}
+.prof-add-inline{display:none}
+.prof-status-select-wrap{display:none}
+#statusSelect{display:none}
+#myStatusDot{display:none}
+.av-wrap{position:relative;width:52px;height:52px;flex-shrink:0;cursor:pointer}
+.av{width:100%;height:100%;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;overflow:hidden;transition:transform .2s}
+.av-wrap:hover .av{transform:scale(1.06)}
+.av img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.av-badge{position:absolute;bottom:-2px;right:-2px;width:18px;height:18px;background:var(--primary);border-radius:50%;border:2px solid var(--panel);display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff}
+.online-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-left:5px;vertical-align:middle;animation:glow 2s infinite}
+@keyframes glow{0%,100%{box-shadow:0 0 0 2px rgba(59,165,92,.3)}50%{box-shadow:0 0 0 5px rgba(59,165,92,.1)}}
+.prof-info{flex:1;min-width:0}
+.prof-info h3{margin:0 0 1px;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;color:var(--text)}
+#myToken{margin:0;color:var(--muted);font-size:10px;font-family:monospace;cursor:pointer;transition:color .15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#myToken:hover{color:var(--primary)}
+
+/* BOTTOM NAV (Mobile) */
+#bottomNav{display:none;position:fixed;bottom:0;left:0;right:0;height:60px;background:var(--panel);border-top:1px solid var(--border);z-index:300;align-items:stretch;justify-content:space-around;box-shadow:0 -4px 20px rgba(0,0,0,.12);padding:0 4px;padding-bottom:env(safe-area-inset-bottom)}
+.bnav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;border:none;background:none;padding:6px 4px;border-radius:12px;margin:4px 2px;transition:all .2s cubic-bezier(.34,1.56,.64,1);position:relative;color:var(--muted);min-height:44px}
+.bnav-item:hover,.bnav-item:active{background:var(--sec);color:var(--primary)}
+.bnav-item.active{color:var(--primary)}
+.bnav-item.active .bnav-icon{transform:translateY(-2px) scale(1.2)}
+.bnav-icon{font-size:22px;transition:transform .25s cubic-bezier(.34,1.56,.64,1);line-height:1}
+.bnav-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+.bnav-badge{position:absolute;top:4px;right:calc(50% - 16px);background:var(--danger);color:#fff;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;border:2px solid var(--panel);padding:0 3px;pointer-events:none}
+@keyframes bnavBounce{0%,100%{transform:translateY(-2px) scale(1.2)}50%{transform:translateY(-5px) scale(1.3)}}
+.bnav-item.active .bnav-icon{animation:bnavBounce .4s cubic-bezier(.34,1.56,.64,1) both}
+
+/* SEARCHING ACTIVE USERS */
+.gs-active-user{display:flex;align-items:center;gap:8px;padding:8px 16px;cursor:pointer;border-bottom:1px solid var(--border);transition:.15s}
+.gs-active-user:hover{background:var(--hover)}
+.gs-active-av{width:32px;height:32px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;position:relative;overflow:hidden}
+.gs-active-av img{width:100%;height:100%;object-fit:cover}
+.gs-typing-dot{position:absolute;bottom:0;right:0;width:10px;height:10px;border-radius:50%;background:var(--ok);border:2px solid var(--panel)}
+
+/* LIST */
+.lst{flex:1;overflow-y:auto;padding:6px 8px 20px}
+.lst-section-hdr{
+  font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;
+  color:var(--muted);padding:12px 8px 6px;
+  display:flex;align-items:center;justify-content:space-between;
+  user-select:none;
+}
+.lst-section-hdr span{opacity:.7}
+
+/* List item */
+.li{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:8px 10px;margin-bottom:1px;
+  border-radius:10px;cursor:pointer;
+  transition:all .15s ease;min-height:52px;
+  position:relative;
+}
+.li:hover{background:var(--hover)}
+.li.on{background:var(--sec)}
+html.dark .li.on{background:rgba(255,123,123,.18)}
+@media(min-width:769px){
+  .li.on::before{
+    content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+    width:3px;height:60%;background:var(--primary);
+    border-radius:0 3px 3px 0;
+  }
+}
+
+.av2{width:42px;height:42px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;flex-shrink:0;overflow:hidden;position:relative}
+.av2 img{width:100%;height:100%;object-fit:cover}
+.sdot{width:11px;height:11px;border-radius:50%;background:#6b7280;border:2px solid var(--sidebar-bg);position:absolute;bottom:-1px;right:-1px}
+.sdot.status-dot{background:#6b7280}
+html.dark .sdot{border-color:#1e2024}
+html.dark .ver-same{background:rgba(255,123,123,.2);color:#FF9B9B}
+html.dark .ver-old{background:#78350f;color:#fcd34d}
+html.dark .ver-unknown{background:#1A1A1A;color:#888888}
+.sdot.on{background:var(--ok)}
+.fi{display:flex;flex-direction:column;margin-left:12px}
+.fi strong{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px}
+.fi .sub{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* CTX MENU */
+.ctx{position:fixed;background:var(--panel);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.2);z-index:9998;min-width:190px;overflow:hidden;padding:6px}
+.cxi{padding:9px 14px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;border-radius:8px;transition:.12s;font-weight:500}
+.cxi:hover{background:var(--hover)}.cxi.d{color:var(--danger)}
+
+/* CHAT AREA */
+.chat-area{flex:1;display:flex;flex-direction:column;background:var(--ch-bg);position:relative;overflow:hidden;min-width:0}
+
+/* CHAT HEADER */
+.ch{height:60px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;padding:0 20px;box-shadow:0 1px 0 var(--border),0 2px 8px rgba(0,0,0,.03);flex-shrink:0}
+#chatAv{width:38px;height:38px;border-radius:12px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px;overflow:hidden;cursor:pointer;transition:transform .2s}
+#chatAv:hover{transform:scale(1.08)}
+
+/* MESSAGES */
+.msgs{flex:1;overflow-y:auto;padding:20px 24px 12px;display:flex;flex-direction:column;gap:2px;position:relative;overflow-anchor:none;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.msg-wrap{position:relative;display:flex;align-items:flex-start;gap:10px;padding:2px 0;border-radius:6px;transition:background .1s}
+.msg-wrap:hover{background:rgba(0,0,0,.025)}
+html.dark .msg-wrap:hover{background:rgba(255,255,255,.025)}
+.msg-wrap.me-wrap{flex-direction:row-reverse}
+.msg-wrap.me-wrap .msg-actions{left:-76px}
+.msg-wrap:not(.me-wrap) .msg-actions{right:-76px}
+.msg-actions{display:none;flex-direction:row;gap:2px;position:absolute;top:-10px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,.12)}
+.msg-wrap:hover .msg-actions{display:flex}
+.ma-btn{width:30px;height:30px;border-radius:7px;background:transparent;border:none;color:var(--muted);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.12s}
+.ma-btn:hover{background:var(--hover);color:var(--text)}
+
+/* MESSAGE BUBBLES */
+.msg{max-width:65%;padding:10px 14px;border-radius:18px;font-size:14px;line-height:1.55;position:relative}
+.msg.me{align-self:flex-end;background:var(--primary);color:#fff;border-bottom-right-radius:5px;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.msg.ot{align-self:flex-start;background:var(--msg-ot-bg);border:1px solid var(--border);border-bottom-left-radius:5px;color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.05)}
+html.dark .msg.ot{background:#1E1E1E;border-color:rgba(255,123,123,.15)}
+.msg.sys{align-self:center;background:transparent;color:var(--muted);font-size:12px;border-radius:0;padding:4px 0;box-shadow:none;border:none;display:flex;align-items:center;gap:8px;max-width:100%}
+.msg.sys::before,.msg.sys::after{content:'';flex:1;height:1px;background:var(--border);display:block}
+.mi{font-size:10px;opacity:.6;margin-top:4px;text-align:right;display:flex;align-items:center;justify-content:flex-end;gap:3px}
+.ms{font-size:12px;font-weight:700;margin-bottom:3px;color:var(--primary)}
+
+/* INPUT AREA */
+/* ── INPUT BAR ─────────────────────────────────────── */
+.inp-wrap{padding:12px 16px 14px;background:var(--ch-bg);border-top:1px solid var(--border);display:flex;flex-direction:column;gap:6px;flex-shrink:0;position:relative;}
+
+/* ── MASAÜSTÜ — eski klasik görünüm ── */
+.desktop-inp-row{display:flex;flex-direction:column;gap:4px;background:var(--input-area);border-radius:14px;padding:6px 8px;border:1px solid var(--border);transition:border-color .2s,box-shadow .2s}
+.desktop-inp-row:focus-within{border-color:var(--primary);box-shadow:0 0 0 3px rgba(255,123,123,.1)}
+html.dark .desktop-inp-row{background:#40444b;border-color:transparent}
+html.dark .desktop-inp-row:focus-within{border-color:var(--primary)}
+.inp-tools{display:flex;align-items:center;gap:2px;border-bottom:1px solid var(--border);padding-bottom:4px;margin-bottom:2px}
+html.dark .inp-tools{border-bottom-color:rgba(255,255,255,.07)}
+.inp-tool-btn{background:none;border:none;font-size:18px;cursor:pointer;padding:4px 6px;min-width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:.15s;flex-shrink:0}
+.inp-tool-btn:hover{background:var(--hover);color:var(--text)}
+.inp-main-row{display:flex;align-items:center;gap:4px}
+.inp-main-row input{flex:1;border-radius:8px;padding:7px 10px;background:transparent;border:none;color:var(--text);font-size:14px;outline:none;min-width:0}
+#sendBtn{padding:0 16px;height:36px;border-radius:8px;font-size:13px;flex-shrink:0}
+
+/* Mobil satırı masaüstünde gizle */
+.mobile-inp-row{display:none}
+#attachMenu{display:none}
+
+/* ── MOBİL — WhatsApp stili ── */
+@media(max-width:768px){
+  .inp-wrap{padding:6px 8px env(safe-area-inset-bottom, 8px);padding-bottom:max(8px, env(safe-area-inset-bottom));position:relative;z-index:10;}
+
+  /* Masaüstü satırını gizle */
+  .desktop-inp-row{display:none!important}
+
+  /* Ataç menüsü */
+  #attachMenu{display:block}
+  .attach-menu{
+    position:absolute;
+    bottom:calc(100% + 6px);
+    left:8px;right:8px;
+    background:var(--panel);
+    border-radius:18px;
+    padding:16px 12px;
+    box-shadow:0 8px 32px rgba(0,0,0,.25);
+    border:1px solid var(--border);
+    z-index:200;
+    animation:attachPop .18s cubic-bezier(.34,1.56,.64,1);
+  }
+  @keyframes attachPop{from{opacity:0;transform:translateY(10px) scale(.96)}to{opacity:1;transform:none}}
+  .attach-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .attach-item{
+    display:flex;flex-direction:column;align-items:center;gap:5px;
+    background:none;border:none;cursor:pointer;
+    font-size:11px;font-weight:600;color:var(--muted);
+    transition:.15s;padding:0;
+  }
+  .attach-item:active .attach-icon{transform:scale(.92)}
+  .attach-icon{
+    width:52px;height:52px;border-radius:16px;
+    background:var(--sec);
+    display:flex;align-items:center;justify-content:center;
+    font-size:24px;
+    box-shadow:0 2px 8px rgba(0,0,0,.1);
+    transition:.15s;
+  }
+
+  /* Mobil input satırı */
+  .mobile-inp-row{
+    display:flex!important;
+    align-items:center;
+    gap:6px;
+    min-height:52px;
+  }
+  .mobile-inp-row input{
+    flex:1;min-width:0;
+    background:var(--input-area);
+    border:1px solid var(--border);
+    border-radius:24px;
+    padding:10px 14px;
+    font-size:16px; /* iOS zoom önleme */
+    color:var(--text);
+    outline:none;
+    transition:border-color .2s;
+  }
+  html.dark .mobile-inp-row input{background:#40444b;border-color:transparent}
+  .mobile-inp-row input:focus{border-color:var(--primary)}
+
+  /* İkon butonlar */
+  .inp-icon-btn{
+    background:none;border:none;
+    font-size:22px;cursor:pointer;
+    padding:0;min-width:36px;height:36px;
+    border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    color:var(--muted);
+    transition:.15s;flex-shrink:0;
+  }
+  .inp-icon-btn:active{background:var(--hover)}
+
+  /* Yeşil daire — ses / gönder */
+  .inp-send-circle{
+    width:46px;height:46px;border-radius:50%;
+    background:var(--primary);color:#fff;
+    border:none;font-size:20px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    flex-shrink:0;transition:.15s;
+    box-shadow:0 2px 10px rgba(255,123,123,.4);
+    user-select:none;-webkit-user-select:none;
+    align-self:center;
+    position:relative;
+    bottom:0;
+  }
+  .inp-send-circle:active{transform:scale(.91)}
+}
+
+/* Reply bar */
+.reply-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--input-bg);border-radius:8px;border-left:3px solid var(--primary);font-size:12px;color:var(--muted)}
+.reply-bar .reply-txt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reply-preview{font-size:11px;color:var(--muted);border-left:2px solid rgba(255,255,255,.4);padding-left:8px;margin-bottom:4px;opacity:.8;display:block}
+.reply-preview.ot-reply{border-left-color:var(--primary)}
+
+/* Reactions */
+.reactions{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}
+.reaction-chip{background:rgba(0,0,0,.08);border-radius:12px;padding:2px 6px;font-size:13px;cursor:pointer;transition:.15s;border:1px solid transparent;display:flex;align-items:center;gap:2px}
+.reaction-chip:hover,.reaction-chip.mine{background:var(--sec);border-color:var(--primary)}
+.reaction-chip span{font-size:10px;color:var(--muted)}
+.msg.me .reaction-chip{background:rgba(255,255,255,.2);color:#fff}
+.msg.me .reaction-chip.mine{background:rgba(255,255,255,.35)}
+
+/* Emoji picker */
+#emojiPicker{position:absolute;bottom:75px;left:20px;background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.15);z-index:600;padding:10px;width:320px;display:none}
+#emojiPicker.open{display:block}
+.emoji-cats{display:flex;gap:4px;margin-bottom:8px;border-bottom:1px solid var(--border);padding-bottom:8px}
+.emoji-cat{padding:4px 8px;border-radius:8px;cursor:pointer;font-size:18px;transition:.15s}
+.emoji-cat:hover,.emoji-cat.active{background:var(--sec)}
+.emoji-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;max-height:200px;overflow-y:auto}
+.emoji-btn{width:34px;height:34px;border-radius:8px;cursor:pointer;font-size:20px;display:flex;align-items:center;justify-content:center;transition:.15s;background:none;border:none}
+.emoji-btn:hover{background:var(--sec);transform:scale(1.2)}
+
+/* Read receipt ticks */
+.ticks{font-size:11px;opacity:.8}
+.ticks.read{color:#a5f3e8}
+
+/* Edited label */
+.edited-lbl{font-size:10px;opacity:.55;font-style:italic}
+
+/* TYPING ANIM */
+.ta{display:inline-flex;align-items:center;gap:3px}
+.ta span{width:5px;height:5px;border-radius:50%;background:var(--ok);animation:tb 1.2s infinite}
+.ta span:nth-child(2){animation-delay:.2s}.ta span:nth-child(3){animation-delay:.4s}
+@keyframes tb{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
+
+/* PARTICLE CANVAS */
+#pCanvas{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:8000}
+
+/* MODAL */
+.overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(15,23,42,.85);z-index:100;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.card{background:var(--panel);width:420px;padding:30px;border-radius:20px;box-shadow:var(--sh);text-align:center;color:var(--text)}
+
+/* ── AKTİF ARAMA BANNER ─────────────────────────────────── */
+#activeCallBanner{
+  display:none;width:100%;
+  background:linear-gradient(90deg,#16a34a,#15803d);
+  color:#fff;font-size:13px;font-weight:600;
+  padding:7px 16px;align-items:center;justify-content:space-between;
+  gap:8px;cursor:pointer;z-index:500;flex-shrink:0;
+  box-shadow:0 2px 8px rgba(22,163,74,.35);
+  position:relative; /* layout flow'da kalır ama üstte görünür */
+  order:-1; /* flex container'da her zaman en üste */
+}
+#activeCallBanner.visible{display:flex}
+#chatCallBanner.visible{display:flex!important}
+@media(max-width:600px){
+  #chatCallBanner{flex-direction:column;align-items:flex-start!important;gap:8px!important;padding:10px 12px!important}
+  #chatCallBanner>div:last-child{width:100%}
+  #chatCallBanner button{width:100%!important;text-align:center}
+}
+#activeCallBanner:hover{filter:brightness(1.1)}
+/* Mobilde banner'ın chat alanını aşağı itmemesi için */
+@media(max-width:768px){
+  #activeCallBanner.visible{
+    position:fixed;top:52px;left:0;right:0;
+    z-index:300;
+  }
+  /* Banner görünürken chat alanına üstten padding ver */
+  #mainContent.call-banner-visible .app{
+    padding-top:38px;
+  }
+}
+#acb-left{display:flex;align-items:center;gap:8px}
+#acb-dot{width:8px;height:8px;border-radius:50%;background:#4ade80;animation:acbPulse 1.2s ease-in-out infinite}
+@keyframes acbPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.85)}}
+
+/* SETTINGS PANEL — Desktop */
+#settingsPanel{
+  position:fixed;bottom:80px;left:88px;
+  width:300px;max-height:80vh;overflow-y:auto;
+  background:var(--panel);border-radius:16px;
+  box-shadow:0 10px 30px rgba(0,0,0,.25);
+  border:1px solid var(--border);z-index:500;
+  transform:scale(0.95) translateY(10px);
+  opacity:0;pointer-events:none;transition:.2s;
+}
+#settingsPanel.open{transform:scale(1) translateY(0);opacity:1;pointer-events:all}
+
+/* Mobile settings — bottom sheet */
+@media(max-width:768px){
+  #settingsPanel{
+    left:0!important;right:0!important;
+    bottom:60px!important;
+    width:100%!important;
+    max-width:100%!important;
+    border-radius:20px 20px 0 0!important;
+    max-height:75vh!important;
+    transform:translateY(20px) scale(1)!important;
+  }
+  #settingsPanel.open{transform:translateY(0) scale(1)!important}
+}
+.sp-head{padding:16px 20px;font-weight:700;font-size:15px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;color:var(--text)}
+.sp-sec{padding:12px 20px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
+.sp-row{padding:10px 20px;display:flex;justify-content:space-between;align-items:center;font-size:13px;border-bottom:1px solid var(--border);color:var(--text)}
+.sp-row:last-child{border-bottom:none}
+.sp-bl-item{padding:8px 20px;display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--text)}
+
+/* SETTINGS FAB — sadece mobilde */
+#settingsBtn{
+  position:fixed;bottom:70px;left:14px;
+  width:48px;height:48px;border-radius:50%;
+  background:var(--primary);color:#fff;
+  border:none;font-size:20px;cursor:pointer;
+  box-shadow:0 4px 15px rgba(99,102,241,.4);
+  z-index:501;display:flex;
+  align-items:center;justify-content:center;transition:.2s;
+}
+#settingsBtn:hover{background:var(--ph);transform:rotate(30deg)}
+@media(min-width:769px){
+  #settingsBtn{display:none!important}
+}
+
+/* TOGGLE */
+.toggle{position:relative;width:40px;height:22px;cursor:pointer}
+.toggle input{opacity:0;width:0;height:0}
+.tslider{position:absolute;inset:0;background:#cbd5e1;border-radius:22px;transition:.3s}
+html.dark .tslider{background:#475569}
+.tslider:before{content:'';position:absolute;width:16px;height:16px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.3s}
+.toggle input:checked+.tslider{background:var(--ok)}
+.toggle input:checked+.tslider:before{transform:translateX(18px)}
+
+/* CALL UI — Discord tarzı tam ekran modal */
+.call-ui{
+  position:fixed!important;inset:0!important;
+  width:100vw!important;height:100vh!important;
+  top:0!important;right:0!important;left:0!important;
+  background:linear-gradient(160deg,#1a1c2e 0%,#111318 60%,#0d0f15 100%)!important;
+  border-radius:0!important;border:none!important;
+  color:#e2e8f0;z-index:9000!important;
+  display:flex!important;flex-direction:column!important;
+  align-items:center;justify-content:space-between;
+  padding:48px 24px 40px!important;
+  gap:0!important;cursor:default!important;
+  box-shadow:none!important;
+}
+/* Arka plan mesh */
+.call-ui::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(ellipse 70% 50% at 50% 30%, rgba(88,101,242,.18) 0%, transparent 70%),
+             radial-gradient(ellipse 40% 40% at 80% 70%, rgba(124,58,237,.12) 0%, transparent 60%);
+  pointer-events:none;
+}
+/* Üst bilgi */
+#callHeader{display:flex;flex-direction:column;align-items:center;gap:6px;z-index:1}
+#callName{font-size:26px;font-weight:800;color:#fff;letter-spacing:-.5px;text-align:center}
+#callTime{font-size:13px;color:rgba(255,255,255,.55);font-family:monospace;letter-spacing:.5px}
+/* Katılımcı grid — ortada, çoklu kişi için uyarlanabilir */
+#participantsGrid{
+  display:flex!important;flex-wrap:wrap;
+  justify-content:center;align-items:center;
+  gap:20px;flex:1;z-index:1;
+  max-width:1000px;width:100%;
+  padding:20px 0;
+  align-content:center;
+}
+/* 1 kişi (1:1 arama) — büyük tek kart */
+#participantsGrid.solo .part-card{ min-width:160px; }
+#participantsGrid.solo .part-av{ width:100px!important;height:100px!important;font-size:38px!important; }
+/* 2-4 kişi — orta boy */
+#participantsGrid.few .part-card{ min-width:130px; }
+#participantsGrid.few .part-av{ width:80px!important;height:80px!important;font-size:28px!important; }
+/* 5-8 kişi — küçültülmüş */
+#participantsGrid.many .part-card{ min-width:105px; }
+#participantsGrid.many .part-av{ width:60px!important;height:60px!important;font-size:22px!important; }
+/* 9+ kişi — kompakt */
+#participantsGrid.crowded .part-card{ min-width:85px; }
+#participantsGrid.crowded .part-av{ width:46px!important;height:46px!important;font-size:16px!important; }
+/* Katılımcı kartı — büyük avatar üstte isim altında */
+.part-card{
+  background:rgba(255,255,255,.06)!important;
+  border-radius:20px!important;padding:20px 16px!important;
+  display:flex!important;flex-direction:column!important;
+  align-items:center!important;gap:10px!important;
+  border:2px solid rgba(255,255,255,.08)!important;
+  position:relative;transition:border-color .15s,box-shadow .15s;
+  cursor:context-menu;user-select:none;
+  min-width:130px;
+}
+.part-card.speaking{
+  border-color:rgba(34,197,94,.85)!important;
+  box-shadow:0 0 0 3px rgba(34,197,94,.25), 0 0 28px 6px rgba(34,197,94,.2)!important;
+}
+@keyframes speakPulse{
+  0%,100%{box-shadow:0 0 0 3px rgba(34,197,94,.2),0 0 16px 2px rgba(34,197,94,.15)}
+  50%{box-shadow:0 0 0 5px rgba(34,197,94,.35),0 0 30px 8px rgba(34,197,94,.28)}
+}
+.part-card.speaking{animation:speakPulse .6s ease-in-out infinite}
+/* Konuşurken avatar yeşil halka */
+.part-card.speaking .part-av{
+  border-color:rgba(34,197,94,.9)!important;
+  box-shadow:0 0 0 3px rgba(34,197,94,.4), 0 8px 24px rgba(0,0,0,.4)!important;
+}
+/* Konuşma ikonu — ismin yanında */
+.part-speak-icon{
+  display:none;font-size:13px;margin-left:4px;
+  animation:micPulse .5s ease-in-out infinite alternate;
+}
+.part-card.speaking .part-speak-icon{display:inline;}
+@keyframes micPulse{from{opacity:.5;transform:scale(.9)}to{opacity:1;transform:scale(1.1)}}
+.part-av{
+  width:80px!important;height:80px!important;
+  border-radius:50%!important;
+  background:linear-gradient(135deg,#FF7B7B,#FF4444)!important;
+  color:#fff!important;display:flex!important;
+  align-items:center!important;justify-content:center!important;
+  font-weight:800!important;font-size:28px!important;
+  overflow:hidden!important;transition:border-color .15s,box-shadow .15s!important;
+  border:3px solid rgba(255,255,255,.15)!important;
+  box-shadow:0 8px 24px rgba(0,0,0,.4)!important;
+}
+.part-av img{width:100%;height:100%;object-fit:cover}
+.part-name{font-size:13px!important;color:#e2e8f0!important;font-weight:600!important;
+  max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;
+  display:flex;align-items:center;justify-content:center;gap:2px}
+.part-vol-bar{width:80%!important;height:5px!important;background:rgba(255,255,255,.1)!important;border-radius:4px;overflow:hidden;margin-top:0}
+.part-vol-fill{height:100%;background:linear-gradient(90deg,#22c55e,#86efac);border-radius:4px;width:0%;transition:width .08s linear}
+.part-mute-badge{position:absolute;top:8px;right:8px;font-size:14px;line-height:1}
+.deafen-badge{position:absolute;top:8px;left:8px;font-size:14px;line-height:1}
+.part-vol-btn{position:absolute;bottom:8px;left:8px;background:rgba(255,255,255,.1);border:none;color:#94a3b8;font-size:11px;width:22px;height:22px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;transition:.15s;line-height:1}
+.part-vol-btn:hover{background:rgba(88,101,242,.4);color:#fff}
+.part-vol-indicator{position:absolute;bottom:8px;right:8px;font-size:10px;color:#64748b;font-weight:700;background:rgba(0,0,0,.4);border-radius:4px;padding:1px 4px;pointer-events:none}
+.part-card-sm{padding:14px 10px!important;gap:7px!important;min-width:100px!important}
+
+/* Audio placeholder — sadece ses modunda gizli */
+#audioPh{display:none!important}
+
+/* Video */
+/* remoteVideo — yalnızca tam ekran modu için gizli tutulan element */
+#remoteVideo{display:none!important}
+#remoteVideo.fullscreen-mode{display:block!important;position:fixed;inset:0;width:100vw!important;height:100vh!important;max-height:none;z-index:9999;border-radius:0;object-fit:contain;background:#000}
+
+/* Video içinde avatar — profil foto yerini video alır */
+.part-av.has-video{
+  width:200px!important;height:150px!important;
+  border-radius:14px!important;
+  background:#000!important;
+  overflow:hidden!important;
+  border:2px solid rgba(255,255,255,.2)!important;
+}
+.part-av.has-video.is-local{
+  width:160px!important;height:120px!important;
+  border:2px solid rgba(88,101,242,.6)!important;
+}
+.part-av.has-video video{
+  width:100%;height:100%;object-fit:cover;border-radius:0;display:block;
+}
+.part-av.has-video.is-local video{transform:scaleX(-1);}
+/* Konuşunca kartın yeşil halkası video kartında da çalışsın */
+.part-card.speaking .part-av.has-video{border-color:rgba(34,197,94,.9)!important;box-shadow:0 0 0 3px rgba(34,197,94,.4),0 8px 24px rgba(0,0,0,.4)!important;}
+#screenFullBtn{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.65);color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;z-index:51;display:none;backdrop-filter:blur(4px)}
+#remoteVideo:not(.hidden)~#screenFullBtn{display:block}
+
+/* Kontrol butonları — altta */
+.call-ctrl{
+  display:flex!important;gap:12px!important;
+  justify-content:center;align-items:center;
+  z-index:1;flex-wrap:wrap;
+}
+.call-ctrl button{
+  min-width:60px!important;height:60px!important;
+  border-radius:50%!important;
+  padding:0!important;font-size:22px!important;
+  background:rgba(255,255,255,.1)!important;
+  color:#fff!important;border:none!important;
+  display:flex!important;align-items:center!important;justify-content:center!important;
+  flex:none!important;
+  transition:all .18s!important;
+  box-shadow:0 4px 16px rgba(0,0,0,.3)!important;
+}
+.call-ctrl button:hover{background:rgba(255,255,255,.2)!important;transform:scale(1.08)!important}
+.call-ctrl button.active-mute{background:#ef4444!important}
+.call-ctrl button.active-deafen{background:#7c3aed!important}
+.call-ctrl button.active-video{background:#22c55e!important}
+#endCallBtn{background:#ed4245!important;min-width:70px!important;height:70px!important}
+#endCallBtn:hover{background:#c03537!important}
+
+/* Cihaz ayarları gizle — callUI içinde kompakt */
+#deviceSettings{display:none!important}
+#screenInd{z-index:2;position:absolute;top:16px;left:50%;transform:translateX(-50%)}
+
+/* ÇALDIRMA (Ringing) Ekranı */
+#callRingUI{
+  position:fixed;inset:0;
+  background:linear-gradient(160deg,#1a1c2e 0%,#111318 60%,#0d0f15 100%);
+  z-index:8999;display:none;flex-direction:column;
+  align-items:center;justify-content:center;
+  gap:24px;color:#e2e8f0;
+}
+#callRingUI::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(ellipse 70% 50% at 50% 40%, rgba(88,101,242,.2) 0%, transparent 70%);
+  pointer-events:none;
+}
+#callRingUI.show{display:flex}
+.ring-av{
+  width:110px;height:110px;border-radius:50%;
+  background:linear-gradient(135deg,#FF7B7B,#FF4444);
+  color:#fff;font-size:42px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;border:4px solid rgba(255,255,255,.2);
+  box-shadow:0 0 0 0 rgba(88,101,242,.4);
+  animation:ringPulse 1.5s ease-out infinite;
+  position:relative;z-index:1;
+}
+.ring-av img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+@keyframes ringPulse{
+  0%{box-shadow:0 0 0 0 rgba(88,101,242,.5)}
+  70%{box-shadow:0 0 0 30px rgba(88,101,242,0)}
+  100%{box-shadow:0 0 0 0 rgba(88,101,242,0)}
+}
+#ringName{font-size:24px;font-weight:800;color:#fff;letter-spacing:-.4px;z-index:1}
+#ringStatus{font-size:14px;color:rgba(255,255,255,.5);z-index:1;display:flex;align-items:center;gap:6px}
+.ring-dots span{display:inline-block;width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.5);margin:0 1px;animation:dotBounce 1.2s infinite}
+.ring-dots span:nth-child(2){animation-delay:.2s}
+.ring-dots span:nth-child(3){animation-delay:.4s}
+@keyframes dotBounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
+#ringCancelBtn{
+  width:64px;height:64px;border-radius:50%;
+  background:#ed4245;color:#fff;
+  border:none;font-size:26px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:all .2s;z-index:1;
+  box-shadow:0 8px 24px rgba(237,66,69,.4);
+}
+#ringCancelBtn:hover{background:#c03537;transform:scale(1.08)}
+
+/* LOGIN SCREEN (saved accounts) */
+.acc-item{display:flex;align-items:center;gap:12px;padding:12px;border-radius:10px;cursor:pointer;border:1px solid var(--border);margin-bottom:8px;transition:.2s;color:var(--text)}
+.acc-item:hover{background:var(--acc-hover);border-color:var(--primary)}
+.acc-av{width:40px;height:40px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;overflow:hidden;flex-shrink:0}
+.acc-av img{width:100%;height:100%;object-fit:cover}
+.acc-del-btn:hover{color:var(--danger)!important;background:rgba(237,66,69,.1)!important}
+.react-pick-btn{background:none;border:none;font-size:22px;cursor:pointer;padding:4px 6px;border-radius:8px;transition:.15s}
+.react-pick-btn:hover{background:var(--sec);transform:scale(1.3)}
+
+#toastArea{position:fixed;bottom:80px;left:80px;display:flex;flex-direction:column;gap:10px;z-index:9999}
+.toast{background:#1e293b;color:#e2e8f0;padding:15px 20px;border-radius:10px;box-shadow:var(--sh);animation:si .3s ease-out;min-width:250px;border:1px solid #334155}
+html:not(.dark) .toast{background:#334155}
+@keyframes si{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+/* Avatar zoom modal */
+#avatarZoom{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:9500;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:zoom-out;backdrop-filter:blur(10px);opacity:0;pointer-events:none;transition:opacity .2s}
+#avatarZoom.show{opacity:1;pointer-events:all}
+#avatarZoomImg{width:280px;height:280px;border-radius:50%;object-fit:cover;border:4px solid rgba(255,255,255,.9);box-shadow:0 25px 80px rgba(0,0,0,.6);transform:scale(.8);transition:transform .3s cubic-bezier(.34,1.56,.64,1)}
+#avatarZoomImg.show{transform:scale(1)}
+#avatarZoomName{color:#fff;font-size:18px;font-weight:700;margin-top:16px;text-shadow:0 2px 8px rgba(0,0,0,.5)}
+/* Image viewer modal (for message photos) */
+#imageViewer{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9500;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:zoom-out;backdrop-filter:blur(12px);opacity:0;pointer-events:none;transition:opacity .2s}
+#imageViewer.show{opacity:1;pointer-events:all}
+#imageViewerImg{max-width:90vw;max-height:80vh;border-radius:12px;object-fit:contain;border:2px solid rgba(255,255,255,.15);box-shadow:0 25px 80px rgba(0,0,0,.6);transform:scale(.8);transition:transform .3s cubic-bezier(.34,1.56,.64,1)}
+#imageViewerImg.show{transform:scale(1)}
+#imageViewerName{color:#fff;font-size:15px;font-weight:600;margin-top:14px;text-shadow:0 2px 8px rgba(0,0,0,.5);max-width:80vw;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#imageViewerClose{position:absolute;top:18px;right:22px;background:rgba(255,255,255,.15);border:none;color:#fff;width:40px;height:40px;border-radius:50%;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
+#imageViewerClose:hover{background:rgba(255,255,255,.3)}
+
+/* Mesaj uçuş animasyonu — sadece yeni mesaja uygulanır */
+@keyframes msgFlyIn{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+.msg-wrap.new-msg{animation:msgFlyIn .22s cubic-bezier(.34,1.56,.64,1) both}
+@keyframes dropBounce{from{transform:translateY(0)}to{transform:translateY(-10px)}}
+.chat-area.drag-over #dropOverlay{display:flex!important}
+@keyframes modalIn{from{opacity:0;transform:scale(.85) translateY(20px)}to{opacity:1;transform:scale(1) translateY(0)}}
+
+/* Dosya mesajı */
+.file-msg{display:flex;align-items:center;gap:10px;padding:4px 0}
+.file-icon{font-size:28px;line-height:1}
+.file-info{display:flex;flex-direction:column;gap:1px}
+.file-name{font-size:13px;font-weight:600;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-size{font-size:11px;opacity:.7}
+.file-dl{font-size:11px;padding:3px 10px;border-radius:8px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.2);color:inherit;cursor:pointer;text-decoration:none;display:inline-block;margin-top:3px}
+.msg.ot .file-dl{background:var(--sec);border-color:var(--primary);color:var(--primary)}
+.msg-img{max-width:260px;max-height:200px;border-radius:10px;cursor:zoom-in;display:block;margin:4px 0}
+.msg-gif{max-width:260px;border-radius:10px;display:block;margin:4px 0}
+
+/* Kullanıcı durumu */
+.status-badge{display:inline-block;width:12px;height:12px;border-radius:50%;border:2px solid var(--panel);position:absolute;bottom:0;right:0}
+.status-available{background:#10b981}
+.status-busy{background:#ef4444}
+.status-dnd{background:#7c3aed}
+.status-away{background:#f59e0b}
+.status-offline{background:#6b7280}
+.my-status-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--panel);display:inline-block;vertical-align:middle;margin-left:4px;cursor:pointer}
+
+/* Mesaj arama barı */
+#msgSearchBar{position:absolute;top:70px;left:50%;transform:translateX(-50%);background:#1a0505;border:1.5px solid var(--primary);border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:8px;z-index:100;box-shadow:0 4px 20px rgba(255,60,60,.25);min-width:320px}
+#msgSearchBar input{border:none;background:none;outline:none;font-size:14px;color:#fff;flex:1}
+#msgSearchBar input::placeholder{color:rgba(255,160,160,.6)}
+#msgSearchBar .sr-count{font-size:12px;color:var(--primary);white-space:nowrap;font-weight:700}
+html.dark #msgSearchBar{background:#0a0000;border-color:#FF7B7B}
+.msg-wrap.search-highlight .msg{outline:2px solid var(--primary);outline-offset:2px}
+
+/* GIF picker */
+
+
+/* Sürüklenebilir call UI — artık tam ekran, taşınamaz */
+/* .call-ui drag disabled */
+.ver-badge{font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:4px;vertical-align:middle;line-height:1.4;display:inline-block}
+.ver-same{background:#e0e7ff;color:#4338ca}
+.ver-old{background:#fef3c7;color:#d97706}
+.ver-unknown{background:#f1f5f9;color:#94a3b8}
+
+.hidden{display:none!important}
+
+/* ═══════════════════════════════════════════════════════
+   🛡️ GÜVENLİK FIX: mainApp gizliyken position:fixed
+   elementler hâlâ görünebiliyor. Hepsini bastır.
+   ═══════════════════════════════════════════════════════ */
+#mainApp.hidden ~ #settingsPanel,
+#mainApp.hidden ~ #settingsBtn,
+body:not(.sv-logged-in) #bottomNav,
+body:not(.sv-logged-in) #settingsBtn,
+body:not(.sv-logged-in) #settingsPanel,
+body:not(.sv-logged-in) #toastArea,
+body:not(.sv-logged-in) #groupDetailPanel,
+body:not(.sv-logged-in) #ctxMenu,
+body:not(.sv-logged-in) #avatarZoom,
+body:not(.sv-logged-in) #imageViewer,
+body:not(.sv-logged-in) #globalSearchModal,
+body:not(.sv-logged-in) #pollModal,
+body:not(.sv-logged-in) #statsModal,
+body:not(.sv-logged-in) #gifUrlModal,
+body:not(.sv-logged-in) #groupModal,
+body:not(.sv-logged-in) #callModal {
+  display:none!important;
+  pointer-events:none!important;
+  visibility:hidden!important;
+}
+
+/* GRUP DETAY PANELİ */
+#groupDetailPanel{position:fixed;top:0;right:-380px;width:360px;height:100vh;background:var(--panel);box-shadow:-4px 0 20px rgba(0,0,0,.2);z-index:400;display:flex;flex-direction:column;transition:.3s ease}
+#groupDetailPanel.open{right:0}
+.gdp-head{padding:20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
+.gdp-av{width:56px;height:56px;border-radius:50%;background:var(--ok);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;overflow:hidden;flex-shrink:0;cursor:pointer;position:relative}
+.gdp-av img{width:100%;height:100%;object-fit:cover}
+.gdp-body{flex:1;overflow-y:auto;padding:16px}
+.gdp-section{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:16px 0 8px}
+.gdp-member{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;transition:.15s}
+.gdp-member:hover{background:var(--hover)}
+
+/* GRUP ARAMA — katılımcı grid (eski compat) */
+.call-ui.group-call{width:100%!important}
+.part-card{background:#0f172a;border-radius:12px;padding:10px 8px;display:flex;flex-direction:column;align-items:center;gap:6px;border:2px solid #334155;position:relative;transition:border-color .15s,box-shadow .15s;cursor:context-menu;user-select:none}
+/* Konuşan kişi — Discord tarzı beyaz ışık */
+.part-card.speaking{
+  border-color:#fff;
+  box-shadow:0 0 0 2px rgba(255,255,255,.15), 0 0 16px 2px rgba(255,255,255,.2);
+}
+@keyframes speakPulse{
+  0%,100%{box-shadow:0 0 0 2px rgba(255,255,255,.15),0 0 12px 1px rgba(255,255,255,.15)}
+  50%{box-shadow:0 0 0 3px rgba(255,255,255,.25),0 0 22px 4px rgba(255,255,255,.3)}
+}
+.part-card.speaking{animation:speakPulse .7s ease-in-out infinite}
+.part-av{width:48px;height:48px;border-radius:50%;background:#334155;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;overflow:hidden;transition:.15s}
+.part-av img{width:100%;height:100%;object-fit:cover}
+.part-name{font-size:11px;color:#94a3b8;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
+/* Ses seviyesi göstergesi */
+.part-vol-bar{
+  width:100%;height:3px;background:#1e293b;border-radius:3px;overflow:hidden;
+}
+.part-vol-fill{height:100%;background:linear-gradient(90deg,#22c55e,#86efac);border-radius:3px;width:0%;transition:width .08s linear}
+.part-mute-badge{position:absolute;top:5px;right:5px;font-size:12px;line-height:1}
+.deafen-badge{position:absolute;top:5px;left:5px;font-size:12px;line-height:1}
+/* Kişisel ses seviyesi göstergesi */
+.part-vol-indicator{
+  position:absolute;bottom:5px;right:5px;
+  font-size:10px;color:#64748b;font-weight:700;
+  background:rgba(0,0,0,.4);border-radius:4px;padding:1px 4px;
+  pointer-events:none;
+}
+/* Ses kontrol context menu */
+#peerVolMenu{
+  position:fixed;z-index:9999;
+  background:#1e293b;border:1px solid #334155;border-radius:14px;
+  padding:14px 16px;box-shadow:0 8px 32px rgba(0,0,0,.5);
+  min-width:220px;
+}
+.pvm-title{font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.pvm-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.pvm-label{font-size:11px;color:#94a3b8;width:40px;flex-shrink:0}
+.pvm-slider{flex:1;-webkit-appearance:none;appearance:none;height:6px;border-radius:6px;background:linear-gradient(90deg,var(--primary) 0%,var(--primary) var(--val,100%),#334155 var(--val,100%),#334155 100%);outline:none;cursor:pointer}
+.pvm-slider::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#fff;border:2px solid var(--primary);box-shadow:0 2px 6px rgba(0,0,0,.3)}
+.pvm-val{font-size:12px;font-weight:700;color:#e2e8f0;width:36px;text-align:right}
+.pvm-btns{display:flex;gap:8px;margin-top:12px}
+.pvm-btn{flex:1;padding:8px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#94a3b8;font-size:12px;font-weight:600;cursor:pointer;transition:.15s}
+.pvm-btn:hover{background:#334155;color:#e2e8f0}
+.pvm-btn.danger{border-color:rgba(239,68,68,.4);color:#ef4444}
+.pvm-btn.danger:hover{background:rgba(239,68,68,.12)}
+
+/* Mute / Deafen butonları */
+.call-ctrl button.active-mute{background:#ef4444!important}
+.call-ctrl button.active-deafen{background:#7c3aed!important}
+/* Ses ayar butonu — her kartta görünür */
+.part-vol-btn{
+  position:absolute;bottom:5px;left:5px;
+  background:rgba(255,255,255,.1);border:none;
+  color:#94a3b8;font-size:11px;
+  width:22px;height:22px;border-radius:6px;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  padding:0;transition:.15s;line-height:1;
+}
+.part-vol-btn:hover{background:rgba(88,101,242,.4);color:#fff}
+/* Küçük kart — 4+ kişi */
+.part-card-sm{padding:7px 5px;gap:4px;}
+
+/* Empty state */
+#emptyState{background:var(--bg)!important;transition:background .3s}
+#emptyState h3{color:var(--muted)}
+
+/* ── GLOBAL ARAMA ─────────────────────────────────── */
+#globalSearchModal{position:fixed;inset:0;background:rgba(30,8,8,.75);z-index:8000;display:none;align-items:flex-start;justify-content:center;padding-top:80px;backdrop-filter:blur(4px)}
+#globalSearchModal.open{display:flex}
+#globalSearchBox{background:var(--panel);width:580px;max-width:95vw;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);border:1px solid var(--border);overflow:hidden}
+#globalSearchHeader{display:flex;align-items:center;border-bottom:1px solid var(--border);background:var(--panel)}
+#globalSearchInput{flex:1;padding:16px 20px;font-size:15px;border:none;background:transparent;color:var(--text);outline:none}
+#globalSearchCloseBtn{width:40px;height:40px;border-radius:50%;background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;margin-right:10px;flex-shrink:0;transition:.15s;padding:0;min-width:auto}
+#globalSearchCloseBtn:hover{background:var(--hover);color:var(--text)}
+#globalSearchResults{max-height:420px;overflow-y:auto}
+.gs-group{padding:8px 16px 4px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
+.gs-item{padding:10px 16px;cursor:pointer;transition:.15s;margin:2px 8px;border-radius:14px}
+.gs-item:hover{background:var(--hover)}
+.gs-item.active{background:rgba(255,123,123,.12)}
+html:not(.dark) .gs-item.active{background:rgba(255,123,123,.10)}
+.gs-item.active .gs-item-name{color:var(--primary)}
+.gs-item-name{font-size:12px;font-weight:700;color:var(--primary);margin-bottom:2px}
+.gs-item-text{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gs-item-text mark{background:rgba(99,102,241,.25);color:var(--primary);border-radius:3px;padding:0 2px}
+.gs-empty{padding:30px;text-align:center;color:var(--muted);font-size:14px}
+
+/* ── LİNK ÖNİZLEME ───────────────────────────────── */
+.link-preview{margin-top:8px;border-radius:12px;border:1px solid var(--border);overflow:hidden;background:var(--panel);cursor:pointer;transition:.15s;max-width:320px}
+.link-preview:hover{border-color:var(--primary);transform:translateY(-1px)}
+.link-preview-thumb{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:var(--input-bg)}
+.link-preview-body{padding:10px 12px}
+.link-preview-domain{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;display:flex;align-items:center;gap:5px}
+.link-preview-favicon{width:12px;height:12px;border-radius:2px}
+.link-preview-title{font-size:13px;font-weight:600;color:var(--text);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:3px}
+.link-preview-desc{font-size:11px;color:var(--muted);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* YouTube özel */
+.link-preview.yt{border-color:rgba(255,0,0,.25)}
+.link-preview.yt:hover{border-color:#ff0000}
+.link-preview-yt-wrap{position:relative;display:block}
+.link-preview-yt-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.25);transition:.15s}
+.link-preview.yt:hover .link-preview-yt-play{background:rgba(0,0,0,.4)}
+.link-preview-yt-play-btn{width:48px;height:34px;background:#ff0000;border-radius:8px;display:flex;align-items:center;justify-content:center}
+.link-preview-yt-play-btn::after{content:'';border-style:solid;border-width:9px 0 9px 18px;border-color:transparent transparent transparent #fff;margin-left:3px}
+.link-preview-duration{position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.8);color:#fff;font-size:10px;font-weight:700;padding:2px 5px;border-radius:4px;font-family:monospace}
+/* kendi mesajında */
+.msg.me .link-preview{border-color:rgba(255,255,255,.2);background:rgba(255,255,255,.08)}
+.msg.me .link-preview.yt{border-color:rgba(255,80,80,.4)}
+.msg.me .link-preview-title{color:#fff}
+.msg.me .link-preview-domain{color:rgba(255,255,255,.55)}
+.msg.me .link-preview-desc{color:rgba(255,255,255,.45)}
+
+/* ── ANKET ────────────────────────────────────────── */
+#pollModal{position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:8000;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+#pollModal.open{display:flex}
+.poll-box{background:var(--panel);width:420px;max-width:95vw;border-radius:16px;padding:24px;border:1px solid var(--border)}
+.poll-opt-row{display:flex;gap:8px;margin-bottom:8px;align-items:center}
+.poll-opt-row input{flex:1}
+.poll-msg{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px;margin-top:4px}
+.poll-question{font-weight:700;font-size:14px;margin-bottom:10px;color:var(--text)}
+.poll-option{margin-bottom:8px;cursor:pointer}
+.poll-bar-wrap{background:var(--input-bg);border-radius:8px;height:32px;overflow:hidden;position:relative;border:1px solid var(--border)}
+.poll-bar{height:100%;background:var(--sec);transition:.4s;border-radius:8px}
+.poll-bar.voted{background:var(--primary)}
+.poll-bar-label{position:absolute;inset:0;display:flex;align-items:center;padding:0 10px;font-size:13px;color:var(--text);justify-content:space-between;pointer-events:none}
+.poll-bar-pct{font-size:11px;font-weight:700;color:var(--muted)}
+.poll-total{font-size:11px;color:var(--muted);margin-top:6px;text-align:right}
+.msg.me .poll-msg{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2)}
+.msg.me .poll-question{color:#fff}
+.msg.me .poll-bar-wrap{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.15)}
+.msg.me .poll-bar{background:rgba(255,255,255,.2)}
+.msg.me .poll-bar.voted{background:rgba(255,255,255,.5)}
+.msg.me .poll-bar-label{color:#fff}
+.msg.me .poll-bar-pct{color:rgba(255,255,255,.7)}
+.msg.me .poll-total{color:rgba(255,255,255,.6)}
+
+/* ── KAYBOLUCAK MESAJ ────────────────────────────── */
+.vanish-badge{display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:600;background:rgba(239,68,68,.15);color:#ef4444;padding:2px 6px;border-radius:8px;margin-left:6px}
+.msg-timer{font-size:10px;color:var(--muted);margin-left:4px;font-family:monospace}
+.vanish-toggle-bar{display:flex;align-items:center;gap:8px;padding:6px 12px;background:rgba(239,68,68,.07);border-radius:10px;font-size:12px;color:var(--muted);margin-bottom:6px;border:1px solid rgba(239,68,68,.2)}
+
+/* ── SES MESAJI ─────────────────────────────────────────────────── */
+.voice-msg{display:flex;align-items:center;gap:10px;padding:4px 0;min-width:200px}
+.vm-play{width:34px;height:34px;border-radius:50%;background:var(--primary);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;transition:.15s}
+.vm-play:hover{opacity:.85}
+.msg.me .vm-play{background:rgba(255,255,255,.25)}
+.vm-wave{flex:1;height:28px;cursor:pointer;position:relative}
+.vm-wave canvas{width:100%;height:100%;display:block}
+.vm-time{font-size:11px;color:var(--muted);white-space:nowrap;font-family:monospace;min-width:32px;text-align:right}
+.msg.me .vm-time{color:rgba(255,255,255,.7)}
+#voiceRecBtn{position:relative}
+#voiceRecBtn.recording{color:#ef4444;animation:recPulse 1s infinite}
+@keyframes recPulse{0%,100%{opacity:1}50%{opacity:.4}}
+.rec-indicator{position:absolute;top:-18px;left:50%;transform:translateX(-50%);background:#ef4444;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:8px;white-space:nowrap;pointer-events:none}
+
+/* ── CEVAPSİZ ARAMA ─────────────────────────────────────────────── */
+.missed-call-card{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:12px;border-left:3px solid #ef4444;margin:4px 0;max-width:260px}
+.mcc-icon{font-size:20px;flex-shrink:0}
+.mcc-body{flex:1}
+.mcc-title{font-size:13px;font-weight:700;color:var(--text)}
+.mcc-sub{font-size:11px;color:var(--muted)}
+.mcc-btn{font-size:11px;padding:4px 10px;border-radius:8px;background:var(--ok);color:#fff;border:none;cursor:pointer;font-weight:600;white-space:nowrap}
+.mcc-btn:hover{opacity:.85}
+
+/* ── MESAJ İSTATİSTİKLERİ ───────────────────────────────────────── */
+#statsModal{position:fixed;inset:0;background:rgba(15,23,42,.75);z-index:8000;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+#statsModal.open{display:flex}
+.stats-box{background:var(--panel);width:480px;max-width:95vw;max-height:80vh;overflow-y:auto;border-radius:18px;border:1px solid var(--border);padding:24px}
+.stats-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:20px}
+.stat-card{background:var(--tab-bg);border-radius:12px;padding:14px 16px;border:1px solid var(--border)}
+.stat-val{font-size:26px;font-weight:700;color:var(--primary);line-height:1}
+.stat-lbl{font-size:11px;color:var(--muted);margin-top:4px}
+.stats-bar-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.stats-bar-label{font-size:12px;color:var(--text);width:80px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stats-bar-wrap{flex:1;background:var(--input-bg);border-radius:6px;height:8px;overflow:hidden}
+.stats-bar-fill{height:100%;background:var(--primary);border-radius:6px;transition:.4s}
+.stats-bar-cnt{font-size:11px;color:var(--muted);width:40px;text-align:right;flex-shrink:0}
+.stats-section{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:16px 0 10px}
+/* ══════════════════════════════════════════════════
+   📱 MOBİL UYUMLULUK — Beta 3.5
+   ══════════════════════════════════════════════════ */
+
+/* Mobil hamburger butonu */
+#mobileMenuBtn{display:none;background:none;border:none;font-size:22px;color:var(--muted);cursor:pointer;padding:4px 8px;min-width:auto;flex-shrink:0}
+#mobileChatBack{display:none;background:none;border:none;font-size:20px;color:var(--muted);cursor:pointer;padding:4px 8px;min-width:auto;flex-shrink:0}
+
+@media (max-width: 768px) {
+  /* ═══ MOBİL LAYOUT TAMAMEN DÜZELTİLDİ ═══ */
+  /* mainApp mobilde tam ekran ama bottom nav yüksekliğini say */
+  #mainApp{
+    flex-direction:column!important;
+    height:100dvh!important;
+    max-height:100dvh!important;
+    padding-bottom:60px!important;
+  }
+
+  /* Header görünür */
+  .header{display:flex!important;height:52px;flex-shrink:0}
+
+  /* mainContent — mobilde header + bottomNav dışı kalan */
+  #mainContent{
+    flex:1!important;
+    min-height:0!important;
+    overflow:hidden!important;
+    display:flex!important;
+    flex-direction:column!important;
+  }
+
+  /* App: header + bottom nav arası alan — dvh klavye açılınca küçülür */
+  .app{
+    position:relative;overflow:hidden;
+    display:flex!important;
+    flex:1!important;
+    height:auto!important;
+    min-height:0!important;
+    padding-bottom:0!important;
+  }
+
+  /* Profil paneli — mobilde kaydırılabilir */
+  #panelProfile{
+    overflow-y:auto!important;
+    -webkit-overflow-scrolling:touch!important;
+  }
+  /* Profil body sabit yükseklik olmadan esnesin */
+  #panelProfile .sv-profile-body{
+    overflow-y:visible!important;
+    flex:unset!important;
+  }
+
+  /* Chat alanı — parent'ın tüm yüksekliğini al, dvh kullanma */
+  /* 🛡️ [FIX] padding-bottom:60px KALDIRILDI — #mainApp zaten padding-bottom:60px içeriyor.
+     İki katman birden 120px boşluk oluşturuyor, inp-wrap 60px havada kalıyordu. */
+  .chat-area{
+    width:100%;min-width:0;
+    display:flex;flex-direction:column;
+    height:100%!important;
+    max-height:100%!important;
+    overflow:hidden;
+    position:relative;
+    box-sizing:border-box;
+  }
+
+  /* Mesaj listesi — kalan alanı doldursun */
+  .msgs{
+    flex:1;
+    overflow-y:auto;
+    padding:12px 10px 8px;
+    min-height:0; /* flex child'ın shrink olabilmesi için şart */
+    overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;
+  }
+
+  /* Input alanı — alta yapışık, keyboard safe-area ile */
+  /* 🛡️ [FIX] position:sticky → position:relative; .chat-area flex column'unun
+     son elemanı olduğundan flex-shrink:0 ile zaten alta oturur.
+     sticky + yanlış padding kombinasyonu inp-wrap'ı havada bırakıyordu. */
+  .inp-wrap{
+    flex-shrink:0;
+    padding:10px 10px calc(10px + env(safe-area-inset-bottom))!important;
+    background:var(--ch-bg);
+    border-top:1px solid var(--border);
+    position:relative;
+    z-index:10;
+  }
+  /* input alanı yüksekliği sabit — içerik değişince zıplamaz */
+  /* mobile-inp-row min yükseklik */
+  .mobile-inp-row{min-height:52px}
+  #msgInput{
+    font-size:16px!important; /* iOS zoom'u önler — 16px altı zoom yapar */
+    min-height:42px!important;
+    padding:10px 12px!important;
+  }
+
+  /* Arama sırasında ekran paylaşımı mobilde desteklenmiyor — gizle */
+  #screenBtn{display:none!important}
+  /* Görüntülü arama mobilde göster */
+  #videoBtn{display:flex!important}
+
+  /* Bottom nav safe-area padding */
+  #bottomNav{display:flex!important;padding-bottom:max(env(safe-area-inset-bottom), 4px)!important}
+
+  /* Desktop nav gizle */
+  #desktopNavRail{display:none!important}
+
+  /* Auth */
+  #authBrand{display:none!important}
+  #authScreen > div:last-child{max-width:100%!important;padding:32px 24px!important}
+
+  /* Header */
+  .header{padding:0 12px}
+  .header h1{font-size:17px}
+  #mobileMenuBtn{display:flex}
+  #mobileChatBack{display:flex}
+  .header>div:last-child{gap:8px;flex-shrink:0;display:flex;align-items:center}
+  #mobileSearchBtn{display:flex!important}
+  #desktopSearchBtn{display:none!important}
+  .theme-toggle-label{display:none}
+  .theme-toggle{padding:5px 8px}
+  #netStatus{font-size:11px!important}
+
+  /* Sidebar — drawer */
+  .sidebar{
+    position:absolute;top:0;left:-100%;width:85%;max-width:320px;
+    height:100%;z-index:200;
+    transition:left .28s cubic-bezier(.4,0,.2,1);
+    box-shadow:4px 0 20px rgba(0,0,0,.25);
+  }
+  .sidebar.mobile-open{left:0}
+  #sidebarOverlay{
+    display:none;position:absolute;inset:0;background:rgba(0,0,0,.5);
+    z-index:199;backdrop-filter:blur(2px);
+  }
+  .sidebar.mobile-open~#sidebarOverlay{display:block}
+
+  /* Mesaj balonları */
+  .msg{max-width:82%}
+
+  /* Input row — mobil için mobile-inp-row'da tanımlı */
+  #emojiToggleBtn,#voiceRecBtn{font-size:19px;padding:0 5px;min-width:38px;height:44px}
+
+  /* Dokunma alanları */
+  button,.tab,.li,.bnav-item,.acc-item{min-height:44px}
+  .tab{min-height:52px}
+  .li{padding:12px 10px;min-height:52px}
+  #emojiToggleBtn,#voiceRecBtn,#vanishBtn{font-size:19px;padding:0 5px;min-width:38px;height:44px}
+  .ma-btn{width:36px;height:36px}
+
+  /* Tabs */
+  .tabs{display:flex;flex-direction:row;padding:8px 8px 0;gap:3px}
+  .tab{flex:1;padding:8px 4px 10px;font-size:10px}
+  .tab-icon{font-size:16px}
+
+  /* Callout UI */
+  /* .call-ui mobilde zaten tam ekran */
+
+  /* Toast */
+  #toastArea{left:10px!important;right:10px;bottom:80px}
+  .toast{min-width:unset;width:100%}
+
+  /* Mesaj arama barı */
+  #msgSearchBar{min-width:unset;width:90vw;left:50%}
+
+  /* Ses mesajı */
+  .voice-msg{min-width:160px}
+
+  /* Global arama */
+  #globalSearchBox{width:94vw;border-radius:12px}
+
+  /* Modallar */
+  .poll-box,.stats-box{width:94vw;padding:18px;border-radius:14px}
+  .card{width:94vw!important}
+
+  /* Avatarlar */
+  .av-wrap{width:56px;height:56px}
+
+  /* Sohbet başlığı */
+  .ch{padding:0 10px;height:52px}
+
+  /* Sesli arama butonu — mobilde sadece ikon */
+  #callBtn{padding:0 10px;height:38px;font-size:18px;min-width:38px;border-radius:10px;display:flex!important}
+  .callbtn-txt{display:none}
+
+  /* Link önizleme */
+  .link-preview{max-width:100%}
+
+  /* Participants grid */
+  .participants-grid{grid-template-columns:repeat(2,1fr)}
+
+  /* Grup detay panel */
+  #groupDetailPanel{width:94vw;right:-100%}
+  #groupDetailPanel.open{right:0}
+
+  /* Settings panel */
+  #settingsBtn{display:none!important}
+
+  /* Emoji picker */
+  #emojiPicker{
+    width:calc(100vw - 20px);
+    left:10px;
+    position:fixed;
+    bottom:130px;
+    z-index:9999;
+  }
+
+  /* Vanish bar */
+  .vanish-toggle-bar{font-size:11px}
+
+  /* GIF masaüstünde görünür, mobilde desktop-inp-row zaten gizli */
+
+  /* Ver badge gizle */
+  .ver-badge{display:none}
+
+  /* Arkadaş ekleme */
+  #addInput{height:44px}
+  #addBtn{height:44px;padding:0 16px}
+}
+
+@media (max-width: 400px) {
+  .msg{max-width:90%}
+  .header h1 span{display:none}
+  /* callBtn küçük ekranda gizleme — sadece ikon olarak göster */
+  #callBtn{font-size:16px;padding:0 8px;min-width:36px;height:36px}
+  .bnav-label{display:none}
+  .bnav-icon{font-size:24px}
+  #bottomNav{height:56px}
+}
+
+/* Auth — geniş ekranda sol marka paneli göster */
+@media(min-width:769px){
+  #authBrand{display:flex!important}
+  #authMobileLogo{display:none!important}
+  #authScreen > div:last-child{border-left:1px solid var(--border)}
+}
+
+/* ── YENİ GRUP FAB — Tamamen kaldırıldı ── */
+#newGroupFab{display:none!important}
+.acc-item{border-bottom:1px solid var(--border)!important;border-radius:0!important}
+.acc-item:last-child{border-bottom:none!important}
+html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.3);color:#fcd34d}
+</style>
+</head>
+<body>
+
+<!-- PARTICLE CANVAS -->
+<!-- openchat Audio -->
+
+<!-- ── MESAJ İSTATİSTİKLERİ MODALI ──────────────────────────────── -->
+<div id="statsModal" onclick="if(event.target===this)closeStats()">
+  <div class="stats-box">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <strong style="color:var(--text);font-size:16px">📊 Mesaj İstatistikleri</strong>
+      <button onclick="closeStats()" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--muted);padding:0;min-width:auto">✕</button>
+    </div>
+    <div id="statsContent"></div>
+  </div>
+</div>
+
+<!-- ── GLOBAL ARAMA MODALI ──────────────────────────────────────── -->
+<div id="globalSearchModal" onclick="if(event.target===this)closeGlobalSearch()">
+  <div id="globalSearchBox">
+    <div id="globalSearchHeader">
+      <input id="globalSearchInput" placeholder="🔍  Tüm sohbetlerde ara..." autocomplete="off" oninput="runGlobalSearch(this.value)">
+      <button id="globalSearchCloseBtn" onclick="closeGlobalSearch()" title="Kapat">✕</button>
+    </div>
+    <div id="globalSearchResults"><div class="gs-empty">Aramak istediğiniz kelimeyi yazın...</div></div>
+  </div>
+</div>
+
+<!-- ── ANKET OLUŞTURMA MODALI ──────────────────────────────────── -->
+<div id="pollModal" onclick="if(event.target===this)closePollModal()">
+  <div class="poll-box">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <strong style="color:var(--text);font-size:15px">📊 Anket Oluştur</strong>
+      <button onclick="closePollModal()" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--muted);padding:0;min-width:auto">✕</button>
+    </div>
+    <input id="pollQuestion" placeholder="Soru..." style="width:100%;margin-bottom:12px">
+    <div id="pollOptions">
+      <div class="poll-opt-row"><input placeholder="Seçenek 1" class="poll-opt-inp"><button onclick="removePollOpt(this)" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:18px;padding:0;min-width:auto">✕</button></div>
+      <div class="poll-opt-row"><input placeholder="Seçenek 2" class="poll-opt-inp"><button onclick="removePollOpt(this)" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:18px;padding:0;min-width:auto">✕</button></div>
+    </div>
+    <button onclick="addPollOpt()" class="btn-sec" style="width:100%;margin:8px 0 16px;padding:8px">+ Seçenek Ekle</button>
+    <button onclick="submitPoll()" style="width:100%;padding:12px">Anketi Gönder 📊</button>
+  </div>
+</div>
+<canvas id="pCanvas"></canvas>
+
+<!-- LOGIN EKRANI -->
+<div id="authScreen" style="position:fixed;inset:0;z-index:100;display:flex;background:var(--bg)">
+  <!-- Sol panel — marka/dekor -->
+  <div id="authBrand" style="display:none;flex:1;background:linear-gradient(135deg,#FF7B7B 0%,#FF4444 100%);flex-direction:column;align-items:center;justify-content:center;padding:60px;position:relative;overflow:hidden">
+    <div style="position:absolute;width:400px;height:400px;border-radius:50%;background:rgba(255,255,255,.06);top:-100px;right:-100px"></div>
+    <div style="position:absolute;width:300px;height:300px;border-radius:50%;background:rgba(255,255,255,.04);bottom:-80px;left:-60px"></div>
+    <div style="display:flex;flex-direction:column;align-items:center;margin-bottom:28px;position:relative;gap:18px">
+      <!-- Speech bubble icon -->
+      <svg viewBox="0 0 120 100" width="100" height="84" xmlns="http://www.w3.org/2000/svg">
+        <rect x="4" y="4" width="112" height="72" rx="32" fill="#1A0505"/>
+        <polygon points="18,76 18,98 42,76" fill="#1A0505"/>
+        <circle cx="38" cy="40" r="9" fill="#FF7B7B"/>
+        <circle cx="60" cy="40" r="9" fill="#FF7B7B"/>
+        <circle cx="82" cy="40" r="9" fill="#FF7B7B"/>
+      </svg>
+      <!-- Word mark -->
+      <div style="font-family:'Outfit',Arial,sans-serif;font-size:38px;font-weight:900;color:#1A0505;letter-spacing:-1.5px;line-height:1">openchat</div>
+    </div>
+    <h1 style="display:none">openchat</h1>
+    <p style="color:rgba(255,255,255,.75);font-size:16px;text-align:center;line-height:1.6;max-width:280px;position:relative;margin:0 0 40px">
+      Güvenli, hızlı ve şifreli mesajlaşma platformu.
+    </p>
+    <div style="display:flex;flex-direction:column;gap:14px;position:relative;width:100%;max-width:280px">
+      <div style="display:flex;align-items:center;gap:12px;color:rgba(255,255,255,.85);font-size:14px">
+        <span style="width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">🔒</span>
+        Şifren cihazında saklanır, ağa gitmez
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;color:rgba(255,255,255,.85);font-size:14px">
+        <span style="width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">🔗</span>
+        Mesajlar P2P — broker görmez (WebRTC DC)
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;color:rgba(255,255,255,.85);font-size:14px">
+        <span style="width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">🎙️</span>
+        Sesli &amp; görüntülü arama
+      </div>
+    </div>
+  </div>
+
+  <!-- Sağ panel — form -->
+  <div style="width:100%;max-width:460px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 32px;overflow-y:auto;background:var(--panel)">
+    <!-- Mobilde logo -->
+    <div id="authMobileLogo" style="text-align:center;margin-bottom:32px">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
+        <!-- Speech bubble icon -->
+        <svg viewBox="0 0 120 100" width="64" height="54" xmlns="http://www.w3.org/2000/svg">
+          <rect x="4" y="4" width="112" height="72" rx="32" fill="var(--primary)"/>
+          <polygon points="18,76 18,98 42,76" fill="var(--primary)"/>
+          <circle cx="38" cy="40" r="9" fill="var(--bg)"/>
+          <circle cx="60" cy="40" r="9" fill="var(--bg)"/>
+          <circle cx="82" cy="40" r="9" fill="var(--bg)"/>
+        </svg>
+        <!-- Word mark -->
+        <div style="font-family:'Outfit',Arial,sans-serif;font-size:28px;font-weight:900;color:var(--primary);letter-spacing:-1px;line-height:1">openchat</div>
+      </div>
+    </div>
+
+    <div style="width:100%;max-width:360px">
+      <h3 style="font-size:22px;font-weight:700;color:var(--text);margin:0 0 6px">Hoş Geldin</h3>
+      <p style="color:var(--muted);font-size:14px;margin:0 0 28px">Hesabınla giriş yap veya yeni hesap oluştur</p>
+
+      <!-- Kayıtlı hesaplar -->
+      <div id="savedAccountsList" class="hidden" style="margin-bottom:20px;text-align:left;max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--panel)"></div>
+      <div id="orDivider" class="hidden" style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
+        <div style="flex:1;height:1px;background:var(--border)"></div>
+        <span style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">veya</span>
+        <div style="flex:1;height:1px;background:var(--border)"></div>
+      </div>
+
+      <!-- Input grup: kullanıcı adı -->
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Kullanıcı Adı</label>
+        <input id="authUsername" placeholder="en az 3 karakter, harf/rakam/_" maxlength="16"
+               style="width:100%;font-size:15px;padding:12px 14px;border-radius:10px" autocomplete="username"/>
+      </div>
+
+      <!-- Input grup: şifre -->
+      <div style="margin-bottom:16px">
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Şifre</label>
+        <div style="position:relative">
+          <input id="authPassword" type="password" placeholder="en az 6 karakter" maxlength="64"
+                 style="width:100%;font-size:15px;padding:12px 44px 12px 14px;border-radius:10px" autocomplete="current-password"/>
+          <button id="pwToggleBtn" onclick="if(window.togglePwVis)togglePwVis()" title="Şifreyi göster/gizle"
+                  style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);font-size:17px;cursor:pointer;padding:4px;min-width:auto;line-height:1">👁</button>
+        </div>
+      </div>
+
+      <!-- Şifresiz eski hesap uyarısı -->
+      <div id="firstLoginBanner" style="display:none;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:#92400e;line-height:1.5">
+        <strong>🔒 İlk şifreni belirle</strong><br>
+        Tüm mesajların ve grupların korunacak — sadece kullanmak istediğin şifreyi gir.
+      </div>
+
+      <button id="authBtn" style="width:100%;padding:13px;font-size:15px;font-weight:700;border-radius:10px;margin-bottom:12px">
+        Giriş Yap
+      </button>
+      <div id="authStatus" style="font-size:13px;color:var(--danger);min-height:18px;text-align:center;margin-bottom:8px"></div>
+      <p style="margin:0;font-size:11px;color:var(--muted);text-align:center;line-height:1.5">
+        🔐 PBKDF2-SHA256 · Şifren ağa gitmez · Mesajlar P2P şifreli (WebRTC)
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- GRUP MODAL -->
+<div id="groupModal" class="overlay hidden">
+  <div class="card">
+    <h3 style="margin-top:0">Yeni Grup Oluştur</h3>
+    <input id="groupNameInput" placeholder="Grup Adı" style="width:100%;margin-bottom:15px"/>
+    <div style="text-align:left;margin-bottom:15px">
+      <label style="font-size:13px;color:var(--muted);font-weight:700">Arkadaşlar:</label>
+      <div id="groupFriendCbs" style="max-height:120px;overflow-y:auto;margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+    <div style="display:flex;gap:10px">
+      <button id="cancelGroupBtn" class="btn-sec" style="flex:1">İptal</button>
+      <button id="confirmGroupBtn" style="flex:1">Grubu Kur</button>
+    </div>
+  </div>
+</div>
+
+<!-- GELEN ARAMA -->
+<div id="callModal" class="overlay hidden">
+  <div class="card" style="border:3px solid var(--primary)">
+    <div style="font-size:40px;margin-bottom:15px">📞</div>
+    <h2 id="callerName" style="margin:0 0 5px">...</h2>
+    <p style="color:var(--muted);margin-bottom:25px">Sesli arama geliyor...</p>
+    <div style="display:flex;gap:10px">
+      <button id="rejectCallBtn" class="btn-d" style="flex:1;padding:15px">Reddet</button>
+      <button id="acceptCallBtn" class="btn-ok" style="flex:1;padding:15px">Cevapla</button>
+    </div>
+  </div>
+</div>
+
+<!-- AYARLAR PANELİ -->
+<div id="settingsPanel">
+  <div class="sp-head">
+    <span>⚙️ Ayarlar</span>
+    <button onclick="toggleSettings()" style="background:none;border:none;color:var(--muted);font-size:18px;padding:0;min-width:auto;cursor:pointer">✕</button>
+  </div>
+  <div class="sp-sec">Görünüm</div>
+  <div class="sp-row">
+    <span>🌙 Koyu Mod</span>
+    <label class="toggle"><input type="checkbox" id="toggleDark" onchange="toggleDarkMode()"><span class="tslider"></span></label>
+  </div>
+  <div class="sp-row">
+    <span>🎆 Mesaj Efektleri</span>
+    <label class="toggle"><input type="checkbox" id="toggleParticles" checked><span class="tslider"></span></label>
+  </div>
+  <div class="sp-sec">Hesap</div>
+  <div class="sp-row" style="cursor:pointer" onclick="document.getElementById('avatarInput').click()">
+    <span>🖼️ Profil Fotoğrafını Değiştir</span>
+    <span style="color:var(--muted);font-size:12px">→</span>
+  </div>
+  <div class="sp-row" id="spTokenRow">
+    <span>🔑 Totem Kodun</span>
+    <span id="spToken" style="font-size:11px;color:var(--muted);font-family:monospace;cursor:pointer" onclick="copyToken()">---</span>
+  </div>
+  <div class="sp-row" style="cursor:pointer" onclick="changePassword()">
+    <span>🔒 Şifre Değiştir</span>
+    <span style="color:var(--muted);font-size:12px">→</span>
+  </div>
+  <div class="sp-sec">İstatistikler</div>
+  <div class="sp-row" style="cursor:pointer" onclick="openStats();toggleSettings()">
+    <span>📊 Mesaj İstatistiklerim</span>
+    <span style="color:var(--muted);font-size:12px">→</span>
+  </div>
+  <div class="sp-sec">Engellenmiş Kullanıcılar</div>
+  <div id="blockedList"><div style="padding:12px 20px;font-size:13px;color:var(--muted)">Engellenmiş kullanıcı yok.</div></div>
+  <div style="padding:16px 20px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
+    <button onclick="doLogout()" class="btn-d" style="width:100%;padding:10px">🚪 Çıkış Yap</button>
+    <button onclick="deleteCurrentAccount()" style="width:100%;padding:10px;background:none;border:1px solid var(--danger);color:var(--danger);border-radius:var(--r);font-weight:600;cursor:pointer;transition:.15s;font-size:13px" onmouseenter="this.style.background='rgba(237,66,69,.1)'" onmouseleave="this.style.background='none'">🗑️ Hesabı Kalıcı Sil</button>
+  </div>
+</div>
+<button id="settingsBtn" onclick="toggleSettings()">⚙️</button>
+
+<!-- ANA UYGULAMA -->
+<div id="mainApp" class="hidden" style="height:100dvh;display:flex;flex-direction:row">
+
+  <!-- ═══ MASAÜSTÜ NAV RAIL — sadece masaüstünde görünür ═══ -->
+  <nav id="desktopNavRail">
+    <!-- Logo -->
+    <div class="dnr-logo" style="display:flex;align-items:center;justify-content:center;background:var(--primary);border-radius:14px;width:46px;height:46px"><svg viewBox="0 0 60 60" style="width:34px;height:34px" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="10" width="50" height="38" rx="19" fill="var(--bg)"/><polygon points="14,48 14,56 24,48" fill="var(--bg)"/><circle cx="22" cy="29" r="4.5" fill="var(--primary)"/><circle cx="30" cy="29" r="4.5" fill="var(--primary)"/><circle cx="38" cy="29" r="4.5" fill="var(--primary)"/></svg></div>
+
+    <!-- Sohbetler (arkadaş + grup birleşik) -->
+    <button class="dnr-item active" id="dnrChats" onclick="if(!ME)return;dnrSwitch('chats')" data-tip="Sohbetler">💬</button>
+    <!-- İstekler -->
+    <button class="dnr-item" id="dnrRequests" onclick="if(!ME)return;dnrSwitch('requests')" data-tip="İstekler">
+      🔔<span id="dnrReqBadge" class="dnr-badge hidden">0</span>
+    </button>
+    <!-- Ara -->
+    <button class="dnr-item" onclick="if(!ME)return;openGlobalSearch()" data-tip="Ara">🔍</button>
+
+    <!-- Spacer -->
+    <div class="dnr-spacer"></div>
+
+    <!-- Bottom -->
+    <div class="dnr-bottom">
+      <div id="dnrNetDot" style="width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-bottom:4px;transition:.3s" title="Bağlantı"></div>
+      <button class="dnr-item" onclick="toggleDarkMode()" data-tip="Tema"><span id="dnrThemeIcon">🌙</span></button>
+      <button class="dnr-item" onclick="if(!ME)return;dnrSwitch('profile')" id="dnrProfile" data-tip="Profil">
+        <div class="dnr-profile-wrap">
+          <div class="dnr-av" id="dnrAv">?</div>
+          <div class="dnr-online-dot" id="dnrOnlineDot"></div>
+        </div>
+      </button>
+      <button class="dnr-item" onclick="if(!ME)return;toggleSettings()" data-tip="Ayarlar" style="font-size:20px">⚙️</button>
+    </div>
+  </nav>
+
+  <!-- ═══ ANA İÇERİK KOLONU: Header (mobil) + Sidebar + Chat ═══ -->
+  <div id="mainContent" style="flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden">
+
+    <!-- Aktif Arama Banner -->
+    <div id="activeCallBanner" onclick="goToActiveCall()">
+      <div id="acb-left">
+        <div id="acb-dot"></div>
+        <span id="acb-info">📞 Aktif Arama</span>
+      </div>
+      <span id="acb-timer">00:00</span>
+    </div>
+
+    <!-- Mobil header — masaüstünde display:none -->
+    <div class="header">
+      <div style="display:flex;align-items:center;gap:8px">
+        <button id="mobileMenuBtn" onclick="toggleMobileSidebar()" title="Menü">☰</button>
+        <h1 style="display:flex;align-items:center;gap:0;letter-spacing:-.5px">
+          <span style="color:var(--primary);font-weight:900">open</span><span style="position:relative;display:inline-flex;align-items:center"><svg width="22" height="22" viewBox="0 0 24 24" style="margin:0 1px -1px" xmlns="http://www.w3.org/2000/svg"><path d="M12 3C7.03 3 3 6.58 3 11c0 2.1.87 4.01 2.29 5.47L4 21l4.87-1.55A9.6 9.6 0 0012 20c4.97 0 9-3.58 9-8s-4.03-9-9-9z" fill="var(--primary)"/></svg><span style="color:var(--primary);font-weight:900">h</span><span style="color:var(--primary);font-weight:900">at</span></span>
+          <span style="font-size:13px;font-weight:500;color:var(--muted);background:var(--sec);padding:2px 8px;border-radius:20px;margin-left:6px">Beta 3.5</span>
+        </h1>
+
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span id="iceStatusBar" class="hidden" style="font-size:11px;color:#fff;padding:3px 10px;border-radius:20px;font-weight:600;transition:.3s"></span>
+        <span id="netStatus" style="font-size:13px;color:#f59e0b;font-weight:600">● Bağlanıyor...</span>
+        <span id="dcStatus" style="font-size:11px;font-weight:600;margin-left:8px;display:none" title="WebRTC P2P Bağlantıları"></span>
+        <button id="mobileSearchBtn" onclick="openGlobalSearch()" style="background:none;border:none;font-size:20px;cursor:pointer;padding:4px 8px;min-width:auto;color:var(--muted)" title="Ara">🔍</button>
+        <div class="theme-toggle" onclick="toggleDarkMode()" id="themeToggleBtn" title="Tema değiştir">
+          <span class="theme-toggle-icon" id="themeIcon">🌙</span>
+          <span class="theme-toggle-label" id="themeLabel">Koyu</span>
+        </div>
+      </div>
+    </div>
+
+  <!-- Sidebar + Chat satırı -->
+  <div class="app" style="flex:1;min-height:0">
+    <div class="sidebar" id="sidebar">
+      <input type="file" id="avatarInput" accept="image/*" class="hidden">
+
+      <!-- ══ PANEL 1: SOHBETLER (arkadaş + grup birleşik) ══ -->
+      <div class="sv-panel active" id="panelChats">
+        <div class="sv-panel-header">
+          <span class="sv-panel-title">Sohbetler</span>
+          <div style="display:flex;gap:4px">
+            <button class="sv-icon-btn" onclick="if(!ME)return;openGlobalSearch()" title="Ara" id="desktopSearchBtn">🔍</button>
+            <button class="sv-icon-btn" onclick="if(!ME)return;openGroupModal()" title="Yeni Grup Oluştur" style="font-size:20px;font-weight:700;color:var(--primary)">＋</button>
+          </div>
+        </div>
+        <div class="lst" id="lstChats" style="overflow-y:auto;flex:1;padding:8px 8px 16px"></div>
+      </div>
+
+      <!-- ══ PANEL 2: İSTEKLER + ARKADAŞ EKLEME ══ -->
+      <div class="sv-panel" id="panelRequests">
+        <div class="sv-panel-header">
+          <span class="sv-panel-title">İstekler</span>
+        </div>
+        <!-- Arkadaş ekleme bölümü -->
+        <div class="sv-add-section">
+          <div class="sv-section-label">Arkadaş Ekle</div>
+          <div class="sv-add-row">
+            <input id="addInput" placeholder="İsim veya Totem kodu..."/>
+            <button id="addBtn">Ekle</button>
+          </div>
+          <div id="addStatus"></div>
+        </div>
+        <!-- Gelen istekler -->
+        <div class="sv-list-section">
+          <span>Gelen İstekler</span>
+          <span id="reqBadge" class="hidden" style="background:var(--danger);color:#fff;padding:1px 6px;border-radius:10px;font-size:10px;font-weight:700">0</span>
+        </div>
+        <div class="lst" id="lstR" style="overflow-y:auto;flex:1;padding:0 8px 16px"></div>
+      </div>
+
+      <!-- ══ PANEL 3: PROFİL ══ -->
+      <div class="sv-panel" id="panelProfile">
+        <div class="sv-panel-header">
+          <span class="sv-panel-title">Profil</span>
+        </div>
+        <!-- Gradient banner + avatar -->
+        <div class="sv-profile-banner"></div>
+        <div style="display:flex;flex-direction:column;align-items:center;padding:0 20px 0">
+          <div class="sv-profile-av-wrap" onclick="$('avatarInput').click()" title="Fotoğraf değiştir">
+            <div class="sv-profile-av" id="svProfAv">?</div>
+            <div class="sv-profile-av-edit">✎</div>
+          </div>
+          <div class="sv-profile-name" id="svProfName">...</div>
+          <div class="sv-profile-token" id="svProfToken" onclick="copyToken()">Totem: ...</div>
+        </div>
+        <div class="sv-profile-body" style="overflow-y:auto;flex:1">
+          <!-- İsim değiştir -->
+          <div class="sv-section-label">Kullanıcı Adı</div>
+          <div class="sv-profile-name-edit">
+            <input id="svNameInput" placeholder="Yeni kullanıcı adı..." maxlength="16"/>
+            <button onclick="svChangeName()">Kaydet</button>
+          </div>
+          <!-- Durum -->
+          <div class="sv-section-label" style="margin-top:4px">Durum</div>
+          <div class="sv-status-grid">
+            <button class="sv-status-btn active" id="svSt-available" onclick="changeStatus('available');svUpdateStatusBtns('available')">
+              <span class="sv-status-dot" style="background:#3ba55c"></span>Müsait
+            </button>
+            <button class="sv-status-btn" id="svSt-busy" onclick="changeStatus('busy');svUpdateStatusBtns('busy')">
+              <span class="sv-status-dot" style="background:#ef4444"></span>Meşgul
+            </button>
+            <button class="sv-status-btn" id="svSt-dnd" onclick="changeStatus('dnd');svUpdateStatusBtns('dnd')">
+              <span class="sv-status-dot" style="background:#7c3aed"></span>Rahatsız Etme
+            </button>
+            <button class="sv-status-btn" id="svSt-away" onclick="changeStatus('away');svUpdateStatusBtns('away')">
+              <span class="sv-status-dot" style="background:#f59e0b"></span>Uzakta
+            </button>
+          </div>
+
+          <!-- Şifre değiştir -->
+          <div class="sv-section-label" style="margin-top:16px">Hesap</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button onclick="changePassword()" style="width:100%;padding:9px;border-radius:10px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);font-size:12px;font-weight:600;cursor:pointer;text-align:left;display:flex;align-items:center;gap:8px">
+              🔒 Şifre Değiştir
+            </button>
+            <button onclick="doLogout()" style="width:100%;padding:9px;border-radius:10px;background:rgba(237,66,69,.08);color:var(--danger);border:1px solid rgba(237,66,69,.2);font-size:12px;font-weight:600;cursor:pointer;text-align:left;display:flex;align-items:center;gap:8px">
+              🚪 Çıkış Yap
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Legacy hidden elements (JS still references these) -->
+      <span id="myStatusDot" style="display:none"></span>
+      <span id="myName" style="display:none">...</span>
+      <p id="myToken" style="display:none"></p>
+      <select id="statusSelect" style="display:none" onchange="changeStatus(this.value)">
+        <option value="available">Müsait</option>
+        <option value="busy">Meşgul</option>
+        <option value="dnd">Rahatsız Etme</option>
+        <option value="away">Uzakta</option>
+      </select>
+
+      <!-- Legacy list elements -->
+      <div id="lstF" style="display:none"></div>
+      <div id="lstG" style="display:none"><div id="groupsArea"></div></div>
+      <button id="newGroupBtn" style="display:none" onclick="openGroupModal()"></button>
+    </div>
+    <div id="sidebarOverlay" onclick="closeMobileSidebar()"></div>
+
+    <!-- BOTTOM NAV — Mobil -->
+    <div id="bottomNav">
+      <!-- Arkadaşlar yerine Profil -->
+      <button class="bnav-item" id="bnavProfile" onclick="if(!ME)return;mobileOpenProfile()">
+        <span class="bnav-icon" id="bnavProfileIcon">👤</span>
+        <span class="bnav-label">Profil</span>
+      </button>
+      <button class="bnav-item active" id="bnavChats" onclick="if(!ME)return;openMobileSidebar();bnavSwitch('chats')">
+        <span class="bnav-icon">💬</span>
+        <span class="bnav-label">Sohbetler</span>
+      </button>
+      <button class="bnav-item" id="bnavSearch" onclick="if(!ME)return;openGlobalSearch()">
+        <span class="bnav-icon">🔍</span>
+        <span class="bnav-label">Ara</span>
+      </button>
+      <button class="bnav-item" id="bnavRequests" onclick="if(!ME)return;openMobileSidebar();bnavSwitch('requests')">
+        <span class="bnav-icon">🔔</span>
+        <span class="bnav-label">İstekler</span>
+        <span id="bnavReqBadge" class="bnav-badge hidden">0</span>
+      </button>
+      <button class="bnav-item" id="bnavSettings" onclick="if(!ME)return;toggleSettings()">
+        <span class="bnav-icon">⚙️</span>
+        <span class="bnav-label">Ayarlar</span>
+      </button>
+    </div>
+
+    <div class="chat-area" id="chatArea">
+      <!-- DRAG & DROP OVERLAY -->
+      <div id="dropOverlay" style="display:none;position:absolute;inset:0;z-index:500;background:rgba(88,101,242,.15);border:3px dashed var(--primary);border-radius:12px;pointer-events:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;backdrop-filter:blur(2px)">
+        <div style="font-size:56px;animation:dropBounce .6s infinite alternate">📎</div>
+        <div style="font-size:18px;font-weight:700;color:var(--primary)">Dosyayı buraya bırak</div>
+        <div style="font-size:13px;color:var(--muted)">Max 10MB · Resim, video, PDF, müzik...</div>
+      </div>
+      <div id="emptyState" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5">
+        <svg width="120" height="120" viewBox="0 0 120 120" style="margin-bottom:18px;opacity:.5" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="60" cy="60" r="58" fill="none" stroke="var(--primary)" stroke-width="2" stroke-dasharray="6 8" opacity=".35"/>
+          <rect x="28" y="38" width="64" height="44" rx="14" fill="var(--primary)" opacity=".18"/>
+          <path d="M40 82 L40 96 L56 82 Z" fill="var(--primary)" opacity=".18"/>
+          <circle cx="48" cy="60" r="4" fill="var(--primary)"/>
+          <circle cx="60" cy="60" r="4" fill="var(--primary)"/>
+          <circle cx="72" cy="60" r="4" fill="var(--primary)"/>
+        </svg>
+        <h3 style="color:var(--muted);text-align:center;padding:0 24px" id="emptyStateMsg">Mesajlaşmak için soldan bir sohbet seçin.</h3>
+      </div>
+
+      <div class="ch">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button id="mobileChatBack" onclick="showMobileSidebar()" title="Geri" style="display:none;background:none;border:none;font-size:22px;color:var(--muted);cursor:pointer;padding:4px 6px;min-width:auto">‹</button>
+          <div style="position:relative;display:inline-block">
+            <div id="chatAv" onclick="zoomChatAvatar()" title="Büyüt">#</div>
+            <span id="chatDot" class="sdot" style="position:absolute;bottom:0;right:0"></span>
+          </div>
+          <div>
+            <strong id="chatName" style="font-size:15px;font-weight:700">...</strong>
+            <div id="chatSub" style="font-size:12px;color:var(--muted)">...</div>
+            <!-- 🛡️ [YENİ-H2] ECDH parmak izi — MITM tespiti için out-of-band karşılaştırın -->
+            <div id="chatKeyFp" style="display:none;font-size:10px;color:var(--ok);font-family:monospace;letter-spacing:.5px;cursor:pointer"
+                 title="Karşı tarafla bu kodu sesli/fiziksel doğrulayın. Farklıysa MITM saldırısı olabilir! (Açmak/kapatmak için tıklayın)"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button onclick="toggleMsgSearch()" class="btn-sec" style="padding:0 12px;height:38px;font-size:16px;border-radius:10px" title="Mesajlarda Ara">🔍</button>
+          <button id="callBtn" class="btn-ok" style="height:38px;border-radius:10px;padding:0 16px">📞 <span class="callbtn-txt">Sesli Ara</span></button>
+          <button id="videoCallBtn" class="btn-sec" onclick="startVideoCall()" title="Görüntülü Ara" style="height:38px;border-radius:10px;padding:0 14px;display:none">📹 <span class="callbtn-txt">Görüntülü</span></button>
+          <button id="groupDetailBtn" class="hidden btn-sec" onclick="openGroupDetail(chatId)" style="padding:0 14px;height:38px;border-radius:10px">⋮</button>
+        </div>
+      </div>
+
+      <div id="msgSearchBar" class="hidden">
+        <span>🔍</span>
+        <input id="msgSearchInp" placeholder="Mesajlarda ara..." oninput="searchMessages()"/>
+        <span class="sr-count" id="srCount"></span>
+        <button onclick="searchNav(-1)" style="background:none;border:none;cursor:pointer;font-size:16px;padding:0 2px;min-width:auto;color:var(--muted)">▲</button>
+        <button onclick="searchNav(1)" style="background:none;border:none;cursor:pointer;font-size:16px;padding:0 2px;min-width:auto;color:var(--muted)">▼</button>
+        <button onclick="toggleMsgSearch()" style="background:none;border:none;cursor:pointer;font-size:16px;padding:0;min-width:auto;color:var(--muted)">✕</button>
+      </div>
+
+      <!-- Aktif Grup Araması — sohbet içi banner -->
+      <div id="chatCallBanner" class="hidden" style="
+        display:none;align-items:center;justify-content:space-between;
+        background:linear-gradient(90deg,#16a34a 0%,#15803d 100%);
+        color:#fff;padding:10px 16px;gap:12px;flex-wrap:wrap;
+        border-bottom:1px solid rgba(255,255,255,.1);flex-shrink:0">
+        <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
+          <div style="width:10px;height:10px;border-radius:50%;background:#4ade80;animation:acbPulse 1.2s ease-in-out infinite;flex-shrink:0"></div>
+          <div style="min-width:0">
+            <div style="font-weight:700;font-size:13px">📞 Aktif Grup Araması</div>
+            <div id="chatCallParticipants" style="font-size:11px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0">
+          <button onclick="startGroupCall()" style="background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.35);color:#fff;font-size:12px;font-weight:700;padding:6px 14px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:.15s"
+            onmouseover="this.style.background='rgba(255,255,255,.3)'" onmouseout="this.style.background='rgba(255,255,255,.2)'">
+            📞 Aramaya Katıl
+          </button>
+        </div>
+      </div>
+
+      <div id="chatMsgs" class="msgs"></div>
+
+        <div class="inp-wrap hidden" id="inpWrap">
+        <div id="replyBar" class="reply-bar hidden">
+          <span style="color:var(--primary);font-weight:600;font-size:11px">↩ Yanıtlanıyor:</span>
+          <span class="reply-txt" id="replyBarTxt"></span>
+          <button onclick="cancelReply()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:0;min-width:auto">✕</button>
+        </div>
+        <div id="vanishToggleBar" class="vanish-toggle-bar hidden">
+          <span>⏱️ Kaybolucak mesaj modu açık</span>
+          <select id="vanishDurSel" style="background:none;border:none;font-size:12px;color:var(--danger);cursor:pointer;outline:none;padding:0;font-weight:700">
+            <option value="10">10 sn</option>
+            <option value="30" selected>30 sn</option>
+            <option value="60">1 dk</option>
+            <option value="300">5 dk</option>
+            <option value="3600">1 saat</option>
+          </select>
+          <button onclick="toggleVanishMode()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:0;min-width:auto;margin-left:auto">✕</button>
+        </div>
+
+        <!-- ═══ MASAÜSTÜ INPUT SATIRI (mobilde gizli) ═══ -->
+        <div class="inp-row desktop-inp-row">
+          <div class="inp-tools">
+            <button id="emojiToggleBtn" onclick="toggleEmojiPicker()" title="Emoji" class="inp-tool-btn">😊</button>
+            <button onclick="openGifModal()" title="GIF Gönder" class="inp-tool-btn" style="font-size:12px;font-weight:800;color:var(--primary);letter-spacing:.5px">GIF</button>
+            <button onclick="openPollModal()" title="Anket" class="inp-tool-btn" style="color:var(--primary)">📊</button>
+            <button id="vanishBtn" onclick="toggleVanishMode()" title="Kaybolucak Mesaj" class="inp-tool-btn">⏱️</button>
+            <label title="Dosya/Resim Gönder" class="inp-tool-btn" style="cursor:pointer;display:flex;align-items:center;justify-content:center">
+              📎<input type="file" id="fileInput" multiple accept="image/*,video/*,.pdf,.doc,.docx,.txt,.zip,.mp3" class="hidden" onchange="sendFile(this)">
+            </label>
+          </div>
+          <div class="inp-main-row">
+            <input id="msgInput" placeholder="Mesajınızı yazın..." autocomplete="off"/>
+            <button id="voiceRecBtn" onmousedown="startVoiceRec()" onmouseup="stopVoiceRec()" ontouchstart="startVoiceRec(event)" ontouchend="stopVoiceRec()" title="Sesli mesaj (basılı tut)" class="inp-tool-btn" style="color:var(--muted);user-select:none">🎙️</button>
+            <button id="sendBtn">Gönder ✈</button>
+          </div>
+        </div>
+
+        <!-- ═══ MOBİL INPUT SATIRI (masaüstünde gizli) ═══ -->
+        <!-- Ataç menüsü — yukarı açılır -->
+        <div id="attachMenu" class="attach-menu hidden">
+          <div class="attach-grid">
+            <label class="attach-item" title="Galeri">
+              <div class="attach-icon">🖼️</div>
+              <span>Galeri</span>
+              <input type="file" accept="image/*,video/*" multiple class="hidden" onchange="sendFile(this);closeAttachMenu()">
+            </label>
+            <label class="attach-item" title="Kamera">
+              <div class="attach-icon">📷</div>
+              <span>Kamera</span>
+              <input type="file" accept="image/*" capture="environment" class="hidden" onchange="sendFile(this);closeAttachMenu()">
+            </label>
+            <label class="attach-item" title="Belge">
+              <div class="attach-icon">📄</div>
+              <span>Belge</span>
+              <input type="file" accept=".pdf,.doc,.docx,.txt,.zip,.xls,.xlsx,.ppt,.pptx" multiple class="hidden" onchange="sendFile(this);closeAttachMenu()">
+            </label>
+            <button class="attach-item" onclick="openPollModal();closeAttachMenu()" title="Anket">
+              <div class="attach-icon">📊</div>
+              <span>Anket</span>
+            </button>
+            <button class="attach-item" onclick="toggleVanishMode();closeAttachMenu()" title="Süreli Mesaj">
+              <div class="attach-icon">⏱️</div>
+              <span>Süreli</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="inp-row mobile-inp-row">
+          <!-- Sol: Emoji butonu -->
+          <button id="mobileEmojiBtn" onclick="toggleEmojiPicker()" title="Emoji" class="inp-icon-btn">😊</button>
+
+          <!-- Mesaj input -->
+          <input id="msgInputMobile" placeholder="Mesaj" autocomplete="off"/>
+
+          <!-- Ataç butonu -->
+          <button class="inp-icon-btn" id="attachBtn" onclick="toggleAttachMenu()" title="Ekle">📎</button>
+
+          <!-- Kamera / Fotoğraf -->
+          <label class="inp-icon-btn" title="Fotoğraf">
+            📷<input type="file" accept="image/*,video/*" multiple class="hidden" onchange="sendFile(this)">
+          </label>
+
+          <!-- Ses kaydı / Gönder — toggle JS ile -->
+          <button id="mobileVoiceBtn" onmousedown="startMobileVoice()" onmouseup="stopMobileVoice()" ontouchstart="startMobileVoice(event)" ontouchend="stopMobileVoice(event)" title="Sesli mesaj (basılı tut)" class="inp-send-circle">🎙️</button>
+          <button id="mobileSendBtn" class="inp-send-circle" style="display:none">✈</button>
+        </div>
+
+      </div>
+      <div id="emojiPicker"></div>
+
+
+      <!-- ÇALDIRMA Ekranı -->
+      <div id="callRingUI">
+        <div class="ring-av" id="ringAv">?</div>
+        <div id="ringName">...</div>
+        <div id="ringStatus">Çağrılıyor <span class="ring-dots"><span></span><span></span><span></span></span></div>
+        <button id="ringCancelBtn" title="Aramayı İptal Et" onclick="cancelOutgoingRing()">📵</button>
+      </div>
+
+      <div id="callUI" class="call-ui hidden">
+        <!-- Üst: isim + süre -->
+        <div id="callHeader">
+          <strong id="callName">...</strong>
+          <div id="callTime" style="font-size:12px;opacity:.7;font-family:monospace;margin-top:4px">00:00</div>
+          <div id="screenInd" class="hidden" style="background:#0ea5e9;font-size:10px;padding:3px 8px;border-radius:10px;margin-top:6px">Ekran Paylaşılıyor</div>
+        </div>
+        <!-- Sağ üst: minimize butonu -->
+        <button id="callMinimizeBtn" onclick="minimizeCallUI()" title="Küçült" style="position:absolute;top:16px;right:20px;background:rgba(255,255,255,.12);border:none;color:#e2e8f0;width:38px;height:38px;border-radius:50%;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.15s;z-index:10;padding:0">✕</button>
+
+        <!-- Katılımcılar (kendi kartımız dahil) -->
+        <div id="participantsGrid" class="participants-grid"></div>
+
+        <!-- Video (varsa) -->
+        <div style="position:relative;width:100%;max-width:600px;z-index:1">
+          <video id="remoteVideo" autoplay playsinline class="hidden" ondblclick="toggleVideoFullscreen()" title="Çift tıkla: Tam Ekran"></video>
+          <button id="screenFullBtn" onclick="toggleVideoFullscreen()">⛶ Tam Ekran</button>
+        </div>
+        <div id="audioPh"></div>
+
+        <!-- Kontrol butonları -->
+        <div class="call-ctrl">
+          <button id="muteBtn" onclick="toggleMute()" title="Mikrofon">🎤</button>
+          <button id="deafenBtn" onclick="toggleDeafen()" title="Ses">🔊</button>
+          <button id="videoBtn" onclick="toggleVideo()" title="Kamera Aç/Kapat" style="background:rgba(59,130,246,.35)!important">📷</button>
+          <button id="screenBtn" title="Ekran Paylaş" style="background:rgba(59,130,246,.4)!important">🖥️</button>
+          <button id="endCallBtn" class="btn-d" title="Aramayı Kapat">📵</button>
+        </div>
+      </div>
+    </div>
+  </div><!-- /mainContent -->
+  </div>
+</div>
+
+
+<!-- GIF URL Modal -->
+<div id="gifUrlModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9600;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)" onclick="if(event.target===this)closeGifModal()">
+  <div style="background:var(--panel);border-radius:16px;padding:20px;width:380px;box-shadow:0 10px 40px rgba(0,0,0,.3);border:1px solid var(--border)">
+    <div style="font-size:15px;font-weight:700;margin-bottom:12px">🎬 GIF Gönder</div>
+    <input id="gifUrlInput" placeholder="GIF URL'si yapıştır (tenor.com, giphy.com...)" style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px;margin-bottom:10px"/>
+    <div style="display:flex;gap:8px">
+      <button onclick="submitGifUrl()" style="flex:1;padding:10px;font-size:13px">Gönder</button>
+      <button onclick="closeGifModal()" class="btn-sec" style="flex:1;padding:10px;font-size:13px">İptal</button>
+    </div>
+  </div>
+</div>
+<!-- AVATAR ZOOM -->
+<div id="avatarZoom" onclick="closeAvatarZoom()">
+  <img id="avatarZoomImg" src="" alt="">
+  <div id="avatarZoomName"></div>
+</div>
+<!-- IMAGE VIEWER (for message photos) -->
+<div id="imageViewer" onclick="closeImageViewer()">
+  <button id="imageViewerClose" onclick="closeImageViewer()" title="Kapat">&times;</button>
+  <img id="imageViewerImg" src="" alt="" onclick="event.stopPropagation()">
+  <div id="imageViewerName"></div>
+</div>
+
+<div id="ctxMenu" class="ctx hidden"></div>
+<div id="toastArea"></div>
+
+<!-- GRUP DETAY PANELİ -->
+<input type="file" id="groupAvatarInput" accept="image/*" class="hidden">
+<div id="groupDetailPanel">
+  <div class="gdp-head">
+    <div class="gdp-av" id="gdpAv" title="Fotoğraf değiştir (sadece yönetici)">G</div>
+    <div style="flex:1">
+      <div id="gdpName" style="font-weight:700;font-size:16px">Grup Adı</div>
+      <div id="gdpSub" style="font-size:12px;color:var(--muted)">0 üye</div>
+    </div>
+    <button onclick="closeGroupDetail()" style="background:none;border:none;color:var(--muted);font-size:20px;padding:4px;min-width:auto;cursor:pointer">✕</button>
+  </div>
+  <div class="gdp-body">
+    <div id="gdpAdminActions" class="hidden">
+      <div class="gdp-section">Yönetici Ayarları</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <input id="gdpRenameInput" placeholder="Yeni grup adı" style="flex:1;padding:8px 12px;font-size:13px"/>
+        <button onclick="renameGroup()" style="padding:8px 14px;font-size:13px">Kaydet</button>
+      </div>
+      <button onclick="$('groupAvatarInput').click()" class="btn-sec" style="width:100%;margin-bottom:4px;padding:8px">🖼️ Grup Fotoğrafı Değiştir</button>
+    </div>
+    <div class="gdp-section">Üyeler</div>
+    <div id="gdpMembers"></div>
+    <div style="padding:12px 0 4px">
+      <button id="leaveGroupBtn" onclick="leaveGroup()" class="btn-d" style="width:100%;padding:10px;font-size:13px">🚪 Gruptan Çık</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+  <script src="/notification-auth.js"></script>
+</body></html>
