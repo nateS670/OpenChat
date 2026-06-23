@@ -59,3 +59,9 @@ Uygulamayı kullanırken veya üzerinde geliştirme yaparken projenin deneysel d
 🔒 Güvenli Veri Akışı (Hackera Geçit Yok): Sunucusuz (Serverless) mimari ve Uçtan Uca Şifreleme (E2EE) sayesinde, sistemde kod kaynaklı bir açık oluşsa dahi verileriniz asla üçüncü parti bir sunucuya akmaz. Ortada ele geçirilebilecek merkezi bir "mesaj veritabanı" yoktur. Veriler yalnızca iletişimdeki iki cihaz arasında kriptografik olarak barındırılır.
 
 Geliştirici Notu: Bu proje, modern web protokollerinin sınırlarını zorlamak, sunucu maliyetlerini sıfıra indirerek uçtan uca güvenli ve sansürlenemez bir haberleşme kanalı oluşturmak amacıyla yapay zekanın gücüyle geliştirilmiştir. Tamamen açık, şeffaf ve geliştirilmeye hazırdır.
+
+
+<img width="1917" height="907" alt="image" src="https://github.com/user-attachments/assets/090ad59c-24b7-4cab-8140-4740a6a000c6" />
+
+<img width="1917" height="906" alt="image" src="https://github.com/user-attachments/assets/df15321b-869d-447d-9f24-9681d0b8e5f0" />
+
