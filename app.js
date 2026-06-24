@@ -931,6 +931,15 @@ const _MQTT_ONLY_TYPES = new Set([
   'dc_offer','dc_answer','dc_ice',
   'friend_accept','friend_remove'
 ]);
+// 🛡️ RTC sinyal tipleri: DC açıksa DC üzerinden, değilse MQTT fallback
+// (küçük SDP/ICE paketleri — mesaj içeriği YOK, güvenli)
+const _RTC_SIG_TYPES = new Set([
+  'rtc_offer','rtc_answer','rtc_ice','rtc_end','rtc_reject','rtc_busy',
+  'rtc_renego','rtc_renego_ans','rtc_call',
+  'grp_offer','grp_answer','grp_ice','grp_end',
+  'grp_call_active','grp_call_ended','call_state',
+  'screen_offer','screen_started','screen_ended'
+]);
 
 // ── DataChannel bağlantısı başlat (sadece initiator taraf çağırır) ──
 async function _dcConnect(userId){
@@ -1192,7 +1201,7 @@ function saveDB(db){
     // ── Mesajları şifreli ayrı depoya yaz (büyük dosyaları fileCache'e taşı) ──
     const trimmedMessages = JSON.parse(JSON.stringify(messagesToSave));
     Object.keys(trimmedMessages).forEach(k=>{
-      if(!trimmedMessages[k]) return;
+      if(!Array.isArray(trimmedMessages[k])) return;
       if(trimmedMessages[k].length>300) trimmedMessages[k]=trimmedMessages[k].slice(-300);
       trimmedMessages[k]=trimmedMessages[k].map(m=>{
         if(m.fileData&&m.fileData.startsWith('data:')&&m.fileData.length>80000){
@@ -1206,7 +1215,7 @@ function saveDB(db){
     let msgJson = JSON.stringify(trimmedMessages);
     if(msgJson.length>4*1024*1024){
       Object.keys(trimmedMessages).forEach(k=>{
-        if(trimmedMessages[k]) trimmedMessages[k]=trimmedMessages[k].slice(-30);
+        if(Array.isArray(trimmedMessages[k])) trimmedMessages[k]=trimmedMessages[k].slice(-30);
       });
       msgJson = JSON.stringify(trimmedMessages);
     }
@@ -1421,6 +1430,12 @@ async function broadcast(p, qos=0){
     if(_RELIABLE_TYPES.includes(p.type)){
       _outbox.push({p, qos, t: Date.now()});
       _saveOutbox();
+      return;
+    }
+
+    // 📡 RTC sinyal tipleri: DC yoksa MQTT'ye fall back (sadece küçük SDP/ICE)
+    if(_RTC_SIG_TYPES.has(p.type)){
+      return _mqttSend(p, Math.max(qos, 1));
     }
     return;
   }
@@ -7018,6 +7033,7 @@ setInterval(()=>{
   const now2=Date.now();
   const allKeys=Object.keys(db.messages||{});
   allKeys.forEach(k=>{
+    if(!Array.isArray(db.messages[k])) return;
     const before=db.messages[k].length;
     db.messages[k]=db.messages[k].filter(m=>{
       if(m.expiresAt&&m.expiresAt<=now2){changed=true;return false;}
