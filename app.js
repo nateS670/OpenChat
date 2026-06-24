@@ -364,19 +364,35 @@ const _peerAESKeyCache    = {}; // user_id → CryptoKey (ECDH-derived)
 //  signingPublicKey/signature alanları Base64 (ham bayt) olarak kodlanır.
 // ══════════════════════════════════════════════════════════════════
 
-let _idKeyPair       = null;  // Ed25519 CryptoKeyPair (oturuma özel, private key asla ağa çıkmaz)
+let _idKeyPair       = null;  // Ed25519/ECDSA CryptoKeyPair (oturuma özel, private key asla ağa çıkmaz)
 let _myPassport       = null; // sunucudan alınan { passport, signature }
 let _passportPromise  = null;
+let _sigAlgName       = null; // 'Ed25519' | 'ECDSA-P256' — bu oturumda hangi imza algoritması kullanılıyor
 const _verifiedPeers        = new Set(); // sunucu+yerel olarak doğrulanmış user_id'ler (bu oturum)
 const _lastPresenceIdentity = {};        // user_id → son alınan {passport,passportSig,nonce,presenceSig}
 const _verifyCache          = {};        // tekrar tekrar /api/identity sorgulamamak için
 
+// 🛡️ [FIX] Ed25519, WebCrypto'da HER tarayıcıda yok: Safari/iOS 17'den,
+// Firefox 129'dan, Chrome ise ANCAK 137'den (Mayıs 2025) itibaren destekliyor.
+// Güncellenmemiş/eski Chrome, eski Android WebView, iOS 16 ve altı, Firefox
+// 128 ve altı gibi durumlarda generateKey burada İSTİSNA fırlatıyordu →
+// _ensureIdentityPassport() hata veriyordu → presence kimliksiz gidiyordu →
+// hiçbir peer bu kullanıcıyla DataChannel kurmuyordu (bkz. _ensurePeerVerified)
+// → mesajlar outbox'ta sonsuza dek birikiyordu. ECDSA P-256, WebCrypto'da
+// 2014'ten beri TÜM tarayıcılarda var; Ed25519 yoksa ona düşülür.
 async function _ensureIdKeyPair(){
   if(_idKeyPair) return _idKeyPair;
   if(!crypto.subtle || !crypto.subtle.generateKey){
     throw new Error('[SEC] WebCrypto bu tarayıcıda kullanılamıyor');
   }
-  _idKeyPair = await crypto.subtle.generateKey({name:'Ed25519'}, true, ['sign','verify']);
+  try{
+    _idKeyPair = await crypto.subtle.generateKey({name:'Ed25519'}, true, ['sign','verify']);
+    _sigAlgName = 'Ed25519';
+  }catch(e){
+    console.warn('[SEC] Ed25519 desteklenmiyor, ECDSA P-256 imza anahtarına düşülüyor:', e);
+    _idKeyPair = await crypto.subtle.generateKey({name:'ECDSA', namedCurve:'P-256'}, true, ['sign','verify']);
+    _sigAlgName = 'ECDSA-P256';
+  }
   return _idKeyPair;
 }
 
@@ -398,7 +414,13 @@ async function _ensureIdentityPassport(){
     const r = await fetch('/api/identity?action=issue', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ username: ME.user_id, userId: ME.user_id, signingPublicKey: pub }),
+      // 🛡️ [FIX] 'alg' eklendi — sunucu bunu pasaportun içine geçirmeli
+      // (passport objesine kopyalamalı) ki peer'lar doğrulama sırasında
+      // hangi WebCrypto algoritmasını kullanacağını bilsin. Sunucu bu alanı
+      // yok sayarsa eski davranışa (her zaman Ed25519) geri döner — bu da
+      // ECDSA'ya düşmüş kullanıcılar için doğrulamanın sessizce başarısız
+      // olmasına yol açar, bkz. _verifyPeerPassport.
+      body: JSON.stringify({ username: ME.user_id, userId: ME.user_id, signingPublicKey: pub, alg: _sigAlgName }),
       signal: AbortSignal.timeout(6000)
     });
     if(!r.ok) throw new Error('[SEC] /api/identity?action=issue HTTP '+r.status);
@@ -424,7 +446,9 @@ async function _ensureIdentityPassport(){
 async function _signPresenceNonce(nonce){
   const kp = await _ensureIdKeyPair();
   const enc = new TextEncoder().encode(ME.user_id + '|' + nonce);
-  const sig = await crypto.subtle.sign('Ed25519', kp.privateKey, enc);
+  // 🛡️ [FIX] ECDSA, Ed25519'dan farklı olarak sign() çağrısında hash belirtilmesini ister.
+  const signAlg = _sigAlgName === 'ECDSA-P256' ? {name:'ECDSA', hash:'SHA-256'} : 'Ed25519';
+  const sig = await crypto.subtle.sign(signAlg, kp.privateKey, enc);
   return _b64(sig);
 }
 
@@ -460,11 +484,23 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
     // genel anahtarıyla YEREL olarak doğrula (replay/çalıntı pasaport koruması).
     // 🛡️ [FIX] identity.js'de alan adı "pubKey" — "signingPublicKey" DEĞİL.
     // Kendi decode'umuz yerine sunucunun doğruladığı data.identity kullanılır.
+    // 🛡️ [FIX] Peer'ın hangi algoritmayla imzaladığı pasaportun içindeki
+    // "alg" alanından okunur (sunucu bunu geçirmiyorsa eski davranış olan
+    // Ed25519'a düşülür — geriye dönük uyumluluk için). Bu olmadan, Ed25519
+    // desteklemeyen bir tarayıcıda ECDSA'ya düşmüş bir peer'ın 65 byte'lık
+    // P-256 anahtarı 32 byte bekleyen Ed25519 importKey'e verilir ve
+    // doğrulama HER ZAMAN sessizce başarısız olurdu.
+    const peerAlg = decoded.alg === 'ECDSA-P256'
+      ? {name:'ECDSA', namedCurve:'P-256'}
+      : {name:'Ed25519'};
+    const verifyAlg = decoded.alg === 'ECDSA-P256'
+      ? {name:'ECDSA', hash:'SHA-256'}
+      : 'Ed25519';
     const pubKey = await crypto.subtle.importKey(
-      'raw', _u8(data.identity.pubKey), {name:'Ed25519'}, false, ['verify']
+      'raw', _u8(data.identity.pubKey), peerAlg, false, ['verify']
     );
     const enc = new TextEncoder().encode(fromUserId + '|' + nonce);
-    const sigOk = await crypto.subtle.verify('Ed25519', pubKey, _u8(presenceSig), enc);
+    const sigOk = await crypto.subtle.verify(verifyAlg, pubKey, _u8(presenceSig), enc);
     _verifyCache[cacheKey] = sigOk;
     return sigOk;
   }catch(e){
