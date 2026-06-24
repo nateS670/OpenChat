@@ -505,9 +505,19 @@ async function storePeerPublicKey(userId, jwk){
   const jwkStr = JSON.stringify(jwk);
   if(_peerPublicKeyCache[userId] === jwkStr) return; // zaten işlendi
 
+  // 🛡️ [MITM-FIX] Güvenlik kodu: her iki tarafta AYNI kod görünmeli.
+  // Önceki: SHA-256(peerKey) — her cihaz farklı kod görüyordu.
+  // Yeni: SHA-256(sort(myKeyJSON, peerKeyJSON).join('|'))
+  // Her iki tarafın da aynı iki key'i sıralı birleştirmesi sayesinde
+  // sonuç her iki cihazda da özdeş olur.
   let newFp;
   try{
-    const raw = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(jwkStr));
+    const myJwk = await getMyECDHPubKeyJwk();
+    const myStr = JSON.stringify(myJwk);
+    // Lexicographic sıralama → tarafsız, deterministik
+    const parts = [myStr, jwkStr].sort();
+    const combined = parts[0] + '|' + parts[1];
+    const raw = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(combined));
     newFp = [...new Uint8Array(raw)].map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,32);
   }catch(e){ return; } // hash hesaplanamazsa anahtarı kabul etme
 
@@ -1308,7 +1318,7 @@ async function connectNetwork(){
   mq=mqtt.connect(cfg.mqttBroker, mqttOpts);
   mq.on('connect',()=>{
     setNet('online');
-    mq.subscribe(_obfTopic,{qos:0});
+    mq.subscribe(_obfTopic,{qos:1}); // QoS 1 — sinyal paketleri kaybolmasın
     // MQTT artık SADECE sinyal kanalı — presence + DC offer/answer/ICE + offline fallback
     // Gerçek mesajlar: WebRTC DataChannel (P2P, broker görmez)
     if(ME) sendPresence(); // → ECDH public key + DC offer tetikler
@@ -1778,6 +1788,16 @@ async function handleSig(d){
 
   if(d.to!==ME.user_id)return;
   if(d.type==='rtc_offer'){
+    // ICE restart offer — aktif arama varken geliyorsa yeniden müzakere et
+    if(d.iceRestart && pc && pc.signalingState !== 'closed'){
+      try{
+        await pc.setRemoteDescription(new RTCSessionDescription(d.sdp));
+        const ans = await pc.createAnswer();
+        await pc.setLocalDescription(ans);
+        broadcastRTC({type:'rtc_answer',to:d.from,from:ME.user_id,sdp:pc.localDescription});
+      }catch(e){ console.warn('[ICE] restart answer hatası:', e); }
+      return;
+    }
     // Zaten aktif bir 1-1 arama varsa yeni gelen offer'ı reddet
     if(pc&&pc.iceConnectionState!=='closed'&&pc.iceConnectionState!=='failed'){
       broadcastRTC({type:'rtc_busy',to:d.from,from:ME.user_id});
@@ -4686,6 +4706,38 @@ handleSig=async(d)=>{
 };
 
 // ── ICE BAĞLANTI DURUMU İZLEYİCİSİ ──────────────────────────────
+// connectionState: iceConnectionState'den daha güvenilir, ayrıca dinlenir
+function handleConnectionState(peerConnection, targetUser){
+  const s = peerConnection.connectionState;
+  console.log(`[CONN] [${targetUser}]: connectionState=${s}`);
+  if(s === 'connected'){
+    // ice handler'ı tetikle — timer başlasın
+    handleIceState(peerConnection, targetUser);
+  }
+  if(s === 'failed'){
+    const el=$('callTime');
+    // ICE restart: bir kez dene
+    if(!peerConnection._iceRestartDone){
+      peerConnection._iceRestartDone = true;
+      if(el) el.innerText = 'ICE yeniden bağlanıyor...';
+      console.warn('[ICE] Restart deneniyor:', targetUser);
+      try{ peerConnection.restartIce(); }catch(e){}
+      // Caller tarafı yeni offer gönder
+      if(peerConnection._isCallerSide){
+        (async()=>{
+          try{
+            const offer = await peerConnection.createOffer({iceRestart:true});
+            await peerConnection.setLocalDescription(offer);
+            broadcastRTC({type:'rtc_offer',to:targetUser,from:ME.user_id,sdp:peerConnection.localDescription,iceRestart:true});
+          }catch(e){ endCall('❌ Bağlantı kurulamadı.'); }
+        })();
+      }
+    } else {
+      endCall('❌ Bağlantı başarısız (ICE restart sonrası).');
+    }
+  }
+}
+
 function handleIceState(peerConnection, targetUser){
   const s=peerConnection.iceConnectionState;
   console.log(`ICE [${targetUser}]: iceState=${s}`);
@@ -4846,7 +4898,9 @@ $('acceptCallBtn').onclick=async()=>{
     if(e.candidate) broadcastRTC({type:'rtc_ice',to:o.from,from:ME.user_id,cand:e.candidate});
   };
   pc.ontrack=onTrack;
+  pc._isCallerSide=false;
   pc.oniceconnectionstatechange=()=>{handleIceState(pc,o.from);};
+  pc.onconnectionstatechange=()=>{handleConnectionState(pc,o.from);};
   // Renegotiation — karşı taraf yeni track eklediğinde (örn. video açtığında)
   // _setupDone: initial offer/answer tamamlanana kadar onnegotiationneeded susturulur
   pc._setupDone=false;
@@ -4937,7 +4991,9 @@ $('callBtn').onclick=async()=>{
       if(e.candidate) broadcastRTC({type:'rtc_ice',to:chatId,from:ME.user_id,cand:e.candidate});
     };
     pc.ontrack=onTrack;
+    pc._isCallerSide=true;
     pc.oniceconnectionstatechange=()=>{handleIceState(pc,chatId);};
+    pc.onconnectionstatechange=()=>{handleConnectionState(pc,chatId);};
     // Renegotiation — video açıldığında otomatik tetiklenir
     // _setupDone: initial offer/answer tamamlanana kadar onnegotiationneeded susturulur
     pc._setupDone=false;
