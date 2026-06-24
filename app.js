@@ -1628,14 +1628,11 @@ function _isValidSelfLeave(oldMembers, newMembers, from){
 
 async function handleSig(d){
   // ── WebRTC DataChannel sinyalleri — DC kurulumu için MQTT üzerinden gelir ──
-  // 🛡️ [FIX] dc_* paketleri to-filtresi olmadan işleniyordu — odadaki her
-  // istemci yabancı offer/answer/ICE'ı kendi _dcPeers'ına uyguluyordu.
-  // Sonuç: gerçek alıcı answer'ı hiç görmüyor, taraf have-local-offer'da
-  // sonsuza dek kilitleniyordu. Şimdi: hedef değilsek anında çık.
-  if(
-    (d.type==='dc_offer'||d.type==='dc_answer'||d.type==='dc_ice') &&
-    d.to !== ME?.user_id
-  ) return;
+  
+  // 🛡️ [KRİTİK FİLTRE] DC sinyalleri sadece gerçek alıcı tarafından işlenmelidir
+  if(['dc_offer', 'dc_answer', 'dc_ice'].includes(d.type)){
+    if(d.to !== ME.user_id) return; 
+  }
 
   if(d.type==='dc_offer'){ await _dcHandleOffer(d); return; }
   if(d.type==='dc_answer'){ await _dcHandleAnswer(d); return; }
@@ -1645,6 +1642,7 @@ async function handleSig(d){
     if(ME&&ME.user_id.toLowerCase()===d.user_id.toLowerCase()) broadcast({type:'user_id_taken',to:d.reqId});
     return;
   }
+  // ... kodun geri kalanı aynı şekilde devam ediyor ...
   if(d.type==='user_id_taken'&&chkPending&&d.to===window._rqId){nameTaken=true;return;}
   if(!ME)return;
   if(d.from&&blocked.includes(d.from))return;
