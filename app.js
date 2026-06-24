@@ -1797,6 +1797,7 @@ async function handleSig(d){
     await pc.setRemoteDescription(new RTCSessionDescription(d.sdp));
     for(const cand of iceQ){try{await pc.addIceCandidate(new RTCIceCandidate(cand));}catch(e){}}
     iceQ=[];
+    pc._setupDone=true; // caller: answer alindi, renegotiation artik serbest
   }
   // Renegotiation — karşı taraf video açtı/kapattı
   else if(d.type==='rtc_renego'&&pc&&pc.signalingState!=='closed'){
@@ -4847,10 +4848,15 @@ $('acceptCallBtn').onclick=async()=>{
   pc.ontrack=onTrack;
   pc.oniceconnectionstatechange=()=>{handleIceState(pc,o.from);};
   // Renegotiation — karşı taraf yeni track eklediğinde (örn. video açtığında)
+  // _setupDone: initial offer/answer tamamlanana kadar onnegotiationneeded susturulur
+  pc._setupDone=false;
   pc.onnegotiationneeded=async()=>{
     if(!pc||pc.signalingState==='closed') return;
+    if(!pc._setupDone) return; // ilk setup bitmeden renegotiation yok
+    if(!pc.remoteDescription) return;
     try{
       const offer=await pc.createOffer();
+      if(!pc||pc.signalingState==='closed') return;
       await pc.setLocalDescription(offer);
       broadcastRTC({type:'rtc_renego',to:o.from,from:ME.user_id,sdp:pc.localDescription});
     }catch(e){}
@@ -4863,6 +4869,7 @@ $('acceptCallBtn').onclick=async()=>{
   await pc.setLocalDescription(ans);
   // Answer'ı ICE beklenmeden anında gönder
   broadcastRTC({type:'rtc_answer',to:o.from,from:ME.user_id,sdp:pc.localDescription});
+  pc._setupDone=true; // callee: answer gönderildi, renegotiation artık serbest
   $('callTime').innerText='Bağlanıyor...';
   // startCallTimer ICE connected'da çağrılır
 };
@@ -4932,10 +4939,15 @@ $('callBtn').onclick=async()=>{
     pc.ontrack=onTrack;
     pc.oniceconnectionstatechange=()=>{handleIceState(pc,chatId);};
     // Renegotiation — video açıldığında otomatik tetiklenir
+    // _setupDone: initial offer/answer tamamlanana kadar onnegotiationneeded susturulur
+    pc._setupDone=false;
     pc.onnegotiationneeded=async()=>{
       if(!pc||pc.signalingState==='closed') return;
+      if(!pc._setupDone) return; // ilk setup bitmeden renegotiation yok
+      if(!pc.remoteDescription) return;
       try{
         const offer=await pc.createOffer();
+        if(!pc||pc.signalingState==='closed') return;
         await pc.setLocalDescription(offer);
         broadcastRTC({type:'rtc_renego',to:chatId,from:ME.user_id,sdp:pc.localDescription});
       }catch(e){}
@@ -5221,10 +5233,14 @@ window.startVideoCall=async()=>{
   };
   pc.ontrack=onTrack;
   pc.oniceconnectionstatechange=()=>{handleIceState(pc,chatId);};
+  pc._setupDone=false;
   pc.onnegotiationneeded=async()=>{
     if(!pc||pc.signalingState==='closed') return;
+    if(!pc._setupDone) return;
+    if(!pc.remoteDescription) return;
     try{
       const offer=await pc.createOffer();
+      if(!pc||pc.signalingState==='closed') return;
       await pc.setLocalDescription(offer);
       broadcastRTC({type:'rtc_renego',to:chatId,from:ME.user_id,sdp:pc.localDescription});
     }catch(e){}
