@@ -1725,7 +1725,10 @@ async function handleSig(d){
       if(document.visibilityState!=='visible') _playMsgSound();
       else playSound('msg');
       showToast(d.from, _msgBody);
-      _sendNativeNotif(d.from, _msgBody, 'sv-msg');
+      // 📱 Mobilede her durumda native bildirim gönder; masaüstünde sadece arka planda
+      const _isMob=/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const _msgAppVis=document.visibilityState==='visible'&&document.hasFocus();
+      if(!_msgAppVis||_isMob) _sendNativeNotif(d.from, _msgBody, 'sv-msg');
     }
     return;
   }
@@ -1764,7 +1767,11 @@ async function handleSig(d){
       broadcastGroupRead(d.groupId, d.msg.id, d.from);
     } else if(!isSilentMode()){
       playSound('msg');
-      showToast(db.groups[d.groupId].name,`${d.from}: ${d.msg.fileType?`📎 ${d.msg.fileName||'Dosya'}`:d.msg.text}`);_sendNativeNotif(db.groups[d.groupId].name,`${d.from}: ${d.msg.fileType?'📎 Dosya':d.msg.text}`,'sv-grp');
+      showToast(db.groups[d.groupId].name,`${d.from}: ${d.msg.fileType?`📎 ${d.msg.fileName||'Dosya'}`:d.msg.text}`);
+      // 📱 Mobilede her durumda native bildirim; masaüstünde sadece arka planda
+      const _isMobG=/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const _grpAppVis=document.visibilityState==='visible'&&document.hasFocus();
+      if(!_grpAppVis||_isMobG) _sendNativeNotif(db.groups[d.groupId].name,`${d.from}: ${d.msg.fileType?'📎 Dosya':d.msg.text}`,'sv-grp');
     }
     return;
   }
@@ -2283,6 +2290,14 @@ const _reconnectLimiter = {
 };
 
 $('authBtn').onclick=async()=>{
+  // 🔔 Bildirim iznini USER GESTURE içinde hemen iste (mobilede şart)
+  if('Notification' in window && Notification.permission === 'default'){
+    Notification.requestPermission().then(r=>{
+      window._notifGranted=(r==='granted');
+      _updateMobilBildirimUI();
+    }).catch(()=>{});
+  }
+
   const rawName=$('authUsername').value.trim();
   const rawPw=$('authPassword').value;
 
@@ -2342,6 +2357,8 @@ $('authBtn').onclick=async()=>{
     updateUI(); setTimeout(sendPresence,500);
     // ME.username tanımlandıktan hemen sonra bu fonksiyonu çağır:
     initPushNotifications();
+    // 🎤📷 Giriş sonrası medya izni iste (arama hazırlığı)
+    setTimeout(()=>_requestMediaPermissionsOnLogin(), 1800);
     return;
   }
 
@@ -2366,6 +2383,8 @@ $('authBtn').onclick=async()=>{
     updateUI(); setTimeout(sendPresence,500);
     // ME.username tanımlandıktan hemen sonra bu fonksiyonu çağır:
     initPushNotifications();
+    // 🎤📷 Giriş sonrası medya izni iste
+    setTimeout(()=>_requestMediaPermissionsOnLogin(), 1800);
   };
 
   if(mq&&mq.connected){
@@ -3980,7 +3999,136 @@ async function toggleVideo(){
   }
 }
 
-// ── MOBİL ARKA PLAN AUDIO — WakeLock ──────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+//  🎤📷 MEDYA İZİN YÖNETİMİ
+//  Giriş sonrası izin iste, arama öncesi durum kontrol et.
+// ══════════════════════════════════════════════════════════════════
+
+// Mevcut mikrofon + kamera izin durumunu Permission API ile sorgula
+async function _queryMediaPermStates(){
+  let mic='prompt', cam='prompt';
+  try{ const p=await navigator.permissions.query({name:'microphone'}); mic=p.state; p.onchange=()=>{mic=p.state;}; }catch(e){}
+  try{ const p=await navigator.permissions.query({name:'camera'});     cam=p.state; p.onchange=()=>{cam=p.state;}; }catch(e){}
+  return {mic, cam};
+}
+
+// Giriş sonrası çağrılır — modal ile açıkla, sonra izin iste
+async function _requestMediaPermissionsOnLogin(){
+  if(!navigator.mediaDevices?.getUserMedia) return;
+
+  const {mic, cam} = await _queryMediaPermStates();
+
+  // İkisi de zaten verilmişse atla
+  if(mic==='granted' && cam==='granted') return;
+
+  const overlay=document.createElement('div');
+  overlay.id='_mediaPermModal';
+  overlay.style.cssText='position:fixed;inset:0;z-index:10001;background:rgba(15,23,42,.88);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(10px)';
+
+  const bothDenied = mic==='denied' && cam==='denied';
+  const micDenied  = mic==='denied';
+  const camDenied  = cam==='denied';
+
+  if(bothDenied){
+    overlay.innerHTML=`
+      <div style="background:var(--panel);border-radius:20px;padding:28px 24px;max-width:360px;width:92%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);border:1px solid var(--border);animation:modalIn .25s cubic-bezier(.34,1.56,.64,1) both">
+        <div style="font-size:48px;margin-bottom:12px">🎤📷</div>
+        <h3 style="margin:0 0 8px;color:var(--text);font-size:18px;font-weight:700">İzinler Engelli</h3>
+        <p style="color:var(--muted);font-size:13px;line-height:1.6;margin:0 0 12px">
+          Mikrofon ve kamera izni daha önce reddedildi. Aramaları kullanmak için tarayıcı ayarlarından izin ver.
+        </p>
+        <div style="background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.25);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--text);margin:0 0 20px;text-align:left;line-height:1.7">
+          🔒 Adres çubuğuna dokun / kilit ikonuna tıkla<br>→ <strong>Site Ayarları</strong> veya <strong>İzinler</strong><br>→ Mikrofon ve Kamera → <strong>İzin Ver</strong>
+        </div>
+        <button id="_mpClose" style="width:100%;padding:13px;border-radius:12px;background:var(--primary);color:#fff;border:none;font-weight:700;font-size:14px;cursor:pointer">Tamam, Anlıyorum</button>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#_mpClose').onclick=()=>overlay.remove();
+    return;
+  }
+
+  const denied = micDenied ? '🎤 Mikrofon' : (camDenied ? '📷 Kamera' : '');
+  const deniedNote = denied ? `<p style="background:rgba(237,66,69,.08);border:1px solid rgba(237,66,69,.2);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--danger);margin:0 0 12px;text-align:left">
+    ⚠️ ${denied} izni daha önce reddedildi — tarayıcı ayarlarından açman gerekebilir.
+  </p>` : '';
+
+  overlay.innerHTML=`
+    <div style="background:var(--panel);border-radius:20px;padding:28px 24px;max-width:360px;width:92%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);border:1px solid var(--border);animation:modalIn .25s cubic-bezier(.34,1.56,.64,1) both">
+      <div style="font-size:48px;margin-bottom:12px">🎤📷</div>
+      <h3 style="margin:0 0 8px;color:var(--text);font-size:18px;font-weight:700">Arama İzinleri</h3>
+      <p style="color:var(--muted);font-size:13px;line-height:1.6;margin:0 0 10px">
+        Sesli ve görüntülü aramaları kullanmak için <strong style="color:var(--text)">mikrofon ve kamera</strong> iznine ihtiyaç var.
+      </p>
+      ${deniedNote}
+      <p style="color:var(--muted);font-size:12px;margin:0 0 20px">İzin verdiğinde mikrofon ve kamera sadece <strong style="color:var(--text)">arama sırasında</strong> açılır.</p>
+      <div style="display:flex;gap:10px">
+        <button id="_mpSkip" style="flex:1;padding:12px;border-radius:12px;background:var(--input-bg);color:var(--muted);border:1px solid var(--border);font-size:13px;cursor:pointer">Şimdi Değil</button>
+        <button id="_mpAllow" style="flex:1;padding:12px;border-radius:12px;background:var(--primary);color:#fff;border:none;font-weight:700;font-size:13px;cursor:pointer">İzin Ver</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  await new Promise(resolve=>{
+    overlay.querySelector('#_mpSkip').onclick=()=>{ overlay.remove(); resolve(); };
+    overlay.querySelector('#_mpAllow').onclick=async()=>{
+      overlay.remove();
+      try{
+        // Mikrofon
+        if(mic!=='denied'){
+          const ms=await navigator.mediaDevices.getUserMedia({audio:true, video:(cam!=='denied')});
+          ms.getTracks().forEach(t=>t.stop());
+          showToast('İzinler Verildi','✅ Mikrofon ve kamera hazır. Artık arayabilirsin.');
+        }
+      }catch(e){
+        if(e.name==='NotAllowedError') showToast('İzin Reddedildi','Aramalar için tarayıcı ayarlarından izin verebilirsin.');
+      }
+      resolve();
+    };
+  });
+}
+
+// Arama başlamadan önce mikrofon iznini kontrol et.
+// Reddedilmişse kullanıcıya kılavuz modal göster, false döner → arama iptal.
+// 'prompt' veya 'granted' ise true döner → arama devam eder.
+async function _ensureMicPermForCall(){
+  let micState='prompt';
+  try{
+    const p=await navigator.permissions.query({name:'microphone'});
+    micState=p.state;
+  }catch(e){ return true; } // Permissions API yok — getUserMedia'ya bırak
+
+  if(micState==='granted') return true;
+
+  if(micState==='denied'){
+    await new Promise(resolve=>{
+      const overlay=document.createElement('div');
+      overlay.style.cssText='position:fixed;inset:0;z-index:10001;background:rgba(15,23,42,.88);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(10px)';
+      overlay.innerHTML=`
+        <div style="background:var(--panel);border-radius:20px;padding:28px 24px;max-width:360px;width:92%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);border:1px solid var(--border);animation:modalIn .25s cubic-bezier(.34,1.56,.64,1) both">
+          <div style="font-size:48px;margin-bottom:12px">🎤🚫</div>
+          <h3 style="margin:0 0 8px;color:var(--text);font-size:18px;font-weight:700">Mikrofon İzni Gerekli</h3>
+          <p style="color:var(--muted);font-size:13px;line-height:1.6;margin:0 0 12px">
+            Arama yapabilmek için mikrofon iznini tarayıcı ayarlarından açman gerekiyor.
+          </p>
+          <div style="background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.25);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--text);margin:0 0 20px;text-align:left;line-height:1.8">
+            🔒 Adres çubuğuna dokun / kilit ikonuna tıkla<br>
+            → <strong>Site Ayarları</strong> / <strong>İzinler</strong><br>
+            → Mikrofon → <strong>İzin Ver</strong><br>
+            → Sayfayı yenile
+          </div>
+          <button id="_mdOk" style="width:100%;padding:13px;border-radius:12px;background:var(--primary);color:#fff;border:none;font-weight:700;font-size:14px;cursor:pointer">Tamam</button>
+        </div>`;
+      document.body.appendChild(overlay);
+      overlay.querySelector('#_mdOk').onclick=()=>{ overlay.remove(); resolve(); };
+    });
+    return false;
+  }
+
+  // 'prompt' — izin henüz sorulmadı; getUserMedia sorguya gönderir, devam et
+  return true;
+}
+
+
 let _wakeLock=null;
 async function _acquireWakeLock(){
   if(!('wakeLock' in navigator)) return;
@@ -4378,6 +4526,10 @@ async function startGroupCall(){
   $('deafenBtn').className='';$('deafenBtn').textContent='🔊';
   callParticipants=new Set();
   groupCallPeers={};
+
+  // 🎤 Mikrofon izni kontrol et — reddedilmişse kullanıcıya kılavuz göster
+  const _grpMicOk = await _ensureMicPermForCall();
+  if(!_grpMicOk) return;
 
   startCallUI(getDB().groups[chatId].name);
   $('participantsGrid').classList.remove('hidden');
@@ -4854,9 +5006,27 @@ async function _joinGroupPeer(d){
 }
 
 $('acceptCallBtn').onclick=async()=>{
+  const o=window._offer;
+
+  // 🎤 Mikrofon iznini ÖNCE kontrol et — bu bir user gesture (tıklama),
+  // izin henüz 'prompt' ise tarayıcı şimdi sorar; 'denied' ise kılavuz modal
+  // gösterilir ve izin verilmezse arama otomatik reddedilir.
+  const _accMicOk = await _ensureMicPermForCall();
+  if(!_accMicOk){
+    // İzin reddedildi — aramayı karşı tarafa da bildir
+    _stopCallNotif();
+    window._pendingGrpOffers=[];
+    if(o&&o.isGroup){
+      broadcast({type:'grp_end',to:o.from,from:ME.user_id,groupId:o.groupId});
+    } else if(o){
+      broadcast({type:'rtc_reject',to:o.from,from:ME.user_id});
+    }
+    showToast('Arama Reddedildi','🎤 Mikrofon izni olmadan arama yapılamaz.');
+    return;
+  }
+
   _stopCallNotif(); // Zili durdur — aramayı kabul ettik
   $('callModal').classList.add('hidden');
-  const o=window._offer;
 
   if(o&&o.isGroup){
     callParticipants=new Set();groupCallPeers={};
@@ -4963,6 +5133,9 @@ $('callBtn').onclick=async()=>{
     $('muteBtn').textContent='🎤';$('muteBtn').classList.remove('active-mute');
     $('deafenBtn').textContent='🔊';$('deafenBtn').classList.remove('active-deafen');
     $('participantsGrid').classList.remove('hidden');
+    // 🎤 Mikrofon izni kontrol et — reddedilmişse kullanıcıya kılavuz göster
+    const _callMicOk = await _ensureMicPermForCall();
+    if(!_callMicOk) return;
     // Çaldırma ekranını göster
     _showRinging(chatId);
     startCallUI(chatId);
@@ -7526,11 +7699,19 @@ window._notifGranted=false;
   }
 })();
 async function _ensureNotifPerm(){
-  if(!window._askNotifOnce||!('Notification' in window)) return;
+  if(!('Notification' in window)) return;
+  // Zaten verilmiş
+  if(Notification.permission==='granted'){ window._notifGranted=true; return; }
+  // Kesin reddedilmiş — tekrar sormaya gerek yok
+  if(Notification.permission==='denied') return;
+  // 'default': daha önce sorulmamış veya sıfırlanmış — iste
+  if(!window._askNotifOnce) return;
   window._askNotifOnce=false;
-  const r=await Notification.requestPermission();
-  window._notifGranted=(r==='granted');
-  _updateMobilBildirimUI();
+  try{
+    const r=await Notification.requestPermission();
+    window._notifGranted=(r==='granted');
+    _updateMobilBildirimUI();
+  }catch(e){}
 }
 
 // ── Ayarlardaki "Bildirimleri Aç" durumunu güncelle ─────────────────
@@ -7597,18 +7778,28 @@ function _playRingTone(){
   function _oneRing(){
     try{
       const ac=new(window.AudioContext||window.webkitAudioContext)();
-      // Çift tonlu telefon zili (DTMF benzeri 440Hz + 480Hz)
-      const o1=ac.createOscillator(), o2=ac.createOscillator();
-      const g=ac.createGain();
-      o1.type='sine'; o1.frequency.value=440;
-      o2.type='sine'; o2.frequency.value=480;
-      o1.connect(g); o2.connect(g); g.connect(ac.destination);
-      g.gain.setValueAtTime(0.35, ac.currentTime);
-      g.gain.setValueAtTime(0.35, ac.currentTime+1.5);
-      g.gain.linearRampToValueAtTime(0, ac.currentTime+1.8);
-      o1.start(ac.currentTime); o1.stop(ac.currentTime+1.8);
-      o2.start(ac.currentTime); o2.stop(ac.currentTime+1.8);
-      setTimeout(()=>{ try{ac.close();}catch(e){} }, 2500);
+      // 📱 Mobilede AudioContext suspended başlayabilir — resume et
+      const _doRing=()=>{
+        try{
+          // Çift tonlu telefon zili (DTMF benzeri 440Hz + 480Hz)
+          const o1=ac.createOscillator(), o2=ac.createOscillator();
+          const g=ac.createGain();
+          o1.type='sine'; o1.frequency.value=440;
+          o2.type='sine'; o2.frequency.value=480;
+          o1.connect(g); o2.connect(g); g.connect(ac.destination);
+          g.gain.setValueAtTime(0.35, ac.currentTime);
+          g.gain.setValueAtTime(0.35, ac.currentTime+1.5);
+          g.gain.linearRampToValueAtTime(0, ac.currentTime+1.8);
+          o1.start(ac.currentTime); o1.stop(ac.currentTime+1.8);
+          o2.start(ac.currentTime); o2.stop(ac.currentTime+1.8);
+          setTimeout(()=>{ try{ac.close();}catch(e){} }, 2500);
+        }catch(e){}
+      };
+      if(ac.state==='suspended'){
+        ac.resume().then(_doRing).catch(()=>{});
+      } else {
+        _doRing();
+      }
     }catch(e){}
   }
   _oneRing();
@@ -7673,9 +7864,16 @@ async function _notifyIncomingCall(callerName){
   // aktif olabilir.
   if(_callNotifInterval){ clearInterval(_callNotifInterval); _callNotifInterval=null; }
   _playRingTone();
-  // Uygulama arka plandaysa sistem bildirimi gönder (tekrarlayan)
-  const appVisible=document.visibilityState==='visible'&&document.hasFocus();
-  if(!appVisible){
+
+  // 📱 Mobil tespiti — userAgent tabanlı (güvenilir platform bilgisi)
+  const isMobileDevice = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const appVisible = document.visibilityState==='visible' && document.hasFocus();
+
+  // Mobilede HEMEN bildirim gönder (uygulama açık olsa da):
+  //   — iOS/Android'de sistem banner'ı olmadan zil sesi geçmiyor olabilir
+  //   — Ekran kilitli veya başka uygulamadaysa mutlaka gitsin
+  // Masaüstünde: sadece arka planda / odak yoksa gönder (zil yeterli)
+  if(!appVisible || isMobileDevice){
     // İlk bildirimi hemen gönder
     await _sendNativeNotif('📞 Gelen Arama', callerName + ' sizi arıyor — dokunun', 'sv-call');
     // 5 saniyede bir tekrarla — telefon zil sesi gibi
