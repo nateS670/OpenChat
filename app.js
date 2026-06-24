@@ -1628,6 +1628,15 @@ function _isValidSelfLeave(oldMembers, newMembers, from){
 
 async function handleSig(d){
   // ── WebRTC DataChannel sinyalleri — DC kurulumu için MQTT üzerinden gelir ──
+  // 🛡️ [FIX] dc_* paketleri to-filtresi olmadan işleniyordu — odadaki her
+  // istemci yabancı offer/answer/ICE'ı kendi _dcPeers'ına uyguluyordu.
+  // Sonuç: gerçek alıcı answer'ı hiç görmüyor, taraf have-local-offer'da
+  // sonsuza dek kilitleniyordu. Şimdi: hedef değilsek anında çık.
+  if(
+    (d.type==='dc_offer'||d.type==='dc_answer'||d.type==='dc_ice') &&
+    d.to !== ME?.user_id
+  ) return;
+
   if(d.type==='dc_offer'){ await _dcHandleOffer(d); return; }
   if(d.type==='dc_answer'){ await _dcHandleAnswer(d); return; }
   if(d.type==='dc_ice')  { await _dcHandleIce(d); return; }
