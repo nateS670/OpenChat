@@ -466,8 +466,12 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
     // başarısız oluyordu. Önce decode + parse edilmesi gerekir.
     let decoded;
     try{ decoded = JSON.parse(atob(passport)); }
-    catch(e){ _verifyCache[cacheKey] = false; return false; }
+    catch(e){
+      console.warn('[SEC][VERIFY-FAIL] pasaport decode/parse edilemedi:', fromUserId, e);
+      _verifyCache[cacheKey] = false; return false;
+    }
     if(!decoded || (decoded.username !== fromUserId && decoded.userId !== fromUserId)){
+      console.warn('[SEC][VERIFY-FAIL] pasaporttaki kimlik fromUserId ile eşleşmiyor:', fromUserId, 'decoded=', decoded);
       _verifyCache[cacheKey] = false; return false;
     }
     const r = await fetch('/api/identity?action=verify', {
@@ -476,9 +480,16 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
       body: JSON.stringify({ passport, signature: passportSig }),
       signal: AbortSignal.timeout(6000)
     });
-    if(!r.ok){ _verifyCache[cacheKey] = false; return false; }
+    if(!r.ok){
+      let body=''; try{ body = await r.text(); }catch(_){}
+      console.warn('[SEC][VERIFY-FAIL] /api/identity?action=verify HTTP', r.status, fromUserId, body);
+      _verifyCache[cacheKey] = false; return false;
+    }
     const data = await r.json();
-    if(!data || data.valid !== true || !data.identity){ _verifyCache[cacheKey] = false; return false; }
+    if(!data || data.valid !== true || !data.identity){
+      console.warn('[SEC][VERIFY-FAIL] sunucu pasaportu geçersiz/valid:false buldu:', fromUserId, data);
+      _verifyCache[cacheKey] = false; return false;
+    }
 
     // Sunucu pasaportu onayladı → şimdi presence imzasını pasaportun
     // genel anahtarıyla YEREL olarak doğrula (replay/çalıntı pasaport koruması).
@@ -496,15 +507,22 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
     const verifyAlg = decoded.alg === 'ECDSA-P256'
       ? {name:'ECDSA', hash:'SHA-256'}
       : 'Ed25519';
-    const pubKey = await crypto.subtle.importKey(
-      'raw', _u8(data.identity.pubKey), peerAlg, false, ['verify']
-    );
+    let pubKey;
+    try{
+      pubKey = await crypto.subtle.importKey(
+        'raw', _u8(data.identity.pubKey), peerAlg, false, ['verify']
+      );
+    }catch(e){
+      console.warn('[SEC][VERIFY-FAIL] genel anahtar import edilemedi (alg=%s, pubKey uzunluğu=%s):', decoded.alg, data.identity.pubKey?.length, fromUserId, e);
+      _verifyCache[cacheKey] = false; return false;
+    }
     const enc = new TextEncoder().encode(fromUserId + '|' + nonce);
     const sigOk = await crypto.subtle.verify(verifyAlg, pubKey, _u8(presenceSig), enc);
+    if(!sigOk) console.warn('[SEC][VERIFY-FAIL] presence imzası pasaportun genel anahtarıyla eşleşmiyor:', fromUserId, 'alg=', decoded.alg);
     _verifyCache[cacheKey] = sigOk;
     return sigOk;
   }catch(e){
-    console.warn('[SEC] Pasaport doğrulama hatası:', fromUserId, e);
+    console.warn('[SEC][VERIFY-FAIL] Pasaport doğrulama istisnası:', fromUserId, e);
     _verifyCache[cacheKey] = false;
     return false;
   }
@@ -515,7 +533,10 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
 async function _ensurePeerVerified(userId){
   if(_verifiedPeers.has(userId)) return true;
   const idf = _lastPresenceIdentity[userId];
-  if(!idf) return false;
+  if(!idf){
+    console.warn('[SEC][VERIFY-FAIL] bu peer için kimlikli presence hiç alınmadı (henüz gelmedi ya da kimliksiz geldi):', userId);
+    return false;
+  }
   const ok = await _verifyPeerPassport(userId, idf.passport, idf.passportSig, idf.nonce, idf.presenceSig);
   if(ok) _verifiedPeers.add(userId); else _verifiedPeers.delete(userId);
   return ok;
@@ -1459,6 +1480,7 @@ async function broadcast(p, qos=0){
         const pkt = await aesEncrypt(p, targetUser);
         if(ME) pkt.f = ME.user_id;
         dcPeer.dc.send(JSON.stringify(pkt));
+        console.log('[DC] Mesaj P2P olarak GERÇEKTEN gönderildi →', targetUser, p.type);
         return;
       }catch(e){ console.warn('[DC] Gönderim hatasi:', e.message); }
     }
@@ -1468,12 +1490,14 @@ async function broadcast(p, qos=0){
       try{
         const encrypted = await aesEncrypt(p, targetUser);
         dcPeer.queue.push(JSON.stringify(encrypted));
+        console.log('[DC] DC henüz bağlanıyor, mesaj DC kuyruğuna alındı (henüz GİTMEDİ) →', targetUser, p.type);
       }catch(e){ console.warn('[DC] Mesaj şifrelenemedi:', e.message); }
       return;
     }
 
     // 📦 Peer çevrimdışı → yerel outbox (DC kurulunca _flushOutbox dener)
     if(_RELIABLE_TYPES.includes(p.type)){
+      console.warn('[OUTBOX] DC açık DEĞİL, mesaj outbox\'a kondu (henüz GİTMEDİ) →', targetUser, p.type, 'dcPeer=', dcPeer ? dcPeer.state : '(hiç bağlantı yok)', '_verifiedPeers içinde mi:', _verifiedPeers.has(targetUser));
       _outbox.push({p, qos, t: Date.now()});
       _saveOutbox();
       return;
