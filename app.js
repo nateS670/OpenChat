@@ -1008,6 +1008,27 @@ const _RTC_SIG_TYPES = new Set([
   'screen_offer','screen_started','screen_ended'
 ]);
 
+function _isDcSignalForMe(d){
+  return !!(ME && d && d.to === ME.user_id && d.from && d.from !== ME.user_id);
+}
+
+const _DC_CONNECT_TIMEOUT_MS = 30000;
+
+function _dcPeerIsStale(peer){
+  return !!(peer && peer.state === 'connecting' && peer.startedAt && Date.now() - peer.startedAt > _DC_CONNECT_TIMEOUT_MS);
+}
+
+function _dcRestartIfStale(userId){
+  const peer = _dcPeers[userId];
+  if(!_dcPeerIsStale(peer)) return false;
+  console.warn('[DC] Connecting zaman asimi, baglanti temizleniyor:', userId);
+  _dcClose(userId);
+  if(ME && ME.user_id < userId && _verifiedPeers.has(userId)){
+    setTimeout(()=>_dcConnect(userId), 0);
+  }
+  return true;
+}
+
 // ── DataChannel bağlantısı başlat (sadece initiator taraf çağırır) ──
 async function _dcConnect(userId){
   if(!ME||!rtcCfg) return;
@@ -1020,10 +1041,15 @@ async function _dcConnect(userId){
     return;
   }
   const existing = _dcPeers[userId];
-  if(existing && (existing.state==='connected'||existing.state==='connecting')) return;
+  if(existing?.state==='connected') return;
+  if(existing?.state==='connecting'){
+    if(!_dcPeerIsStale(existing)) return;
+    console.warn('[DC] Eski connecting baglantisi temizlenip yeniden deneniyor:', userId);
+    _dcClose(userId);
+  }
 
   console.log('[DC] Bağlantı başlatılıyor →', userId);
-  _dcPeers[userId] = { pc:null, dc:null, state:'connecting', queue:[], iceQueue:[] };
+  _dcPeers[userId] = { pc:null, dc:null, state:'connecting', queue:[], iceQueue:[], startedAt:Date.now() };
 
   const pc = new RTCPeerConnection(rtcCfg);
   _dcPeers[userId].pc = pc;
@@ -1097,6 +1123,14 @@ function _setupDC(userId, dc){
 // ── Gelen dc_offer'a cevap ver (alıcı taraf) ──
 async function _dcHandleOffer(d){
   if(!ME||!rtcCfg) return;
+  if(!_isDcSignalForMe(d)){
+    console.warn('[DC][SEC] Hedefi bu istemci olmayan dc_offer atlandi:', d?.from, '->', d?.to);
+    return;
+  }
+  if(d.sdp?.type !== 'offer'){
+    console.warn('[DC][SEC] Gecersiz dc_offer SDP atlandi:', d?.from);
+    return;
+  }
   const userId = d.from;
 
   // 🛡️ [HIGH-03]/[YENİ-H2]/[HIGH-04] Teklifi (offer) kabul etmeden ÖNCE
@@ -1115,7 +1149,7 @@ async function _dcHandleOffer(d){
   // Önceki bağlantıyı temizle
   if(_dcPeers[userId]?.pc) _dcClose(userId);
 
-  _dcPeers[userId] = { pc:null, dc:null, state:'connecting', queue:[], iceQueue:[] };
+  _dcPeers[userId] = { pc:null, dc:null, state:'connecting', queue:[], iceQueue:[], startedAt:Date.now() };
   const pc = new RTCPeerConnection(rtcCfg);
   _dcPeers[userId].pc = pc;
 
@@ -1144,8 +1178,20 @@ async function _dcHandleOffer(d){
 
 // ── Gelen dc_answer'ı uygula ──
 async function _dcHandleAnswer(d){
+  if(!_isDcSignalForMe(d)){
+    console.warn('[DC][SEC] Hedefi bu istemci olmayan dc_answer atlandi:', d?.from, '->', d?.to);
+    return;
+  }
+  if(d.sdp?.type !== 'answer'){
+    console.warn('[DC][SEC] Gecersiz dc_answer SDP atlandi:', d?.from);
+    return;
+  }
   const peer = _dcPeers[d.from];
   if(!peer?.pc){ console.warn('[DC] Answer için PC bulunamadı:', d.from); return; }
+  if(peer.pc.signalingState !== 'have-local-offer'){
+    console.warn('[DC] Beklenmeyen answer atlandi:', d.from, 'state=', peer.pc.signalingState);
+    return;
+  }
   try{
     await peer.pc.setRemoteDescription(new RTCSessionDescription(d.sdp));
     for(const cand of (peer.iceQueue||[])){
@@ -1157,8 +1203,13 @@ async function _dcHandleAnswer(d){
 
 // ── Gelen ICE adayını uygula ──
 async function _dcHandleIce(d){
+  if(!_isDcSignalForMe(d)){
+    console.warn('[DC][SEC] Hedefi bu istemci olmayan dc_ice atlandi:', d?.from, '->', d?.to);
+    return;
+  }
   const peer = _dcPeers[d.from];
   if(!peer){ return; }
+  if(!d.cand) return;
   if(peer.pc?.remoteDescription){
     try{ await peer.pc.addIceCandidate(new RTCIceCandidate(d.cand)); }catch(e){}
   } else {
@@ -1197,6 +1248,7 @@ async function _mqttSend(p, qos=0){
 setInterval(()=>{
   if(!ME) return;
   for(const [uid_, peer] of Object.entries(_dcPeers)){
+    if(_dcRestartIfStale(uid_)) continue;
     const s = peer.pc?.connectionState;
     if(s==='failed'||s==='closed'||s==='disconnected') _dcClose(uid_);
   }
@@ -1485,13 +1537,12 @@ async function broadcast(p, qos=0){
       }catch(e){ console.warn('[DC] Gönderim hatasi:', e.message); }
     }
 
-    // ⏳ DC bağlanıyor → DC kuyruğuna al (DC açılınca gönderilir)
+    // DC baglaniyor -> kalici outbox'a al (DC acilinca gonderilir)
     if(_RELIABLE_TYPES.includes(p.type) && dcPeer?.state === 'connecting'){
-      try{
-        const encrypted = await aesEncrypt(p, targetUser);
-        dcPeer.queue.push(JSON.stringify(encrypted));
-        console.log('[DC] DC henüz bağlanıyor, mesaj DC kuyruğuna alındı (henüz GİTMEDİ) →', targetUser, p.type);
-      }catch(e){ console.warn('[DC] Mesaj şifrelenemedi:', e.message); }
+      if(_dcPeerIsStale(dcPeer)) _dcRestartIfStale(targetUser);
+      _outbox.push({p, qos, t: Date.now()});
+      _saveOutbox();
+      console.log('[OUTBOX] DC baglaniyor, mesaj kalici outboxa alindi ->', targetUser, p.type);
       return;
     }
 
@@ -1628,21 +1679,20 @@ function _isValidSelfLeave(oldMembers, newMembers, from){
 
 async function handleSig(d){
   // ── WebRTC DataChannel sinyalleri — DC kurulumu için MQTT üzerinden gelir ──
-  
-  // 🛡️ [KRİTİK FİLTRE] DC sinyalleri sadece gerçek alıcı tarafından işlenmelidir
-  if(['dc_offer', 'dc_answer', 'dc_ice'].includes(d.type)){
-    if(d.to !== ME.user_id) return; 
+  if(d.type==='dc_offer'||d.type==='dc_answer'||d.type==='dc_ice'){
+    if(!_isDcSignalForMe(d)){
+      console.warn('[DC][SEC] Hedefi bu istemci olmayan DC sinyali atlandi:', d.type, d?.from, '->', d?.to);
+      return;
+    }
+    if(d.type==='dc_offer'){ await _dcHandleOffer(d); return; }
+    if(d.type==='dc_answer'){ await _dcHandleAnswer(d); return; }
+    if(d.type==='dc_ice')  { await _dcHandleIce(d); return; }
   }
-
-  if(d.type==='dc_offer'){ await _dcHandleOffer(d); return; }
-  if(d.type==='dc_answer'){ await _dcHandleAnswer(d); return; }
-  if(d.type==='dc_ice')  { await _dcHandleIce(d); return; }
 
   if(d.type==='check_user_id'){
     if(ME&&ME.user_id.toLowerCase()===d.user_id.toLowerCase()) broadcast({type:'user_id_taken',to:d.reqId});
     return;
   }
-  // ... kodun geri kalanı aynı şekilde devam ediyor ...
   if(d.type==='user_id_taken'&&chkPending&&d.to===window._rqId){nameTaken=true;return;}
   if(!ME)return;
   if(d.from&&blocked.includes(d.from))return;
