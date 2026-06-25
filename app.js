@@ -1919,7 +1919,9 @@ async function handleSig(d){
         const ans = await pc.createAnswer();
         await pc.setLocalDescription(ans);
         broadcastRTC({type:'rtc_answer',to:d.from,from:ME.user_id,sdp:pc.localDescription});
-      }catch(e){ console.warn('[ICE] restart answer hatası:', e); }
+        // [FIX] Restart offer başarıyla işlendi — 10sn timeout'u iptal et
+        if(pc._iceRestartTimer){ clearTimeout(pc._iceRestartTimer); pc._iceRestartTimer=null; }
+      }catch(e){ console.warn('[ICE] restart answer hatası:', e); endCall('❌ ICE restart başarısız.'); }
       return;
     }
     // Zaten aktif bir 1-1 arama varsa yeni gelen offer'ı reddet
@@ -2008,7 +2010,7 @@ function waitForIceGathering(pc){
     };
     const onchange=()=>{ if(pc.iceGatheringState==='complete') done(); };
     pc.addEventListener('icegatheringstatechange',onchange);
-    const timer=setTimeout(done, 2000); // 4000→2000ms — daha hızlı bağlantı
+    const timer=setTimeout(done, 4000); // [FIX] 2000→4000ms — TURN sunucusu için yeterli süre
   });
 }
 
@@ -3940,6 +3942,11 @@ function startCallTimer(){
   _showCallBanner();
 }
 function endCall(reason){
+  // [FIX] ICE restart timer ve disconnect timer varsa temizle
+  if(pc){
+    if(pc._iceRestartTimer){ clearTimeout(pc._iceRestartTimer); pc._iceRestartTimer=null; }
+    if(pc._disconnectTimer){ clearTimeout(pc._disconnectTimer); pc._disconnectTimer=null; }
+  }
   // Bitrate izleyiciyi durdur
   stopBitrateMonitor();
   // Donmuş video temizle — her zaman
@@ -4980,8 +4987,32 @@ function handleConnectionState(peerConnection, targetUser){
   const s = peerConnection.connectionState;
   console.log(`[CONN] [${targetUser}]: connectionState=${s}`);
   if(s === 'connected'){
+    // ICE restart recovery timer varsa temizle — bağlantı kuruldu
+    if(peerConnection._iceRestartTimer){
+      clearTimeout(peerConnection._iceRestartTimer);
+      peerConnection._iceRestartTimer = null;
+    }
     // ice handler'ı tetikle — timer başlasın
     handleIceState(peerConnection, targetUser);
+  }
+  if(s === 'disconnected'){
+    // 'disconnected' geçici olabilir — 6sn bekle, düzelmezse failed gibi işle
+    if(!peerConnection._disconnectTimer){
+      peerConnection._disconnectTimer = setTimeout(()=>{
+        peerConnection._disconnectTimer = null;
+        if(peerConnection.connectionState === 'disconnected' ||
+           peerConnection.connectionState === 'failed'){
+          handleConnectionState(peerConnection, targetUser);
+        }
+      }, 6000);
+    }
+  }
+  if(s === 'connected' || s === 'closed'){
+    // disconnected timer'ı temizle
+    if(peerConnection._disconnectTimer){
+      clearTimeout(peerConnection._disconnectTimer);
+      peerConnection._disconnectTimer = null;
+    }
   }
   if(s === 'failed'){
     const el=$('callTime');
@@ -5001,7 +5032,21 @@ function handleConnectionState(peerConnection, targetUser){
           }catch(e){ endCall('❌ Bağlantı kurulamadı.'); }
         })();
       }
+      // [FIX] Callee tarafı: caller'dan restart offer bekleniyor.
+      // Ama offer hiç gelmezse sonsuza kadar beklemez — 10sn timeout.
+      peerConnection._iceRestartTimer = setTimeout(()=>{
+        peerConnection._iceRestartTimer = null;
+        if(peerConnection.connectionState !== 'connected' &&
+           peerConnection.connectionState !== 'closed'){
+          endCall('❌ Bağlantı yeniden kurulamadı (zaman aşımı).');
+        }
+      }, 10000);
     } else {
+      // İkinci kez failed — restart da işe yaramadı
+      if(peerConnection._iceRestartTimer){
+        clearTimeout(peerConnection._iceRestartTimer);
+        peerConnection._iceRestartTimer = null;
+      }
       endCall('❌ Bağlantı başarısız (ICE restart sonrası).');
     }
   }
