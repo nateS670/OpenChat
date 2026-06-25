@@ -3377,12 +3377,13 @@ function onTrack(e){
     // Önceki audio varsa önce durdur
     if(window._remoteAudio){try{window._remoteAudio.pause();window._remoteAudio.srcObject=null;}catch(e){}}
     const a=new Audio();
-    a.volume=0; // sesi GainNode üstünden yönet
-    a.srcObject=s;a.play().catch(()=>{});
-    window._remoteAudio=a;
+    a.srcObject=s;
     // GainNode — ses kontrolü için (private call)
+    let gainOk=false;
     try{
       const _gac=new(window.AudioContext||window.webkitAudioContext)();
+      // [FIX] AudioContext WebRTC callback'inde suspended başlayabilir — HEMEN resume et
+      _gac.resume().catch(()=>{});
       const _src=_gac.createMediaStreamSource(s);
       const _gn=_gac.createGain();
       const _vol=remoteUser&&peerVolumes[remoteUser]!==undefined?peerVolumes[remoteUser]:100;
@@ -3390,7 +3391,18 @@ function onTrack(e){
       _src.connect(_gn);_gn.connect(_gac.destination);
       window._remoteGainNode=_gn;
       window._remoteGac=_gac;
-    }catch(e){ a.volume=1; } // fallback
+      // GainNode üzerinden ses geliyor — HTML audio elemanını sıfır yap (double routing önlemi)
+      a.volume=0;
+      gainOk=true;
+    }catch(e){ gainOk=false; }
+    if(!gainOk){ a.volume=1; } // GainNode kuramazsa doğrudan HTML audio
+    window._remoteAudio=a;
+    // [FIX] play() hatasını logla; autoplay engeli varsa muted ile başlat sonra aç
+    a.play().catch(err=>{
+      console.error('[AUDIO] play() engellendi:', err);
+      a.muted=true;
+      a.play().then(()=>{ a.muted=false; }).catch(()=>{});
+    });
     // Private call için karşı tarafı participantsGrid'e ekle
     if(remoteUser){
       callParticipants.add(remoteUser);
@@ -4713,14 +4725,20 @@ async function broadcastGroupCallOffer(targetUser){
       }
     } else {
       const a=new Audio(); a.srcObject=s;
-      // Double audio routing fix: sesi SADECE GainNode çıkarsın, Audio element sessiz kalsın
-      a.volume=0;
       if(isDeafened) a.muted=true;
-      a.play().catch(()=>{});
+      // [FIX] play() hatasını yakala; autoplay engeli varsa muted ile başlat
+      a.play().catch(err=>{
+        console.error('[AUDIO][GRP] play() engellendi:', err);
+        a.muted=true;
+        a.play().then(()=>{ if(!isDeafened) a.muted=false; }).catch(()=>{});
+      });
       groupCallPeers[targetUser]._audio=a;
-      // GainNode — 0-150% ses kontrolü (asıl ses buradan çıkıyor)
+      // GainNode — 0-150% ses kontrolü
+      let grpGainOk=false;
       try{
         const _gac=new(window.AudioContext||window.webkitAudioContext)();
+        // [FIX] AudioContext suspended başlayabilir — HEMEN resume et
+        _gac.resume().catch(()=>{});
         const _src=_gac.createMediaStreamSource(s);
         const _gn=_gac.createGain();
         const _vol=peerVolumes[targetUser]!==undefined?peerVolumes[targetUser]:100;
@@ -4728,7 +4746,10 @@ async function broadcastGroupCallOffer(targetUser){
         _src.connect(_gn); _gn.connect(_gac.destination);
         groupCallPeers[targetUser]._gainNode=_gn;
         groupCallPeers[targetUser]._gac=_gac;
-      }catch(e){}
+        a.volume=0; // GainNode çalışıyor — double routing önlemi
+        grpGainOk=true;
+      }catch(e){ grpGainOk=false; }
+      if(!grpGainOk){ a.volume=1; }
       setTimeout(()=>_startSpeakDetect(targetUser, a, false), 500);
     }
   };
@@ -5033,14 +5054,14 @@ function handleConnectionState(peerConnection, targetUser){
         })();
       }
       // [FIX] Callee tarafı: caller'dan restart offer bekleniyor.
-      // Ama offer hiç gelmezse sonsuza kadar beklemez — 10sn timeout.
+      // Ama offer hiç gelmezse sonsuza kadar beklemez — 12sn timeout.
       peerConnection._iceRestartTimer = setTimeout(()=>{
         peerConnection._iceRestartTimer = null;
         if(peerConnection.connectionState !== 'connected' &&
            peerConnection.connectionState !== 'closed'){
           endCall('❌ Bağlantı yeniden kurulamadı (zaman aşımı).');
         }
-      }, 10000);
+      }, 12000);
     } else {
       // İkinci kez failed — restart da işe yaramadı
       if(peerConnection._iceRestartTimer){
@@ -5059,9 +5080,12 @@ function handleIceState(peerConnection, targetUser){
   if(s==='connected'||s==='completed'){
     console.log('✅ Bağlantı kuruldu:',targetUser);
     _hideRinging(); // Çaldırma ekranını kapat — bağlantı kuruldu
-    // Timer sadece ilk connected'da başlat
-    if(el&&(el.innerText==='Bağlanıyor...'||el.innerText==='ICE hazırlanıyor...')){
-      if(callIv===null) startCallTimer();
+    // [FIX] Timer koşulu genişletildi: 'ICE yeniden bağlanıyor...' durumundan da geçmeli
+    // Eski: sadece 'Bağlanıyor...' veya 'ICE hazırlanıyor...' için çalışıyordu
+    if(callIv===null) startCallTimer();
+    // ICE restart sonrası AudioContext suspended kalmış olabilir — resume et
+    if(window._remoteGac && window._remoteGac.state === 'suspended'){
+      window._remoteGac.resume().catch(()=>{});
     }
   } else if(s==='failed'){
     console.error('❌ ICE başarısız:',targetUser);
@@ -5137,14 +5161,20 @@ async function _joinGroupPeer(d){
       }
     } else {
       const a=new Audio(); a.srcObject=s;
-      // Double audio routing fix: sesi SADECE GainNode çıkarsın, Audio element sessiz kalsın
-      a.volume=0;
       if(isDeafened) a.muted=true;
-      a.play().catch(()=>{});
+      // [FIX] play() hatasını yakala; autoplay engeli varsa muted ile başlat
+      a.play().catch(err=>{
+        console.error('[AUDIO][JOIN] play() engellendi:', err);
+        a.muted=true;
+        a.play().then(()=>{ if(!isDeafened) a.muted=false; }).catch(()=>{});
+      });
       groupCallPeers[d.from]._audio=a;
-      // GainNode — 0-150% ses kontrolü (asıl ses buradan çıkıyor)
+      // GainNode — 0-150% ses kontrolü
+      let joinGainOk=false;
       try{
         const _gac=new(window.AudioContext||window.webkitAudioContext)();
+        // [FIX] AudioContext suspended başlayabilir — HEMEN resume et
+        _gac.resume().catch(()=>{});
         const _src=_gac.createMediaStreamSource(s);
         const _gn=_gac.createGain();
         const _vol=peerVolumes[d.from]!==undefined?peerVolumes[d.from]:100;
@@ -5152,7 +5182,10 @@ async function _joinGroupPeer(d){
         _src.connect(_gn); _gn.connect(_gac.destination);
         groupCallPeers[d.from]._gainNode=_gn;
         groupCallPeers[d.from]._gac=_gac;
-      }catch(e){}
+        a.volume=0; // GainNode çalışıyor — double routing önlemi
+        joinGainOk=true;
+      }catch(e){ joinGainOk=false; }
+      if(!joinGainOk){ a.volume=1; }
       setTimeout(()=>_startSpeakDetect(d.from, a, false), 500);
     }
   };
@@ -5304,7 +5337,8 @@ $('callBtn').onclick=async()=>{
     $('callTime').innerText='Hazırlanıyor...';
     if(window._callLock){console.warn('Arama zaten başlatılıyor, atlanıyor.');return;}
     window._callLock=true;
-    setTimeout(()=>window._callLock=false, 8000);
+    // [FIX] 8s → 4s: hızlı tekrar aramada kilit çok uzun bekliyordu
+    setTimeout(()=>window._callLock=false, 4000);
     pc=new RTCPeerConnection(rtcCfg);
     try{ls=await getMicStream();ls.getTracks().forEach(t=>pc.addTrack(t,ls));
       _startSpeakDetect(ME.user_id, null, true);
