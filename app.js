@@ -1508,7 +1508,16 @@ function setNet(s){
   if(dot) dot.style.background=c;
 }
 async function broadcast(p, qos=0){
-  if(!_rateLimiter.canPublish()){ console.warn('[DDOS] Rate limit'); return; }
+  // [FIX] RTC sinyal tipleri ve MQTT-only tipler rate limit'e TAKILMAMALI.
+  // Sorun: ICE adayları trickle ile saniyede 5-15 adet ateşleniyor.
+  // Rate limiter (max 5/sn) hemen throttle'a geçiyor, 15sn throttle sırasında
+  // private_msg / group_msg da broadcast() üzerinden geçtiği için TAMAMEN duruyordu.
+  // Çözüm: Sinyal tipleri rate limit kontrolünden ÖNCE çıkarılıyor.
+  const isSignal = _MQTT_ONLY_TYPES.has(p.type) || _RTC_SIG_TYPES.has(p.type);
+  if(!isSignal && !_rateLimiter.canPublish()){
+    console.warn('[DDOS] Rate limit — sadece kullanıcı mesajları engellendi:', p.type);
+    return;
+  }
   p.msgId=p.msgId||uid();
   if(_RELIABLE_TYPES.includes(p.type)) qos=Math.max(qos,1);
   const targetUser = p.to;
