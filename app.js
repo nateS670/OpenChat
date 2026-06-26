@@ -5098,21 +5098,23 @@ function handleIceState(peerConnection, targetUser){
     }
   } else if(s==='failed'){
     console.error('❌ ICE başarısız:',targetUser);
-    showToast('Bağlantı Hatası','ICE başarısız — TURN sunucusuna ulaşılamıyor.');
-    if(el) el.innerText='❌ Bağlantı başarısız';
-    // Donmuş video sorununu engelle: direkt temizle
+    showToast('Bağlantı Hatası','ICE başarısız — yeniden bağlanılıyor...');
+    if(el) el.innerText='⚠️ ICE başarısız';
+    // Donmuş video sorununu engelle
     const rv=$('remoteVideo');
     rv.pause(); rv.srcObject=null; rv.classList.add('hidden');
     $('audioPh').classList.remove('hidden');
-    // Grup aramada sadece bu peer'ı sil; DM'de çağrıyı bitir
+    // Grup aramada sadece bu peer'ı sil
+    // DM'de: endCall burada ÇAĞRILMAZ — handleConnectionState ICE restart + timeout'u yönetir.
+    // (iceConnectionState ve connectionState 'failed' neredeyse aynı anda ateşlenir;
+    //  handleIceState hemen endCall yapsa handleConnectionState'in restart şansı kalmaz)
     if(groupCallPeers[targetUser]){
       callParticipants.delete(targetUser);
       try{groupCallPeers[targetUser].pc.close();}catch(e){}
       delete groupCallPeers[targetUser];
       updateParticipantsGrid();
-    } else {
-      endCall('❌ Bağlantı başarısız.');
     }
+    // DM: handleConnectionState 'failed' → ICE restart → 12sn timeout → endCall
   } else if(s==='disconnected'){
     if(el) el.innerText='⚠️ Bağlantı kesildi';
     // 5sn sonra hâlâ disconnected ise temizle
@@ -5254,7 +5256,12 @@ $('acceptCallBtn').onclick=async()=>{
   startCallUI(o.from);
   $('callTime').innerText='Hazırlanıyor...';
   pc=new RTCPeerConnection(rtcCfg);
-  try{ls=await getMicStream();ls.getTracks().forEach(t=>pc.addTrack(t,ls));
+  try{
+    ls=await getMicStream();
+    // [FIX] Race condition: cleanCall() çağrısı getMicStream() beklenirken
+    // pc'yi null yapabilir (kullanıcı iptal, ICE timeout vb.)
+    if(!pc){ broadcast({type:'rtc_reject',to:o.from,from:ME.user_id}); return; }
+    ls.getTracks().forEach(t=>pc.addTrack(t,ls));
     _startSpeakDetect(ME.user_id, null, true);
     if(!_speakInterval) _startSpeakLoop();
   }
@@ -5349,7 +5356,11 @@ $('callBtn').onclick=async()=>{
     // [FIX] 8s → 4s: hızlı tekrar aramada kilit çok uzun bekliyordu
     setTimeout(()=>window._callLock=false, 4000);
     pc=new RTCPeerConnection(rtcCfg);
-    try{ls=await getMicStream();ls.getTracks().forEach(t=>pc.addTrack(t,ls));
+    try{
+      ls=await getMicStream();
+      // [FIX] Race condition: getMicStream() beklenirken pc null olabilir
+      if(!pc){ window._callLock=false; _hideRinging(); return; }
+      ls.getTracks().forEach(t=>pc.addTrack(t,ls));
       _startSpeakDetect(ME.user_id, null, true);
       if(!_speakInterval) _startSpeakLoop();
     }
@@ -5622,6 +5633,8 @@ window.startVideoCall=async()=>{
   // 1. Mikrofon al
   try{
     ls=await getMicStream();
+    // [FIX] Race condition: getMicStream() beklenirken pc null olabilir
+    if(!pc){ _hideRinging(); window._callLock=false; return; }
     ls.getTracks().forEach(t=>pc.addTrack(t,ls));
     _startSpeakDetect(ME.user_id,null,true);
     if(!_speakInterval) _startSpeakLoop();
