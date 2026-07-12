@@ -802,6 +802,15 @@ html.dark .tslider{background:#475569}
 .call-ui{
   position:fixed!important;inset:0!important;
   width:100vw!important;height:100vh!important;
+  /* 🐛 [FIX] Mobilde 100vh, adres çubuğu gizliyken de tam ekran yüksekliğini
+     baz alıyor — çubuk görünür olduğunda gerçek görünür alan bundan küçük
+     kalıyor ama kutu hâlâ 100vh boyunda. justify-content:space-between ile
+     en altta duran .call-ctrl (kapat/kamera/mikrofon butonları) bu var
+     olmayan fazladan alana itiliyor, yani ekranın altına kayıp kesiliyordu.
+     100dvh gerçek görünür viewport yüksekliğini kullanır ve adres çubuğu
+     açılıp kapandıkça otomatik güncellenir. dvh'yi desteklemeyen eski
+     tarayıcılar bu satırı yok sayıp yukarıdaki 100vh'ye düşer. */
+  height:100dvh!important;
   top:0!important;right:0!important;left:0!important;
   background:linear-gradient(160deg,#1a1c2e 0%,#111318 60%,#0d0f15 100%)!important;
   border-radius:0!important;border:none!important;
@@ -809,6 +818,9 @@ html.dark .tslider{background:#475569}
   display:flex!important;flex-direction:column!important;
   align-items:center;justify-content:space-between;
   padding:48px 24px 40px!important;
+  /* 🐛 [FIX] iPhone'larda home indicator / gesture bar alanı — butonlar
+     onun altında/arkasında kalıp tıklanamaz hâle gelmesin diye ek pay. */
+  padding-bottom:calc(40px + env(safe-area-inset-bottom))!important;
   gap:0!important;cursor:default!important;
   box-shadow:none!important;
 }
@@ -1449,6 +1461,14 @@ html:not(.dark) .gs-item.active{background:rgba(255,123,123,.10)}
   .tab-icon{font-size:16px}
 
   /* Callout UI */
+  /* 🐛 [FIX] Mobilde üst/alt padding daraltıldı — küçük ekranlarda
+     katılımcı kartları + kontrol butonları arasında sıkışıklık/taşma
+     olmasın diye. Asıl "butonlar kayıyor" sorunu yukarıdaki 100dvh
+     düzeltmesiyle çözüldü, bu sadece küçük ekranlarda ekstra nefes payı. */
+  .call-ui{padding:24px 16px calc(20px + env(safe-area-inset-bottom))!important}
+  .call-ctrl{gap:10px!important}
+  .call-ctrl button{min-width:52px!important;height:52px!important;font-size:19px!important}
+  #endCallBtn{min-width:60px!important;height:60px!important}
   /* .call-ui mobilde zaten tam ekran */
 
   /* Toast */
