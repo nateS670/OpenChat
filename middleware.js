@@ -28,10 +28,15 @@ import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 
 export const config = {
-  matcher: ['/api/config', '/api/bootstrap-key', '/api/identity'],
+  // 🛡️ [FIX-1 GÜNCELLEME] auth.js (muhtemelen login/şifre kontrolü — brute-force
+  // riski) ve ice-servers.js (muhtemelen TURN kimlik bilgisi — maliyet riski)
+  // de eklendi. Bu ikisi login/TURN dışında bir işe yarıyorsa bana söyleyin,
+  // matcher'ı ona göre daraltalım/genişletelim.
+  matcher: ['/api/config', '/api/bootstrap-key', '/api/identity', '/api/auth', '/api/ice-servers'],
 };
 
 let ratelimit = null;
+let authRatelimit = null; // 🛡️ login için ayrı, daha sıkı limit (brute-force koruması)
 if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
   ratelimit = new Ratelimit({
     redis: Redis.fromEnv(),
@@ -40,6 +45,16 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
     analytics: true,
     prefix: 'ratelimit:sensitive-api',
   });
+  // 🛡️ /api/auth (login) için: IP başına 15 dakikada 5 deneme. Genel API
+  // limitinden çok daha sıkı — amaç kota korumak değil, şifre denemesini
+  // (brute-force) yavaşlatmak. Meşru bir kullanıcı 5 denemede giremiyorsa
+  // zaten şifresini unutmuştur; bu limit onu fazla rahatsız etmez.
+  authRatelimit = new Ratelimit({
+    redis: Redis.fromEnv(),
+    limiter: Ratelimit.slidingWindow(5, '15 m'),
+    analytics: true,
+    prefix: 'ratelimit:auth-login',
+  });
 }
 
 // Upstash env'leri henüz tanımlı değilse (örn. ilk kurulum sırasında) devre
@@ -47,13 +62,14 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
 // serverless/edge instance başına çalışır, tam garanti vermez — üretimde
 // mutlaka Upstash env'lerini tanımlayın.
 const _memHits = new Map();
-function memoryLimit(ip) {
+function memoryLimit(ip, strict = false) {
   const now = Date.now();
-  const windowMs = 60_000;
-  const max = 20;
-  const arr = (_memHits.get(ip) || []).filter((t) => now - t < windowMs);
+  const windowMs = strict ? 15 * 60_000 : 60_000;
+  const max = strict ? 5 : 20;
+  const key = strict ? `auth:${ip}` : ip;
+  const arr = (_memHits.get(key) || []).filter((t) => now - t < windowMs);
   arr.push(now);
-  _memHits.set(ip, arr);
+  _memHits.set(key, arr);
   return arr.length <= max;
 }
 
@@ -78,7 +94,9 @@ export default async function middleware(request) {
     request.headers.get('x-real-ip') ||
     'unknown';
 
-  const allowed = ratelimit ? (await ratelimit.limit(ip)).success : memoryLimit(ip);
+  const isAuthPath = new URL(request.url).pathname === '/api/auth';
+  const limiter = isAuthPath ? authRatelimit : ratelimit;
+  const allowed = limiter ? (await limiter.limit(ip)).success : memoryLimit(ip, isAuthPath);
 
   if (!allowed) {
     return new Response(
