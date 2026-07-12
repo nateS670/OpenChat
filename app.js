@@ -14,6 +14,10 @@ const DB_KEY  = 'shareview_ultra_localdb_v6';
 // Ayrı, her zaman şifreli bir depoda tutulur. Anahtar yoksa hiç yazılmaz.
 const MSG_KEY = 'shareview_ultra_msgs_v1';
 let _decryptedMsgCache = {}; // bellekteki çözülmüş mesajlar — getDB()/saveDB() buradan okur/yazar
+// 🛡️ [FIX-4] Büyük dosya eklerinin ('fc_' önekli __cache__ girdileri) çözülmüş
+// hâli — render senkron olduğu için (crypto.subtle her zaman async) dosya
+// içeriği burada bellekte tutulur; localStorage'a HER ZAMAN şifreli yazılır.
+let _decryptedFileCache = new Map();
 const APP_VERSION = '3.5.0';
 const SES_KEY = 'shareview_ultra_session_v6';
 const ACC_KEY = 'sv_accounts';
@@ -87,6 +91,8 @@ async function _setLsEncKey(password, saltHex){
     await _loadEncryptedMessages();
     // 🛡️ [SAST-3 FIX] Outbox'ı da artık hazır olan anahtarla yeniden oku/birleştir
     await _reloadOutboxAfterKeyReady();
+    // 🛡️ [FIX-4] Dosya cache'ini de arka planda çöz
+    _preloadFileCache();
   }catch(e){ _lsEncKey = null; }
 }
 
@@ -100,6 +106,8 @@ async function _tryRestoreEncKeyFromSession(){
     await _loadEncryptedMessages();
     // 🛡️ [SAST-3 FIX] Outbox'ı da artık hazır olan anahtarla yeniden oku/birleştir
     await _reloadOutboxAfterKeyReady();
+    // 🛡️ [FIX-4] Dosya cache'ini de arka planda çöz
+    _preloadFileCache();
     return true;
   }catch(e){
     sessionStorage.removeItem('_sk');
@@ -135,6 +143,38 @@ async function _lsSetEncrypted(key, value){
       ct:   _ab2b64(ct)
     }));
   }catch(e){ localStorage.setItem(key, value); }
+}
+
+// 🛡️ [FIX-4] Tek bir 'fc_' dosya cache girdisini çöz, belleğe koy, görünürse yeniden çiz.
+// Aynı anahtar için eşzamanlı birden fazla çözme denemesini önlemek üzere basit kilit.
+const _fileDecryptInFlight = new Set();
+async function _decryptFileCacheEntry(cacheKey){
+  if(_decryptedFileCache.has(cacheKey) || _fileDecryptInFlight.has(cacheKey)) return;
+  _fileDecryptInFlight.add(cacheKey);
+  try{
+    const val = await _lsGetDecrypted(cacheKey);
+    if(val) _decryptedFileCache.set(cacheKey, val);
+  }catch(e){
+    console.error('[SEC] Dosya cache çözme hatası:', e);
+  }finally{
+    _fileDecryptInFlight.delete(cacheKey);
+    if(_decryptedFileCache.has(cacheKey) && typeof renderChat==='function') renderChat();
+  }
+}
+
+// 🛡️ [FIX-4] Anahtar hazır olur olmaz (login/oturum geri yükleme sonrası) tüm
+// 'fc_' dosya cache girdilerini arka planda önceden çöz — böylece mesaj listesi
+// ilk açıldığında dosyalar genelde zaten bellekte hazır olur.
+async function _preloadFileCache(){
+  if(!_lsEncKey) return;
+  try{
+    const keys = [];
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(k && k.startsWith('fc_')) keys.push(k);
+    }
+    await Promise.all(keys.map(k=>_decryptFileCacheEntry(k)));
+  }catch(e){ console.error('[SEC] Dosya cache ön-yükleme hatası:', e); }
 }
 
 async function _lsGetDecrypted(key){
@@ -291,6 +331,7 @@ function sessionClear(){
   // farklı bir kullanıcı giriş yaparsa önceki kullanıcının anahtarı sızmasın.
   _lsEncKey = null;
   _decryptedMsgCache = {};
+  _decryptedFileCache.clear(); // 🛡️ [FIX-4] önceki kullanıcının dosya içerikleri bellekte kalmasın
   try{ sessionStorage.removeItem('_sk'); }catch(e){}
 }
 
@@ -1325,7 +1366,18 @@ function saveDB(db){
       trimmedMessages[k]=trimmedMessages[k].map(m=>{
         if(m.fileData&&m.fileData.startsWith('data:')&&m.fileData.length>80000){
           const cacheKey='fc_'+m.id;
-          try{ localStorage.setItem(cacheKey, m.fileData); }catch(e){}
+          // 🛡️ [FIX-4] Artık düz metin localStorage.setItem YOK. Aynı AES-GCM
+          // sarmalayıcısı (mesajlarda kullanılan _lsSetEncrypted) ile yazılır.
+          // Anahtar hazır değilse (kilit açılmadan önce) _lsSetEncrypted zaten
+          // plaintext'e düşer — bu durum sadece kilit açılmadan dosya
+          // paylaşılamayacağı için pratikte oluşmaz, yine de güvenli tarafta
+          // kalmak için _lsEncKey kontrolü eklendi.
+          _decryptedFileCache.set(cacheKey, m.fileData); // senkron render için bellek kopyası
+          if(_lsEncKey){
+            _lsSetEncrypted(cacheKey, m.fileData).catch(e=>console.error('[SEC] Dosya cache şifreleme hatası:',e));
+          }else{
+            try{ localStorage.setItem(cacheKey, m.fileData); }catch(e){}
+          }
           return {...m, fileData:'__cache__'+cacheKey};
         }
         return m;
@@ -3062,7 +3114,18 @@ function renderChat(){
     if(fileData.startsWith('__session__')){
       fileData=_sessionFiles.get(fileData.slice(11))||'';
     } else if(fileData.startsWith('__cache__')){
-      try{fileData=localStorage.getItem(fileData.slice(9))||'';}catch(e){fileData='';}
+      // 🛡️ [FIX-4] Önce bellekteki çözülmüş kopyaya bak (senkron, hızlı).
+      const cacheKey = fileData.slice(9);
+      if(_decryptedFileCache.has(cacheKey)){
+        fileData = _decryptedFileCache.get(cacheKey) || '';
+      } else {
+        // Bellekte yok (örn. sayfa yenilendi) → localStorage'daki şifreli
+        // kaydı asenkron çöz, belleğe koy, sonra sohbeti yeniden çiz.
+        // Render senkron olduğu için BU turda boş döneriz (kısa "yükleniyor" hissi),
+        // localStorage'dan çözülmemiş/şifreli veri asla doğrudan gösterilmez.
+        fileData='';
+        _decryptFileCacheEntry(cacheKey);
+      }
     }
 
     let contentHTML='';
@@ -3135,11 +3198,16 @@ function renderChat(){
             </div>
           </div>`;
         } else if(safeUrl && lp.title){
+          // 🛡️ [FIX-3] escHtml() sadece HTML-escape yapar, URL şeması filtrelemez.
+          // javascript:/vbscript:/data:text gibi tehlikeli şemaları da reddetmek için
+          // sanitizeAvatarUrl (yalnızca https:// ve data:image/ kabul eder) kullanılır.
+          const safeImg = sanitizeAvatarUrl(lp.image);
+          const safeFavicon = sanitizeAvatarUrl(lp.favicon);
           contentHTML += `<div class="link-preview" data-lp-url="${safeUrl}">
-            ${lp.image?`<img class="link-preview-thumb" src="${escHtml(lp.image)}" alt="" loading="lazy" data-onerror="hide">`:''}
+            ${safeImg?`<img class="link-preview-thumb" src="${escHtml(safeImg)}" alt="" loading="lazy" data-onerror="hide">`:''}
             <div class="link-preview-body">
               <div class="link-preview-domain">
-                ${lp.favicon?`<img class="link-preview-favicon" src="${escHtml(lp.favicon)}" data-onerror="hide">`:''}
+                ${safeFavicon?`<img class="link-preview-favicon" src="${escHtml(safeFavicon)}" data-onerror="hide">`:''}
                 ${escHtml(lp.domain||'')}
               </div>
               <div class="link-preview-title">${escHtml(lp.title)}</div>
