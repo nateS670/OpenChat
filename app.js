@@ -4529,8 +4529,16 @@ function _startAudioKeepAlive(){
       _persistentRawStream.getAudioTracks().forEach(t=>{ if(t.readyState==='live') t.enabled=true; });
     }
     // Mobil arka plan: AudioContext'leri resume et
-    if(window._speakAudioCtx&&window._speakAudioCtx.state==='suspended'){
-      window._speakAudioCtx.resume().catch(()=>{});
+    // 🐛 [FIX] Önceden 'window._speakAudioCtx' okunuyordu — ama _speakAudioCtx
+    // üstte 'let' ile tanımlı, window'a hiç yazılmıyor. window._speakAudioCtx
+    // HER ZAMAN undefined olduğu için bu blok asla çalışmıyordu. Sonuç: mobilde
+    // sekme arka plana alınınca/ekran kilitlenince kendi mikrofon analiz
+    // context'i suspend oluyor ve BİR DAHA HİÇ resume edilmiyordu — kendi
+    // konuşma göstergesi (yeşil yanma) sessizce kalıcı olarak ölüyordu.
+    // (window._remoteGac karşı tarafın sesini gerçekten hoparlöre bastığı için
+    // tarayıcı onu suspend etmiyordu — bu yüzden sadece kendi göstergesi bozuktu.)
+    if(_speakAudioCtx&&_speakAudioCtx.state==='suspended'){
+      _speakAudioCtx.resume().catch(()=>{});
     }
     // Peer GainNode AudioContext'leri resume et
     Object.values(groupCallPeers||{}).forEach(p=>{
@@ -4653,13 +4661,39 @@ function updateParticipantsGrid(){
     const ctxAttr=isSelf?'':` data-ctx-act="openPeerVolMenu" data-ctx-a="${escHtml(u)}" data-ctx-pass-event="1"`;
     const muteBadge = state.muted ? `<span class="part-mute-badge">🔇</span>` : '';
     const deafBadge = state.deafened ? `<span class="deafen-badge">🔕</span>` : '';
+    // 🐛 [FIX] isSelf ise part-av'a id="myCallAv" veriliyor — bu id olmadan
+    // toggleVideo() kendi kamera önizlemesini hiçbir yere ekleyemiyordu
+    // (document.getElementById('myCallAv') null dönüyordu, sessizce atlanıyordu).
+    const avIdAttr=isSelf?' id="myCallAv"':'';
     return `<div class="part-card${isSmall?' part-card-sm':''}" id="pcard_${u}"${ctxAttr}>
-      <div class="part-av" style="width:${avSize}px;height:${avSize}px;font-size:${fontSize}px">${avHTML}</div>
+      <div class="part-av"${avIdAttr} style="width:${avSize}px;height:${avSize}px;font-size:${fontSize}px">${avHTML}</div>
       <span class="part-name">${isSelf?'Sen':u}<span class="part-speak-icon">🎙️</span></span>
       <div class="part-vol-bar"><div class="part-vol-fill" id="pvf_${u}"></div></div>
       ${muteBadge}${deafBadge}${volTxt}${volBtn}
     </div>`;
   }).join('');
+
+  // 🐛 [FIX] Grid her yeniden çizildiğinde (örn. peer'ın sesi/görüntüsü ilk
+  // geldiğinde onTrack → updateParticipantsGrid tetiklenir) kendi kamera
+  // önizlememiz kayboluyordu çünkü yukarıdaki innerHTML ataması eski video
+  // elementini DOM'dan siliyordu. Kamera hâlâ açıksa (_videoEnabled) burada
+  // önizlemeyi hemen geri ekliyoruz — peer'a giden akış zaten etkilenmiyordu,
+  // sadece bizim kendi ekranımızda görünmüyordu.
+  if(_videoEnabled&&_localVideoStream){
+    const myAv=document.getElementById('myCallAv');
+    if(myAv){
+      myAv.classList.add('has-video','is-local');
+      let localVid=myAv.querySelector('video.local-feed');
+      if(!localVid){
+        localVid=document.createElement('video');
+        localVid.className='local-feed';
+        localVid.autoplay=true;localVid.muted=true;localVid.playsInline=true;
+        myAv.innerHTML='';
+        myAv.appendChild(localVid);
+      }
+      localVid.srcObject=_localVideoStream;
+    }
+  }
 }
 
 // ── GRUP ARAMASI (WebRTC mesh) ────────────────────────────────────
