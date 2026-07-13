@@ -1,82 +1,58 @@
 // 🛡️ [FIX-1] Vercel Edge Middleware — /api/config, /api/bootstrap-key,
-// /api/identity uçlarına IP başına dakikalık rate limit uygular.
+// /api/identity, /api/auth, /api/ice-servers uçlarına IP başına dakikalık
+// rate limit uygular.
 //
-// Framework-agnostic: Next.js KULLANMADIĞINIZ için (app.js vanilla JS) burada
-// next/server yerine standart Web Response/Request API'leri kullanılıyor —
-// bu, düz bir Vercel projesinde (Next.js olmadan) da çalışır.
+// ⚠️ NOT: Bu sürüm HİÇBİR npm paketine ihtiyaç duymaz (Upstash kaldırıldı) —
+// çünkü @upstash/ratelimit ve @upstash/redis, `npm install` ile projeye
+// eklenip Vercel build'i bunları bundle etmeden Edge Runtime'da
+// çalışmıyor ("referencing unsupported modules" hatası buradan geliyordu).
+// Bu haliyle dosyayı GitHub'a yapıştırmanız yeterli, ekstra kurulum YOK.
 //
-// KURULUM:
-//   npm i @upstash/ratelimit @upstash/redis
-//   Vercel Dashboard → Storage/Marketplace → Upstash entegrasyonunu ekleyin;
-//   bu, UPSTASH_REDIS_REST_URL ve UPSTASH_REDIS_REST_TOKEN env değişkenlerini
-//   otomatik olarak projenize ekler.
+// TRADE-OFF: Rate limit sayaçları bellekte (instance başına) tutulur.
+// Yani (a) Vercel her cold start'ta veya farklı bir edge bölgesine
+// yönlendirmede sayaç sıfırlanabilir, (b) çok yüksek trafikte %100 kesin
+// bir garanti vermez. Yine de mevcut durumdan (SIFIR limit) çok daha
+// iyidir ve script/bot spam'ini büyük ölçüde engeller. İleride daha güçlü
+// bir garantiye ihtiyaç duyarsanız Upstash Redis'e geçebiliriz — o zaman
+// package.json'a paketleri gerçekten eklemeniz (npm install) ve Vercel'de
+// Upstash entegrasyonunu kurmanız gerekir.
 //
-// KONUM: Bu dosya PROJE KÖKÜNE gider — package.json, vercel.json ve api/
-// klasörüyle AYNI SEVİYEDE. api/ klasörünün İÇİNE KOYMAYIN.
-//
-//   your-project/
-//   ├── api/
-//   │   ├── config.js
-//   │   ├── bootstrap-key.js
-//   │   └── identity.js
-//   ├── middleware.js      <-- BURAYA
-//   ├── vercel.json         <-- BURAYA (proje kökü)
-//   ├── package.json
-//   └── ... (index.html, app.js, vb. statik dosyalarınız)
-
-import { Ratelimit } from '@upstash/ratelimit';
-import { Redis } from '@upstash/redis';
+// KONUM: Proje kökü — package.json, vercel.json ve api/ klasörüyle AYNI
+// SEVİYEDE. api/ klasörünün İÇİNE KOYMAYIN.
 
 export const config = {
-  // 🛡️ [FIX-1 GÜNCELLEME] auth.js (muhtemelen login/şifre kontrolü — brute-force
-  // riski) ve ice-servers.js (muhtemelen TURN kimlik bilgisi — maliyet riski)
-  // de eklendi. Bu ikisi login/TURN dışında bir işe yarıyorsa bana söyleyin,
-  // matcher'ı ona göre daraltalım/genişletelim.
   matcher: ['/api/config', '/api/bootstrap-key', '/api/identity', '/api/auth', '/api/ice-servers'],
 };
 
-let ratelimit = null;
-let authRatelimit = null; // 🛡️ login için ayrı, daha sıkı limit (brute-force koruması)
-if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-  ratelimit = new Ratelimit({
-    redis: Redis.fromEnv(),
-    // IP başına 20 istek / 60 saniye.
-    limiter: Ratelimit.slidingWindow(20, '60 s'),
-    analytics: true,
-    prefix: 'ratelimit:sensitive-api',
-  });
-  // 🛡️ /api/auth (login) için: IP başına 15 dakikada 5 deneme. Genel API
-  // limitinden çok daha sıkı — amaç kota korumak değil, şifre denemesini
-  // (brute-force) yavaşlatmak. Meşru bir kullanıcı 5 denemede giremiyorsa
-  // zaten şifresini unutmuştur; bu limit onu fazla rahatsız etmez.
-  authRatelimit = new Ratelimit({
-    redis: Redis.fromEnv(),
-    limiter: Ratelimit.slidingWindow(5, '15 m'),
-    analytics: true,
-    prefix: 'ratelimit:auth-login',
-  });
-}
+// IP başına dakikada izin verilen istek sayısı.
+const WINDOW_MS = 60_000;
+const MAX_REQUESTS = 20;
 
-// Upstash env'leri henüz tanımlı değilse (örn. ilk kurulum sırasında) devre
-// dışı kalmak yerine basit bellek-içi bir limitleyiciye düşer. NOT: Bu,
-// serverless/edge instance başına çalışır, tam garanti vermez — üretimde
-// mutlaka Upstash env'lerini tanımlayın.
-const _memHits = new Map();
-function memoryLimit(ip, strict = false) {
+// Bellek-içi sayaç. Edge instance'ı yeniden başlayınca sıfırlanır — bu
+// beklenen ve kabul edilebilir bir trade-off (yukarıdaki nota bakın).
+const _hits = new Map();
+
+function isAllowed(ip) {
   const now = Date.now();
-  const windowMs = strict ? 15 * 60_000 : 60_000;
-  const max = strict ? 5 : 20;
-  const key = strict ? `auth:${ip}` : ip;
-  const arr = (_memHits.get(key) || []).filter((t) => now - t < windowMs);
+  const arr = (_hits.get(ip) || []).filter((t) => now - t < WINDOW_MS);
   arr.push(now);
-  _memHits.set(key, arr);
-  return arr.length <= max;
+  _hits.set(ip, arr);
+  // Map'in sınırsız büyümesini önlemek için basit bir temizlik:
+  if (_hits.size > 5000) {
+    const cutoff = now - WINDOW_MS;
+    for (const [key, times] of _hits) {
+      if (!times.some((t) => t > cutoff)) _hits.delete(key);
+    }
+  }
+  return arr.length <= MAX_REQUESTS;
 }
 
-export default async function middleware(request) {
-  // 🛡️ [FIX-1] Basit origin kontrolü — spoof edilebilir ama savunma derinliği
-  // katar. ALLOWED_ORIGINS env'i tanımlıysa (virgülle ayrılmış liste),
-  // listede olmayan Origin header'lı istekler reddedilir.
+export default function middleware(request) {
+  // 🛡️ Basit origin kontrolü — spoof edilebilir ama savunma derinliği katar.
+  // ALLOWED_ORIGINS env'i tanımlıysa (virgülle ayrılmış liste), listede
+  // olmayan Origin header'lı istekler reddedilir. Tanımlı değilse bu
+  // kontrol devre dışı kalır (varsayılan: kapalı, açmak isterseniz Vercel'e
+  // ALLOWED_ORIGINS env'i ekleyin).
   const origin = request.headers.get('origin');
   const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
     .split(',')
@@ -94,17 +70,13 @@ export default async function middleware(request) {
     request.headers.get('x-real-ip') ||
     'unknown';
 
-  const isAuthPath = new URL(request.url).pathname === '/api/auth';
-  const limiter = isAuthPath ? authRatelimit : ratelimit;
-  const allowed = limiter ? (await limiter.limit(ip)).success : memoryLimit(ip, isAuthPath);
-
-  if (!allowed) {
+  if (!isAllowed(ip)) {
     return new Response(
       JSON.stringify({ error: 'rate_limited', message: 'Çok fazla istek. Lütfen bir dakika sonra tekrar deneyin.' }),
       { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '60' } }
     );
   }
 
-  // İstek limiti aşmadıysa normal akışa devam et (isteği api/ fonksiyonuna geçir).
-  return undefined; // Vercel Edge Middleware'de undefined/void dönmek = devam et
+  // Limit aşılmadıysa devam et — isteği ilgili api/ fonksiyonuna geçir.
+  return undefined;
 }
