@@ -3499,9 +3499,145 @@ function onTrack(e){
   }
 }
 
-// ── 5. DİNAMİK BİTRATE KONTROLÜ ─────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// 🎥 EKRAN PAYLAŞIMI — KALİTE PROFİLLERİ (1080p / 1080p+ / 2K / 4K / Otomatik)
+// ══════════════════════════════════════════════════════════════════
+// NOT: Bu sistem hâlâ mesh (peer-to-peer) mimaride çalışır — sunucu/relay
+// yok, "serverless" yapı korunuyor. Bu yüzden N izleyici = N ayrı upload
+// gerçeği fiziksel olarak değişmiyor. Burada yaptığımız, kişi başı
+// bitrate/çözünürlüğü hem izleyici sayısına hem her bağlantının kendi ağ
+// durumuna göre OTOMATİK ayarlayarak toplam upload yükünü kontrol altında
+// tutmak. Her RTCPeerConnection'ın senderı bağımsız ayarlanabildiği için
+// (scaleResolutionDownBy + maxBitrate) farklı izleyicilere farklı kalite
+// gönderilebiliyor — örn. iyi bağlantısı olan 1 kişi 4K alırken, kötü
+// bağlantısı olan başka biri otomatik 1080p'ye düşürülebiliyor.
+const SCREEN_QUALITY_PROFILES = {
+  '4k':     { w:3840, h:2160, fps:30, bitrate:20_000_000, label:'4K'     },
+  '2k':     { w:2560, h:1440, fps:30, bitrate:10_000_000, label:'2K'     },
+  '1080p+': { w:1920, h:1080, fps:60, bitrate: 6_000_000, label:'1080p+' },
+  '1080p':  { w:1920, h:1080, fps:30, bitrate: 4_000_000, label:'1080p'  },
+};
+// Yüksekten düşüğe sıra — indeks küçük = kalite yüksek
+const SCREEN_QUALITY_ORDER = ['4k','2k','1080p+','1080p'];
+const _profIdx   = k => SCREEN_QUALITY_ORDER.indexOf(k);
+const _lowerProf = k => SCREEN_QUALITY_ORDER[Math.min(_profIdx(k)+1, SCREEN_QUALITY_ORDER.length-1)];
+
+let _screenQualityMode  = 'auto';            // 'auto' | '4k' | '2k' | '1080p+' | '1080p' — kullanıcının manuel tavanı
+let _screenCapturedRes  = { w:1920, h:1080 }; // getDisplayMedia'dan gelen GERÇEK yakalanan çözünürlük — track alınınca güncellenir
+let _screenPerConnStats = new Map();          // conn → {sentPrev,lostPrev} (bağlantı bazlı ağ ölçümü)
+
+// İzleyici sayısı arttıkça toplam upload'ı korumak için otomatik tavan
+function _viewerCountCap(n){
+  if(n<=1) return '4k';
+  if(n<=3) return '2k';
+  if(n<=6) return '1080p+';
+  return '1080p';
+}
+
+// Tek bir sender'a hedef kalite profilini uygula (çözünürlük + bitrate + fps)
+async function _applyScreenQualityToSender(sender, targetKey){
+  const prof = SCREEN_QUALITY_PROFILES[targetKey];
+  if(!prof || !sender || !sender.track) return;
+  try{
+    const scaleW = _screenCapturedRes.w / prof.w;
+    const scaleH = _screenCapturedRes.h / prof.h;
+    const scale  = Math.max(scaleW, scaleH, 1.0); // hedef, yakalanandan büyükse büyütme yapma
+    const p = sender.getParameters();
+    if(!p.encodings || !p.encodings.length) p.encodings=[{}];
+    p.encodings[0].maxBitrate            = prof.bitrate;
+    p.encodings[0].maxFramerate          = prof.fps;
+    p.encodings[0].scaleResolutionDownBy = scale;
+    p.encodings[0].degradationPreference = 'maintain-resolution';
+    p.encodings[0].priority              = 'high';
+    await sender.setParameters(p);
+  }catch(e){ console.warn('[SCREEN-Q] Kalite uygulanamadı:', e); }
+}
+
+// İzleyici sayısı + manuel tavan + HER BAĞLANTININ kendi RTT/kayıp durumuna
+// göre kaliteyi hesaplayıp uygular. 5sn'de bir tekrar çalışır.
+async function _computeAndApplyScreenQuality(){
+  if(!screenOwner || screenOwner!==ME.user_id) return;
+  const conns = [pc, ...Object.values(groupCallPeers||{}).map(g=>g.pc)].filter(Boolean);
+  const activeConns = conns.filter(c=>c.getSenders().some(s=>s.track&&s.track.kind==='video'));
+  if(!activeConns.length) return;
+
+  const viewerCount = activeConns.length;
+  const countCap  = _viewerCountCap(viewerCount);
+  const manualCap = (_screenQualityMode==='auto') ? '4k' : _screenQualityMode;
+  // İkisinden DAHA DÜŞÜK olanı taban al (izleyici çoksa manuel 4K seçilse bile korur)
+  const baseCap = _profIdx(countCap) > _profIdx(manualCap) ? countCap : manualCap;
+
+  for(const conn of activeConns){
+    const sender = conn.getSenders().find(s=>s.track&&s.track.kind==='video');
+    if(!sender) continue;
+    let target = baseCap;
+    try{
+      const stats = await conn.getStats();
+      let rtt=0, lossRate=0;
+      const prev = _screenPerConnStats.get(conn) || {sentPrev:0,lostPrev:0};
+      stats.forEach(r=>{
+        if(r.type==='candidate-pair' && r.state==='succeeded' && r.currentRoundTripTime){
+          rtt = Math.max(rtt, r.currentRoundTripTime*1000);
+        }
+        if(r.type==='outbound-rtp' && r.kind==='video'){
+          const sent=(r.packetsSent||0)-prev.sentPrev;
+          const lost=(r.packetsLost||0)-prev.lostPrev;
+          if(sent>0) lossRate=Math.max(0, lost/(sent+lost));
+          prev.sentPrev=r.packetsSent||0; prev.lostPrev=r.packetsLost||0;
+        }
+      });
+      _screenPerConnStats.set(conn, prev);
+      // Bu bağlantının kendi ağı kötüyse, taban kaliteden daha da indir
+      if(rtt>400 || lossRate>0.12)      target = _lowerProf(_lowerProf(target));
+      else if(rtt>180 || lossRate>0.05) target = _lowerProf(target);
+    }catch(e){ /* stats alınamadıysa taban kalite ile devam */ }
+
+    await _applyScreenQualityToSender(sender, target);
+  }
+}
+
+let _screenQualityInterval = null;
+function startScreenQualityMonitor(){
+  _computeAndApplyScreenQuality();
+  _screenQualityInterval = setInterval(_computeAndApplyScreenQuality, 5000);
+}
+function stopScreenQualityMonitor(){
+  clearInterval(_screenQualityInterval);
+  _screenQualityInterval = null;
+  _screenPerConnStats.clear();
+}
+
+// ── Kalite seçici arayüzü: screenBtn'in yanına küçük bir dropdown ekler ──
+function _mountScreenQualitySelector(){
+  if($('screenQualitySel')) return; // zaten varsa tekrar ekleme
+  const btn = $('screenBtn');
+  if(!btn || !btn.parentNode) return;
+  const sel = document.createElement('select');
+  sel.id = 'screenQualitySel';
+  sel.title = 'Ekran paylaşımı kalitesi';
+  sel.style.cssText = 'margin-left:6px;background:#1e1e1e;color:#eee;border:1px solid #444;border-radius:6px;padding:4px 6px;font-size:12px;cursor:pointer;';
+  sel.innerHTML = `
+    <option value="auto">Otomatik (Ağ + İzleyici)</option>
+    <option value="4k">4K</option>
+    <option value="2k">2K</option>
+    <option value="1080p+">1080p+</option>
+    <option value="1080p">1080p</option>
+  `;
+  sel.value = _screenQualityMode;
+  sel.addEventListener('change', ()=>{
+    _screenQualityMode = sel.value;
+    if(screenOwner===ME.user_id) _computeAndApplyScreenQuality();
+    showToast('📶 Yayın Kalitesi', sel.value==='auto' ? 'Otomatik moda geçildi' : `Tavan: ${SCREEN_QUALITY_PROFILES[sel.value].label}`);
+  });
+  btn.parentNode.insertBefore(sel, btn.nextSibling);
+}
+_mountScreenQualitySelector();
+
+// ── 5. DİNAMİK BİTRATE KONTROLÜ (SESLİ/GÖRÜNTÜLÜ ARAMALAR İÇİN) ────
 // RTCPeerConnection.getStats() ile RTT ve paket kaybını ölçer.
 // Ağ kötüleşince video kalitesini otomatik düşürür, iyileşince geri alır.
+// NOT: Bu, yukarıdaki ekran paylaşımı kalite sisteminden AYRIDIR —
+// webcam görüntülü aramalar için kullanılır.
 
 const BITRATE_PROFILES = {
   high:   { video: 2_500_000, audio: 64_000, label: '720p+' },
@@ -3581,6 +3717,7 @@ $('screenBtn').onclick=async()=>{
   if($('screenBtn').innerText.includes('Durdur')){
     screenOwner=null;
     $('screenBtn').innerText='Ekran Paylaş';
+    stopScreenQualityMonitor();
     // Tüm bağlantılarda video track'i kapat
     const allConns2=[pc,...Object.values(groupCallPeers).map(p=>p.pc)].filter(Boolean);
     for(const conn of allConns2){
@@ -3607,8 +3744,13 @@ $('screenBtn').onclick=async()=>{
     const sc=await navigator.mediaDevices.getDisplayMedia({
       video:{
         frameRate:{ideal:30,max:60},
-        width:{ideal:1280,max:1920},
-        height:{ideal:720,max:1080},
+        // 🎥 [KALİTE] Kayıt artık 4K'ya kadar istenir — gerçek üst sınırı
+        // ekran/OS belirler, biz sonradan getSettings() ile öğreniriz.
+        // Her izleyiciye gönderilecek gerçek kalite, bağlantı bazlı
+        // scaleResolutionDownBy ile _applyScreenQualityToSender() içinde
+        // ayarlanır (bkz. SCREEN_QUALITY_PROFILES).
+        width:{ideal:3840,max:3840},
+        height:{ideal:2160,max:2160},
         cursor:'always',
         resizeMode:'crop-and-scale',
         displaySurface:'monitor'
@@ -3628,6 +3770,15 @@ $('screenBtn').onclick=async()=>{
     const at=sc.getAudioTracks()[0]; // Sistem sesi (opsiyonel)
     if(!vt){sc.getTracks().forEach(t=>t.stop());return;}
 
+    // 🎥 [KALİTE] Gerçekte yakalanan çözünürlüğü kaydet — kalite profilleri
+    // bunun üstünden scaleResolutionDownBy hesaplar.
+    try{
+      const vset = vt.getSettings();
+      if(vset && vset.width && vset.height){
+        _screenCapturedRes = { w:vset.width, h:vset.height };
+      }
+    }catch(e){}
+
     screenOwner=ME.user_id;
     $('screenBtn').innerText='⏹ Paylaşımı Durdur';
 
@@ -3641,17 +3792,11 @@ $('screenBtn').onclick=async()=>{
           await vSender.replaceTrack(vt);
           // Content hint: metin/sunum için 'text', video için 'motion'
           try{ vt.contentHint='motion'; }catch(e){}
-          try{
-            const p=vSender.getParameters();
-            if(!p.encodings||!p.encodings.length)p.encodings=[{}];
-            p.encodings[0].maxBitrate=4000000;        // 4Mbps
-            p.encodings[0].maxFramerate=30;
-            p.encodings[0].priority='high';
-            p.encodings[0].networkPriority='high';
-            p.encodings[0].degradationPreference='maintain-framerate';
-            p.encodings[0].scaleResolutionDownBy=1.0; // Tam çözünürlük
-            await vSender.setParameters(p);
-          }catch(pe){}
+          // 🎥 [KALİTE] Sabit 4Mbps yerine: izleyici sayısı + ağ durumuna göre
+          // otomatik belirlenen profil uygulanır (bkz. _computeAndApplyScreenQuality).
+          // İlk anda geçici olarak "1080p+" ile başlatılır, birkaç yüz ms içinde
+          // startScreenQualityMonitor() gerçek hesaplamayı devreye sokar.
+          try{ await _applyScreenQualityToSender(vSender, '1080p+'); }catch(pe){}
         } else {
           conn.addTrack(vt,sc);
           // Sistem sesini de ekle
@@ -3675,10 +3820,16 @@ $('screenBtn').onclick=async()=>{
       broadcast({type:'screen_started',to:activeChatId||chatId,from:ME.user_id});
     }
 
+    // 🎥 [KALİTE] İzleyici sayısı/ağ durumu izleyicisini başlat — yeni biri
+    // katıldıkça (grp_offer vb. ile groupCallPeers büyüdükçe) otomatik
+    // olarak tüm bağlantıların kalitesini yeniden hesaplar.
+    startScreenQualityMonitor();
+
     vt.onended=async()=>{
       // Paylaşan kişi tarayıcıdan durdurdu — tüm karşı taraflara bildir
       screenOwner=null;
       $('screenBtn').innerText='Ekran Paylaş';
+      stopScreenQualityMonitor();
       // Tüm video sender'ları temizle
       const conns=[pc,...Object.values(groupCallPeers).map(p=>p.pc)].filter(Boolean);
       for(const conn of conns){
@@ -4873,6 +5024,9 @@ async function broadcastGroupCallOffer(targetUser){
     const vSender=pc.getSenders().find(s=>s.track&&s.track.kind==='video');
     if(vSender&&vSender.track){
       try{gpc.addTrack(vSender.track.clone(), ls);}catch(e){}
+      // 🎥 [KALİTE] Yeni izleyici eklendi — izleyici sayısı arttığı için
+      // tüm bağlantıların kalitesini hemen yeniden hesapla (5sn beklemeden).
+      _computeAndApplyScreenQuality();
     }
   }
   broadcastRTC({type:'grp_offer',to:targetUser,from:ME.user_id,groupId:chatId,sdp:gpc.localDescription});
