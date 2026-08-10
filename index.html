@@ -20,45 +20,42 @@
 <meta http-equiv="Expires" content="0"/>
 <title>openchat</title>
 <!-- 🛡️ [MED-03] Content Security Policy — XSS saldırılarının etkisini minimize eder -->
-<!-- 🛡️ [MED-03 / KRİTİK FIX] Content Security Policy
-     script-src: Ana uygulama kodu artık inline DEĞİL, app.js dosyasından
-     yükleniyor (<script src="app.js">). Bu sayede 'self' zaten yeterli —
-     ana kod için ayrı bir SHA-256 hash'i tutmaya/güncellemeye GEREK YOK.
-     app.js'i her düzenlediğinizde CSP'ye dokunmanıza gerek kalmaz.
-     Aşağıdaki 'unsafe-hashes' + hash listesi SADECE HTML içine gömülü
-     onclick/onerror gibi inline event-handler'lar için geçerlidir.
-     NOT: Eğer ileride yeni bir statik onclick="..." eklerseniz, o
-     attribute'un SHA-256 hash'ini hesaplayıp bu listeye eklemeniz gerekir
-     (dinamik/şablonlu onclick'lerden — ör. her hesap için farklı üretilen
-     onclick="loginAs('${key}')" gibi — mümkünse addEventListener'a
-     geçilmesi önerilir, çünkü her farklı değer farklı bir hash üretir ve
-     önceden tek tek listelenemez).
-     🛡️ [MED-03] connect-src 'self' zaten /api/bootstrap-key, /api/config ve
-     /api/identity gibi YENİ serverless uçlara (aynı origin) fetch atılmasına
-     izin verir — ayrıca bir şey eklemeye gerek yoktur. wss:// girişi ise
-     MQTT broker'ının origin'iyle BİREBİR eşleşmelidir: /api/config artık
-     mqttBroker'ı Vercel Env'den döndürdüğü için, broker sağlayıcınızı
-     değiştirirseniz bu satırı da güncellemeniz gerekir (statik bir meta
-     etiketi env değişkenini otomatik okuyamaz — daha sağlam bir çözüm için
-     CSP'yi vercel.json/Edge Middleware üzerinden HTTP header olarak,
-     process.env.MQTT_BROKER ile üretmeyi değerlendirin). -->
-<!-- 🛡️ [FIX-CSP-DUPLICATE] CSP artık burada (meta tag) DEĞİL, vercel.json'daki
-     HTTP header üzerinden tek bir yerden yönetiliyor. Önceden hem burada hem
-     vercel.json'da AYNI ANDA farklı iki CSP tanımlıydı — tarayıcı ikisini de
-     bağımsız olarak uyguladığı için vercel.json'daki (hash/unsafe-hashes
-     İÇERMEYEN, daha eski) script-src 'self' politikası devreye giriyor ve
-     TÜM inline onclick/oncontextmenu/onerror handler'larını (hash'leri doğru
-     olsa bile) blokluyordu — "Executing inline event handler violates..."
-     hatasının kaynağı buydu. Artık tek kaynak vercel.json; hash listesi ve
-     wss://broker.emqx.io:8084 dahil connect-src izinleri oraya taşındı. -->
-<!-- 🛡️ [FIX-MQTT-CDN] mqtt@5.3.4 artık unpkg.com CDN'inden DEĞİL, projeyle birlikte
-     aynı origin'den (self-host, mqtt.min.js) servis ediliyor. Önceki sürümde CDN'e
-     erişim mobil tarayıcılarda / gizli sekmede içerik engelleyiciler veya CDN
-     rate-limit'i yüzünden bazen başarısız oluyor, "mqtt is not defined" hatasına
-     yol açıyordu. Aynı origin'den yüklendiği için CSP'de script-src 'self' yeterli;
-     unpkg.com'a artık ihtiyaç yok, ayrıca SRI/integrity gerekmiyor (dosya kendi
-     sunucumuzdan geliyor, 3. parti değişim riski yok). Sürüm güncellenirse:
-     npm install mqtt@<versiyon> && kopyala node_modules/mqtt/dist/mqtt.min.js -->
+<!-- 🔧 [FIX-CSP-DRIFT] ÖNEMLİ: Bu meta etiketi ile vercel.json'daki
+     Content-Security-Policy HTTP header'ı ARTIK BİREBİR AYNIDIR ve
+     BÖYLE KALMALIDIR. Önceden ikisi farklıydı (meta: style-src'de
+     fonts.googleapis.com vardı, header'da yoktu — aynı şekilde
+     font-src/gstatic.com, worker-src, media-src header'da hiç yoktu).
+     Tarayıcı, header + meta CSP birlikte geldiğinde HER İKİSİNİ DE
+     (kesişimlerini) uygular; yani header'da eksik olan bir izin, meta'da
+     olsa bile işe yaramaz. Bu yüzden:
+       - Google Fonts (@import url('https://fonts.googleapis.com/...'))
+         önceden PRODUCTION'DA (Vercel header enforce edildiğinde) FİİLEN
+         ENGELLENİYORDU, çünkü header'ın style-src'i sadece 'self'
+         'unsafe-inline' idi.
+       - Sesli mesaj oynatma (new Audio(data:audio/...)) aynı sebeple
+         engellenme riski taşıyordu — header'da media-src hiç
+         tanımlanmadığı için default-src 'self''e düşüyordu ve data:
+         şemasını kapsamıyordu.
+     Kalıcı çözüm: HER İKİ dosyayı da TEK KAYNAKTAN (bu içerik) senkron
+     tutun. connect-src artık geniş "https: wss:" joker yerine sadece
+     gerçekte kullanılan 'self' + wss://broker.emqx.io:8084 içeriyor —
+     önceden bir XSS/hata durumunda veri herhangi bir https/wss sunucusuna
+     sızdırılabilirdi, artık sadece kendi origin'inize ve MQTT broker'ınıza
+     bağlantıya izin veriliyor. Kullanılmayan blob: izinleri (connect-src,
+     worker-src, img-src, media-src) de kaldırıldı — kod tabanında blob:
+     URL üretimi/tüketimi olmadığı doğrulandı; en az yetki ilkesi.
+     NOT: style-src hâlâ 'unsafe-inline' içeriyor çünkü uygulama genelinde
+     yoğun biçimde inline style="..." attribute'u kullanılıyor; bunu
+     kaldırmak CSS class'larına büyük bir refactor gerektirir (ayrı bir
+     iyileştirme olarak planlanabilir).
+     script-src: Ana uygulama kodu inline DEĞİL, app.js dosyasından
+     yükleniyor (<script src="app.js">). 'unsafe-hashes' + hash listesi
+     SADECE HTML içine gömülü statik onclick/onerror gibi inline
+     event-handler'lar için geçerlidir. Yeni bir statik onclick="..."
+     eklerseniz, o attribute'un SHA-256 hash'ini hesaplayıp bu listeye
+     (HEM burada HEM vercel.json'da) eklemeniz gerekir. -->
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'self'; script-src 'self' 'unsafe-hashes' 'sha256-IvUf/j5cuNDz3sxD/u2bbHGl6NwoHiSsz0R4Q3cTuBw=' 'sha256-DWGnfeEbNwv9jwlHlQYTnLGJDp+Tj0ejUw4Rj1RitQU=' 'sha256-S4bpmtS7OYV/malYqZUITz53d0KteTPoS/jCmTOk8ro=' 'sha256-xJrZG9n1FygJXkmPxLxTH8OEhV76O8fVuxds874nbfg=' 'sha256-InkM0l5BOcAV9jYIF10RwVHItiIwY0a+FkAMxHcQPow=' 'sha256-DHtb1CYR9axiy/zRgWk/psvmLS5uq+AkVJwj6iSbYMk=' 'sha256-5oi4h9xAN2dTRQhmsXol4hg2135f6YQpU7BkenU4O+M=' 'sha256-J3E/f5d5/34F5BtKnKVAEVBCvXQxyJ2AMqr6muiQtZ8=' 'sha256-/ij4MxMEGaNnAzbnXoZf8TIg/SmFd9sumqifTXh+UPc=' 'sha256-f3EjXRs8J6Yn1Xeb9tBSes2d39B8S3rJ/IBaFZzNnpM=' 'sha256-EcAgGREOOc1mNCuAqE2xO4Gk/hBqdehoK3DVv4IVQm4=' 'sha256-P0pRQKX0HinN3n4okEEis4QOgSCmHrFBGtXa7/lqzNA=' 'sha256-phGdiCp0/pWWnwa8Oy0lw1olbjVK454ufG2KE5jaQJM=' 'sha256-EZ++dmiicTPJEOXkEf6+SofRLM8h6t5jrZjA2AK5P4A=' 'sha256-pAlgQ4EycuIXi8+JgDqJLM0xeXc/MPOG21NhEIT9U3E=' 'sha256-Nijp/v1yoZipFx79lmuR/YgbiGe2znNpntCCDJr/1k8=' 'sha256-kSbbCC7t+BD/7SYmCfZ5fKRWtdWL7/u+VmlsWax/K60=' 'sha256-XDHgZyW7IUGHzxQn2m9x6uRYLONHTubUbOrn787bkGA=' 'sha256-vSBZsmi2iivP9pJeUJWSTnOifiD1i1WWUoLGpRYeKMs=' 'sha256-HNz1hCy7o/d6BL1A0RZTi9gh+6pIA1gvKnK+VlWp1C8=' 'sha256-mXoUGq5Am8d1OXdR3P1YTQeYRv83AwCmzwyclnjWOJg=' 'sha256-30wxdX1hqFD1vAVRLIKKZnApRBgF4l0dERfNX7KnkKI=' 'sha256-IwCuiVyXSw5XjBCLAWK72ARVdInu2Z/Cf9BLe4tbG/A=' 'sha256-bdJSANIYyo0E+vqeuDxI3/0C2M8Hr7hnRP2PD0P/3y8=' 'sha256-+erodhSWnnIlHsBwh19SbBuJInbAYf5koVyrJMcG6S8=' 'sha256-ivs9iXhWZhmeL7cwJtSqD8lfuhx0Kt8qcQQl9mS5G44=' 'sha256-8sGOxawpqL0FZpHU1lnqfrsA77OETq9d9JBx0YqtzLU=' 'sha256-V/addRRUItZ6Hh4QTsUgihrxpszlRVTZBBCdeP43jeA=' 'sha256-WMBYi/TrZy7dsyHjt//THkhBY9ya+U0kVg6YJWrHu/o=' 'sha256-DD7dKOAipiG8aamt+4kb503DasE26kxgKK/taus2Eao=' 'sha256-vcbEjgV+Xc4avVbFwX/NPtjcediK4d5xgaUnzCTDeHE=' 'sha256-uccJSazmdcF/mMtJyx4qHt0AZGvhK0T1XRRP941Mneg=' 'sha256-Kd7NkbcsRU79poxKfniTazpXpg6bFIQWy8pDVMaBknM=' 'sha256-6wasJN8UlR/BvmzMnBodP/owDvyA+IFoCMN2tpAEp2g=' 'sha256-Zp7yKoLksfpLGoTMEMk65h0Gb8ntcLZ5T8wIpljf5dA=' 'sha256-9pXtbsgDi9Pfg2/ZJI/pgWPFaqTchKztx+PSNes/++g=' 'sha256-04Nwxq0I11CG2q+MGRVNbZzBqq648ldb0GHvOY1tcZs=' 'sha256-AmM+MIXdTU2ujrj/GG5KXtTy7orcXmF12oufjuYSnP4=' 'sha256-vWEsDPPwx/VjuH7/dHNaFlXRrCnSjPkJVtdoE+20Uuc=' 'sha256-WlQc7YRbqSniBofvmGn+YaxXSsWx+LaG9Y82WBeSvNo=' 'sha256-bCF9jk/ca5F256ykwWkQrYAM60QAhW5hDrE3EkbTrYQ=' 'sha256-rdJlkZGshxH2Iovry4g5oAb/9EWmbnrkgKPBP2G0flU=' 'sha256-Ju0A7yACC2/A+WHtT32gRICwgCv+AO/1QMhrncoA4LI=' 'sha256-qzNw7624DGvrgzEnXlau+3KX19+SDYGaZjV1oE14voA=' 'sha256-k38yLnsc0War16j1Qme8KO2OQZXA1pL6vPjSoYMXHjE=' 'sha256-rtI6IHrMmYrxlhuvUZdYf0qIU0eNjUdSMDjsbaINDWw=' 'sha256-inudtaFpzc4a03uuBrYDuXUetMjBw69a3+X4meD8r2s=' 'sha256-jpc5af794uH3BwHLPXcUIWZjOLKaV2pOokcz44+eavI=' 'sha256-sKc/l4mgfhDX+AD15wyEvQtSVkD7A+dzJNpFkcv0jq8=' 'sha256-ylhdR+I5GHNg2Zx6GgxoQKxCnlQZaPNnbDiToK5y7+s=' 'sha256-bAhrDRx87WvklHl0jJGUT+dRKuFnefAu3cdKAZ9N7hY=' 'sha256-xNHYQh54+MsAotH/P/2cSGLfhviUeqXP1kXE33UKVm0=' 'sha256-4l0mWdj/ygF3jH9E1IJVL8VZCqe/XCmFMR3UqaN7bq8=' 'sha256-hVwcw/aRcEWcc4vUWgALwUjzKkkeMG5J/9g24eMK5h8=' 'sha256-GMZFxzwQK6nX5B6DIze+5rfiYOlwvCybZzd4q5etv+4=' 'sha256-RtLOJOdv5HDUchREU47hrvbSfNXSOs5fqf+gaSpQqf8=' 'sha256-ZJ3LB11cDdbE8tQe779CfT/OT7uAcZXAxl5+w7Y5Mro=' 'sha256-Ao54pfJgHz90puiIUm7cU+FWyFpMoCwpmcgae0VXOLc=' 'sha256-JpkpMyYkX4TELQI1PpX/x1ni1B9XSq1yhO4mt6dCoHE=' 'sha256-rIUoRckt98sC7aI+cTbi+GZjnmQ2fgHWF1rKhjU6bno=' 'sha256-B0/uJzcxayenpppoGmGwuzjkU8e+K3fgJm2GKQv/n9I=' 'sha256-NbTjNRf7cMsQtpFP5mQ4eNs7z7tlE6jKOuDQIhJtl54=' 'sha256-OK3p3KxcQzvkXZIBwD0DCY0NzoC0foq9oQFkE6Aj4ME=' 'sha256-QsHBQ98PXTC3wAj1O877jTr7mBF+tRk+dzrrYmmSV1w=' 'sha256-xW2LwE6JH4Upyv3irrojUEiqRrYPlWMsmcDiJV0sLlQ=' 'sha256-GzdgO/cCmxgn6y+UvQGjMEtcK1v8nlzQUD41YFBMCmM=' 'sha256-kDkI/Hq0uLd5ugj91v92WT/TVnw5rSoWREvQFz8pil0=' 'sha256-1lWpQcJhb98x+ETIFvZ8zZxb/L14WF6foxoMMhp/FCQ=' 'sha256-B1QaQ/NSYb91ozzPOcacTIt2zUENFZR5kFc2Q4kj+w4=' 'sha256-emRjCrIs4UE8YKHLrUXwfHswSDclJC9gT/MUfduZSnk=' 'sha256-ILgBI9BtpHqb5ZKDzXzH3ECBDDsIhn+JTobBCSfas6A=' 'sha256-PUTQ7qyVA84i4yi2/sBjEkXv0Dd8NDFHrglr8pmTM+U=' 'sha256-jHF5hTIlMDyGZRAsNK0HO/WFYrwPvI2I1q0o1xKKB6I=' 'sha256-NdYem/e14sX7LWk3l8wGScGgNaqPxASSY3CT1BtpOBU=' 'sha256-dSINsq7m6CMgVg6l9D6uB6rLjAYOcDAMX+91uFA6uLA=' 'sha256-q0WzkPM+1UGUFrO09BGLp1UacP9T/hWfDPydrpoDjlw=' 'sha256-A1zC/JhUzuHsPWr8+7iWZijANz3VS0dLimuD/PTvZT0='; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' wss://broker.emqx.io:8084; worker-src 'self'; img-src 'self' data: https:; media-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';">
 <script src="mqtt.min.js"></script>
 <style>
 /* ── LIGHT THEME — openchat ── */
