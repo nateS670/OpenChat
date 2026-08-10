@@ -243,11 +243,7 @@ function _sanitizeUsername(u){
   return u.replace(/[^a-zA-Z0-9_]/g,'').slice(0,16);
 }
 function _validateUsername(u){ return _SAFE_USERNAME.test(u); }
-// 🔧 [FIX] Minimum parola uzunluğu 6'dan 8'e çıkarıldı. Bu uygulamada parola
-// aynı zamanda tüm yerel mesaj/veri şifrelemesinin (AES-GCM) anahtar
-// türetiminin temeli olduğu için (bkz. _setLsEncKey), zayıf bir parola
-// doğrudan tüm sohbet geçmişinin offline brute-force riskini artırır.
-function _validatePassword(p){ return typeof p==='string' && p.length>=8 && p.length<=64; }
+function _validatePassword(p){ return typeof p==='string' && p.length>=6 && p.length<=64; }
 
 // ── LocalStorage şifre deposu ─────────────────────────────────────
 function _getPwStore(){ try{ return JSON.parse(localStorage.getItem(PW_STORE_KEY)||'{}'); }catch(e){ return {}; } }
@@ -1150,22 +1146,6 @@ function _setupDC(userId, dc){
       const d = await aesDecrypt(pkt, fromHint);
       if(!d){ console.warn('[DC][SEC] Çözülemeyen DC paketi, atlandı.'); return; }
       if(d.from && !isWhitelisted(d.from)){ console.warn('[DC][SEC] Whitelist dışı kaynak'); return; }
-      // 🔧 [FIX-IDENTITY-BINDING] ÖNCEDEN d.from, sadece şifre çözülmüş
-      // payload'ın kendi beyanına (pkt.f / p.from) dayanıyordu. Ancak bu
-      // spesifik RTCDataChannel zaten SADECE _dcConnect/_dcHandleOffer
-      // sırasında Ed25519 pasaportu doğrulanmış TEK BİR `userId` ile
-      // kuruluyor (bkz. _setupDC(userId, dc) çağrısı). Bu kanaldan gelen
-      // her paket, fiziksel olarak yalnızca o `userId`'ye ait uçtan
-      // gelebilir. d.from'u burada kanalın kurulduğu doğrulanmış userId'ye
-      // sabitleyerek (payload'ın kendi iddiasını değil), bir peer'in mesaj
-      // içeriğinde başka bir kullanıcı adına gönderiyormuş gibi
-      // görünmesini (kimlik taklidi) engelliyoruz. Uyuşmazlık varsa paket
-      // tamamen reddedilir.
-      if(d.from && d.from !== userId){
-        console.warn('[DC][SEC] Payload içindeki from ile kanalın doğrulanmış kimliği eşleşmiyor, reddedildi:', d.from, '!=', userId);
-        return;
-      }
-      if(d.from) d.from = userId;
       // DC'den gelen mesajlar için de rate limit uygula
       if(d.from && ME && d.from !== ME.user_id){
         const key='dc_in_'+d.from;
@@ -1879,15 +1859,6 @@ async function handleSig(d){
 
   if(d.type==='friend_req'&&d.to==='global'){
     if(d.from===ME.user_id)return;
-    // 🔧 [FIX-XSS-CRITICAL] ÖNCEDEN d.from HİÇ doğrulanmadan
-    // db.users[mk].requests dizisine ekleniyor, sonra $('lstR').innerHTML
-    // içinde ESCAPE EDİLMEDEN (${r}) render ediliyordu. Bu tip 'global'
-    // (broadcast) mesajlar per-peer ECDH doğrulamasından geçmediği için,
-    // ROOM'a katılan HERHANGİ BİR istemci (arkadaş olması bile gerekmeden)
-    // d.from alanına `"><script>...` gibi bir string koyup, hedef kullanıcı
-    // arkadaşlık istekleri panelini açtığı an stored XSS tetikleyebiliyordu.
-    // Artık d.from whitelist formatına (isWhitelisted) zorlanıyor.
-    if(!isWhitelisted(d.from)){ console.warn('[SEC] Whitelist dışı friend_req reddedildi:', d.from); return; }
     if(d.target===mk||d.target===ME.token.toLowerCase()){
       if(!db.users[mk].friends.includes(d.from)&&!db.users[mk].requests.includes(d.from)&&!blocked.includes(d.from)){
         db.users[mk].requests.push(d.from);saveDB(db);updateUI();
@@ -1896,11 +1867,7 @@ async function handleSig(d){
     }
     return;
   }
-  // 🔧 [FIX] Savunma derinliği: friend_accept/friend_remove için de d.from
-  // whitelist formatına zorlanıyor — bu alan sonradan friends listesine
-  // eklenip birçok yerde (chat başlığı, arkadaş listesi vb.) render ediliyor.
   if(d.type==='friend_accept'&&d.to===ME.user_id){
-    if(!isWhitelisted(d.from)) return;
     if(!db.users[mk].friends.includes(d.from)){
       db.users[mk].friends.push(d.from);
     }
@@ -1910,38 +1877,10 @@ async function handleSig(d){
     return;
   }
   if(d.type==='friend_remove'&&d.to===ME.user_id){
-    if(!isWhitelisted(d.from)) return;
     db.users[mk].friends=db.users[mk].friends.filter(f=>f!==d.from);saveDB(db);
     if(chatId===d.from){chatId=null;chatType=null;$('emptyState').classList.remove('hidden');}
     updateUI();showToast('Arkadaşlık Bitti',`${d.from} sizi listeden çıkardı.`);
     return;
-  }
-
-  // 🔧 [FIX-SCHEMA] ÖNCEDEN d.msg, peer'den geldiği hâliyle (hiçbir alan
-  // tipi/uzunluk/whitelist kontrolünden geçmeden) doğrudan db.messages'a
-  // yazılıyordu. fileType keyfi bir string olabiliyordu, fileData
-  // render aşamasına kadar hiç doğrulanmıyordu, text uzunluğu/tipı
-  // sınırsızdı. Bu, kötü niyetli/değiştirilmiş bir istemcinin mesaj
-  // nesnesini istediği gibi şekillendirip render katmanına (ve dolayısıyla
-  // yerel depoya) taşımasına izin veriyordu. Bu fonksiyon P2P'den gelen her
-  // mesajı DB'ye yazılmadan ÖNCE temel bir şemaya zorlar; şemaya uymayan
-  // mesaj tamamen reddedilir (sessizce yok sayılır).
-  const _ALLOWED_FILETYPES = new Set(['voice','image','gif','file']);
-  function _validateIncomingMsg(msg){
-    if(!msg || typeof msg!=='object') return false;
-    if(msg.id!==undefined && (typeof msg.id!=='string' || msg.id.length>64)) return false;
-    if(msg.text!==undefined && (typeof msg.text!=='string' || msg.text.length>20000)) return false;
-    if(msg.fileType!==undefined){
-      if(typeof msg.fileType!=='string' || !_ALLOWED_FILETYPES.has(msg.fileType)) return false;
-      if(msg.fileData!==undefined && typeof msg.fileData!=='string') return false;
-      if(msg.fileName!==undefined && (typeof msg.fileName!=='string' || msg.fileName.length>256)) return false;
-      if(msg.fileSize!==undefined && typeof msg.fileSize!=='number') return false;
-      if(msg.voiceDur!==undefined && typeof msg.voiceDur!=='number') return false;
-    }
-    if(msg.from!==undefined && (typeof msg.from!=='string' || !isWhitelisted(msg.from))) return false;
-    if(msg.replyTo!==undefined && msg.replyTo!==null && typeof msg.replyTo!=='object') return false;
-    if(msg.reactions!==undefined && (typeof msg.reactions!=='object' || Array.isArray(msg.reactions))) return false;
-    return true;
   }
 
   if(d.type==='private_msg'&&d.to===ME.user_id){
@@ -1949,8 +1888,6 @@ async function handleSig(d){
     // Arkadaş değilse veya engellenmiş ise mesajı işleme
     const myFriends=db.users[mk]?.friends||[];
     if(!myFriends.includes(d.from)||blocked.includes(d.from))return;
-    // 🔧 [FIX-SCHEMA] Şemaya uymayan mesaj tamamen reddedilir.
-    if(!_validateIncomingMsg(d.msg)){ console.warn('[SEC] Geçersiz mesaj şeması reddedildi:', d.from); return; }
     const k=[ME.user_id,d.from].sort().join('_');
     if(!db.messages[k])db.messages[k]=[];
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
@@ -1980,20 +1917,11 @@ async function handleSig(d){
     // bu istemci-güvenir-istemci mimarisinde mümkün değil (bkz. not), ama en
     // azından temel şekil doğrulaması ve groupId çakışma/ele geçirme koruması
     // eklenir.
-    // 🔧 [FIX] Grup davetleri artık yalnızca arkadaşlarımızdan kabul
-    // edilir — daha önce herhangi bir peer (arkadaş olsun olmasın)
-    // beni bilinmeyen bir gruba ekleyebiliyordu. Ayrıca members/admins
-    // dizisindeki her eleman de whitelist formatına zorlanır; aksi hâlde
-    // istenmeyen/keyfi string'ler (potansiyel ileride başka bir render
-    // noktasında sorun çıkarabilecek veriler) db.groups'a yazılabiliyordu.
-    const _myFriendsForInvite=db.users[mk]?.friends||[];
     if(g && typeof g==='object' && typeof g.id==='string' && g.id.length<128 && g.id.startsWith('GRP_')
        && typeof g.name==='string' && g.name.length>0 && g.name.length<=64
        && Array.isArray(g.members) && g.members.length>0 && g.members.length<=500
-       && g.members.every(m=>typeof m==='string' && isWhitelisted(m))
-       && g.members.includes(ME.user_id) && !db.groups[g.id]
-       && _myFriendsForInvite.includes(d.from) && !blocked.includes(d.from)){
-      if(!g.admins || !Array.isArray(g.admins) || !g.admins.every(a=>typeof a==='string' && isWhitelisted(a))){
+       && g.members.includes(ME.user_id) && !db.groups[g.id]){
+      if(!g.admins){
         // Eski format uyumluluğu: admin string ise diziye çevir
         g.admins=g.admin?[g.admin]:[d.from];
       }
@@ -2003,10 +1931,6 @@ async function handleSig(d){
   }
   if(d.type==='group_msg'){
     if(!db.groups[d.groupId]||d.from===ME.user_id)return;
-    // 🔧 [FIX-SCHEMA] Gönderen gerçekten bu grubun üyesi mi ve mesaj
-    // şeması geçerli mi kontrol edilir — önceden ikisi de kontrol edilmiyordu.
-    if(!db.groups[d.groupId].members.includes(d.from)){ console.warn('[SEC] Grup üyesi olmayan kaynaktan group_msg reddedildi:', d.from); return; }
-    if(!_validateIncomingMsg(d.msg)){ console.warn('[SEC] Geçersiz grup mesaj şeması reddedildi:', d.from); return; }
     const k='g_'+d.groupId;
     if(!db.messages[k])db.messages[k]=[];
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
@@ -2562,7 +2486,7 @@ $('authBtn').onclick=async()=>{
   const pw=_sanitizePassword(rawPw);
 
   if(!_validateUsername(name)){$('authStatus').innerText='Kullanıcı adı: 3-16 karakter, harf/rakam/_ kullanın.';return;}
-  if(!_validatePassword(pw)){$('authStatus').innerText='Şifre en az 8 karakter olmalı.';return;}
+  if(!_validatePassword(pw)){$('authStatus').innerText='Şifre en az 6 karakter olmalı.';return;}
 
   // ── 🛡️ BRUTE FORCE KONTROLÜ ──────────────────────────────────
   // [LOW-01] localStorage temizlenmiş olabilir — IndexedDB'den geri doldur
@@ -2738,8 +2662,8 @@ function updateUI(){
   $('lstR').innerHTML=me.requests.length?me.requests.map(r=>`
     <div class="li" style="cursor:default">
       <div style="display:flex;align-items:center;flex:1;min-width:0">
-        <div class="av2">${escHtml(r.charAt(0).toUpperCase())}</div>
-        <span style="margin-left:10px;font-weight:600;font-size:13px">${escHtml(r)}</span>
+        <div class="av2">${r.charAt(0).toUpperCase()}</div>
+        <span style="margin-left:10px;font-weight:600;font-size:13px">${r}</span>
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0">
         <button class="btn-ok req-acc-btn" data-req-user="${escHtml(r)}" style="padding:5px 10px;font-size:12px;border-radius:8px">✓ Kabul</button>
@@ -2783,12 +2707,15 @@ function updateFriends(){
       const av=safeRawAv?`<img src="${safeRawAv}" style="width:100%;height:100%;object-fit:cover;">`:escHtml(f.charAt(0).toUpperCase());
       const isTypingToMe=_typingUsers.has(f);
       const typingBubble=isTypingToMe?`<span style="display:inline-flex;align-items:center;gap:2px;background:var(--sec);border-radius:8px;padding:1px 5px;font-size:10px;color:var(--primary);margin-left:4px"><span class="ta"><span></span><span></span><span></span></span></span>`:'';
-      return `<div class="li ${chatId===f?'on':''}" data-act="selChat" data-a="${escHtml(f)}" data-a2="private" data-ctx-act="showCtx" data-ctx-a="${escHtml(f)}">
-        <div style="display:flex;align-items:center;flex:1;min-width:0">
-          <div class="av2" style="position:relative">${av}<span class="sdot status-dot" style="background:${stColor[st]}"></span></div>
-          <div class="fi"><strong>${f}</strong>${verBadge(f)}<span class="sub">${sub}${typingBubble}</span></div>
+      return `<div class="li-swipe" data-swipe-kind="friend">
+        <div class="li ${chatId===f?'on':''}" data-act="selChat" data-a="${escHtml(f)}" data-a2="private" data-ctx-act="showCtx" data-ctx-a="${escHtml(f)}">
+          <div style="display:flex;align-items:center;flex:1;min-width:0">
+            <div class="av2" style="position:relative">${av}<span class="sdot status-dot" style="background:${stColor[st]}"></span></div>
+            <div class="fi"><strong>${f}</strong>${verBadge(f)}<span class="sub">${sub}${typingBubble}</span></div>
+          </div>
+          <button data-act="showCtx" data-a="${escHtml(f)}" data-stop="1" data-pass-event="1" style="background:none;border:none;color:var(--muted);padding:4px 6px;font-size:16px;min-width:auto;cursor:pointer;flex-shrink:0">⋮</button>
         </div>
-        <button data-act="showCtx" data-a="${escHtml(f)}" data-stop="1" data-pass-event="1" style="background:none;border:none;color:var(--muted);padding:4px 6px;font-size:16px;min-width:auto;cursor:pointer;flex-shrink:0">⋮</button>
+        <div class="li-swipe-actions"><button class="li-swipe-btn" data-act="rmFriend" data-a="${escHtml(f)}" title="Arkadaşlıktan çıkar">🗑️</button></div>
       </div>`;
     });
 
@@ -2806,12 +2733,15 @@ function updateFriends(){
       const subText=callInfo
         ? `<span style="color:#22c55e;font-size:11px">🔊 Aktif Arama — Katıl</span>`
         : `${g.members.length} üye${isAdmin?' · Yönetici':''}`;
-      return `<div class="li ${chatId===g.id?'on':''}" data-act="selChat" data-a="${escHtml(g.id)}" data-a2="group">
-        <div style="display:flex;align-items:center;flex:1;min-width:0">
-          <div class="av2" style="background:${callInfo?'#22c55e':'var(--ok)'};overflow:hidden;${callInfo?'box-shadow:0 0 0 2px #22c55e':''}">${avHTML}</div>
-          <div class="fi"><strong>${g.name}</strong>${callBadge}<span class="sub">${subText}</span></div>
+      return `<div class="li-swipe" data-swipe-kind="group">
+        <div class="li ${chatId===g.id?'on':''}" data-act="selChat" data-a="${escHtml(g.id)}" data-a2="group">
+          <div style="display:flex;align-items:center;flex:1;min-width:0">
+            <div class="av2" style="background:${callInfo?'#22c55e':'var(--ok)'};overflow:hidden;${callInfo?'box-shadow:0 0 0 2px #22c55e':''}">${avHTML}</div>
+            <div class="fi"><strong>${g.name}</strong>${callBadge}<span class="sub">${subText}</span></div>
+          </div>
+          <button data-act="openGroupDetail" data-a="${escHtml(g.id)}" data-stop="1" style="background:none;border:none;color:var(--muted);padding:4px 6px;font-size:16px;min-width:auto;cursor:pointer;flex-shrink:0">⋮</button>
         </div>
-        <button data-act="openGroupDetail" data-a="${escHtml(g.id)}" data-stop="1" style="background:none;border:none;color:var(--muted);padding:4px 6px;font-size:16px;min-width:auto;cursor:pointer;flex-shrink:0">⋮</button>
+        <div class="li-swipe-actions"><button class="li-swipe-btn" data-act="openGroupDetail" data-a="${escHtml(g.id)}" title="Grup detayı / ayrıl">🚪</button></div>
       </div>`;
     });
 
@@ -2915,7 +2845,7 @@ function updateBlockedList(){
   if(!bl.length){$('blockedList').innerHTML='<div style="padding:12px 20px;font-size:13px;color:var(--muted)">Engellenmiş kullanıcı yok.</div>';return;}
   $('blockedList').innerHTML=bl.map(u=>`
     <div class="sp-bl-item">
-      <span>🚫 ${escHtml(u)}</span>
+      <span>🚫 ${u}</span>
       <button data-act="unblock" data-a="${escHtml(u)}" style="background:none;border:none;color:var(--ok);font-size:12px;font-weight:600;cursor:pointer;padding:0">Engeli Kaldır</button>
     </div>`).join('');
 }
@@ -3215,14 +3145,9 @@ function renderChat(){
         return 12+seed*0.65;
       });
       const barsSVG=bars.map((h,i)=>`<rect x="${i*6+1}" y="${(40-h)/2}" width="4" height="${h}" rx="2" fill="currentColor" opacity="${0.35+i/55}"/>`).join('');
-      // 🔧 [FIX-XSS-CRITICAL] fileData artık new Audio()'ya HAM verilmiyor —
-      // önce sanitizeFileDataUrl ile "gerçekten data:audio/... base64" olduğu
-      // doğrulanıyor. Doğrulanmamış bir string (örn. saldırganın verdiği bir
-      // http(s) URL) new Audio() ile sessizce fetch edilip IP/agent bilgisi
-      // sızdırılabiliyordu (SSRF benzeri bilgi sızıntısı); artık reddediliyor.
-      const safeVoice = sanitizeFileDataUrl(fileData, 'audio');
-      if(safeVoice&&!_vmAudios[m.id]){
-        const audio=new Audio(safeVoice);
+      // fileData'yı şimdi çöz ve _vmAudios'a önceden kaydet (onclick'te büyük string geçme)
+      if(fileData&&!_vmAudios[m.id]){
+        const audio=new Audio(fileData);
         _vmAudios[m.id]=audio;
       }
       contentHTML=`<div class="voice-msg" id="${sid}">
@@ -3233,34 +3158,21 @@ function renderChat(){
         <span class="vm-time" id="${sid}_t">${durStr}</span>
       </div>`;
     } else if(m.fileType==='image'){
-      // 🔧 [FIX-XSS-CRITICAL] ÖNCEDEN: src="${fileData}" HİÇ escape/doğrulama
-      // yapılmadan yazılıyordu — kötü niyetli bir peer fileData içine
-      // `"><script>...` koyup stored XSS tetikleyebiliyordu. Artık fileData
-      // önce sanitizeFileDataUrl ile "gerçek bir data:image/... base64"
-      // olduğu doğrulanıyor, sonra ayrıca escHtml ile attribute'a yazılıyor
-      // (savunma derinliği — regex bir şekilde atlatılsa bile attribute'tan
-      // kaçış artık mümkün değil).
-      const safeImg = sanitizeFileDataUrl(fileData, 'image');
-      if(safeImg) contentHTML=`<img class="msg-img" src="${escHtml(safeImg)}" alt="${escHtml(m.fileName||'resim')}" data-act="openImageViewer" data-a="${escHtml(safeImg)}" data-a2="${escHtml(m.fileName||'')}">`;
-      else contentHTML=`<div class="file-msg"><span class="file-icon">🖼️</span><div class="file-info"><span class="file-name">${escHtml(m.fileName||'Resim')}</span><span class="file-size" style="color:var(--danger)">${fileData?'Geçersiz dosya':'Yüklenemedi'}</span></div></div>`;
+      if(fileData) contentHTML=`<img class="msg-img" src="${fileData}" alt="${escHtml(m.fileName||'resim')}" data-act="openImageViewer" data-a="${escHtml(fileData)}" data-a2="${escHtml(m.fileName||'')}">`;
+      else contentHTML=`<div class="file-msg"><span class="file-icon">🖼️</span><div class="file-info"><span class="file-name">${escHtml(m.fileName||'Resim')}</span><span class="file-size" style="color:var(--danger)">Yüklenemedi</span></div></div>`;
     } else if(m.fileType==='gif'){
-      // 🔧 [FIX-XSS-CRITICAL] Aynı doğrulama GIF'ler için de uygulanıyor.
-      const safeGif = sanitizeFileDataUrl(fileData, 'gif');
-      if(safeGif) contentHTML=`<img class="msg-gif" src="${escHtml(safeGif)}" alt="GIF">`;
+      if(fileData) contentHTML=`<img class="msg-gif" src="${fileData}" alt="GIF">`;
       else contentHTML=`<span class="msg-text">🎬 GIF</span>`;
     } else if(m.fileType==='file'){
       const ext=(m.fileName||'').split('.').pop().toLowerCase();
       const icon={'pdf':'📄','doc':'📝','docx':'📝','txt':'📄','zip':'🗜️','mp3':'🎵','mp4':'🎬','mov':'🎬'}[ext]||'📎';
       const sizeStr=m.fileSize?`${(m.fileSize/1024).toFixed(0)} KB`:'';
-      // 🔧 [FIX-XSS-CRITICAL] href="${fileData}" da aynı şekilde ham
-      // yazılıyordu; artık sanitizeFileDataUrl + escHtml uygulanıyor.
-      const safeFile = sanitizeFileDataUrl(fileData, 'file');
       contentHTML=`<div class="file-msg">
         <span class="file-icon">${icon}</span>
         <div class="file-info">
           <span class="file-name">${escHtml(m.fileName||'Dosya')}</span>
           <span class="file-size">${sizeStr}</span>
-          ${safeFile?`<a class="file-dl" href="${escHtml(safeFile)}" download="${escHtml(m.fileName||'dosya')}">⬇ İndir</a>`:`<span style="color:var(--danger);font-size:11px">${fileData?'Geçersiz dosya':'Yüklenemedi'}</span>`}
+          ${fileData?`<a class="file-dl" href="${fileData}" download="${escHtml(m.fileName||'dosya')}">⬇ İndir</a>`:'<span style="color:var(--danger);font-size:11px">Yüklenemedi</span>'}
         </div>
       </div>`;
     } else if(m.type==='poll'){
@@ -3344,12 +3256,7 @@ function renderChat(){
         ticksHTML=`<span class="ticks ${isRead?'read':''}">${isRead?'✓✓':'✓'}</span>`;
       } else if(chatType==='group'){
         const readers=(m.readBy||[]).filter(u=>u!==ME.user_id);
-        // 🔧 [FIX-XSS] readers, peer'den gelen readBy dizisinden geliyor ve
-        // önceden escape edilmeden title attribute'una yazılıyordu. Kullanıcı
-        // adları normalde whitelist ile sınırlı olsa da, gelen P2P paketleri
-        // bu alanı biçimsel olarak doğrulamıyordu — savunma derinliği için
-        // escHtml zorunlu kılındı.
-        if(readers.length>0) ticksHTML=`<span class="ticks read" title="${escHtml(readers.join(', '))} okudu">✓✓ ${readers.length}</span>`;
+        if(readers.length>0) ticksHTML=`<span class="ticks read" title="${readers.join(', ')} okudu">✓✓ ${readers.length}</span>`;
         else ticksHTML=`<span class="ticks">✓</span>`;
       }
     }
@@ -3382,70 +3289,16 @@ function renderChat(){
   }
 }
 
-// 🔧 [FIX-XSS-1] Önceden yalnızca &, <, >, " kaçışlanıyordu. Tek tırnak (')
-// ve backtick (`) kaçışlanmadığı için, tek tırnaklı bir attribute'a yazılan
-// içerik teorik olarak attribute'tan kaçabiliyordu. Artık hepsi kaçışlanıyor.
-// Ayrıca t artık string olmayabilir (peer'den gelen serbest tipli veri) diye
-// String() ile zorlanıyor — önceden t.replace çağrısı string olmayan girdide
-// (örn. obje/undefined) exception fırlatıp render'ı tamamen kırabiliyordu.
 function escHtml(t){
-  return String(t)
-    .replace(/&/g,'&amp;')
-    .replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;')
-    .replace(/'/g,'&#39;')
-    .replace(/`/g,'&#96;');
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // 🛡️ [HIGH-06] Avatar URL dogrulaması — javascript:, data:text, vbscript: reddedilir
-// 🔧 [FIX-XSS-CRITICAL] ÖNCEDEN yalnızca şema (data:image/ veya https://)
-// kontrol ediliyordu. Ancak bu fonksiyonun döndürdüğü değer birçok yerde
-// `src="${safeAv}"` gibi HTML attribute'una DOĞRUDAN (escHtml OLMADAN)
-// yazılıyordu (bkz. grup/kullanıcı avatarları). "https://..." öneki geçse
-// bile URL'nin içinde `"` veya `<`/`>` karakteri bulunması attribute'tan
-// kaçışa (ve dolayısıyla stored XSS'e) yetiyordu — örn:
-//   https://evil.com/x" onerror="alert(1)
-// Artık bu tür tehlikeli karakterler içeren URL'ler de reddediliyor; ayrıca
-// data: URI'lerde ;base64, öneki zorunlu kılınıp SVG (script çalıştırabilen
-// bir görsel formatı) engelleniyor.
 function sanitizeAvatarUrl(url){
   if(!url||typeof url!=='string') return null;
-  if(/["'<>`]/.test(url)) return null;
-  if(/^data:image\/svg\+xml/i.test(url)) return null;
-  if(/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i.test(url)&&url.length<2_000_000) return url;
-  if(/^https:\/\/[^\s]+$/.test(url)&&url.length<2000) return url;
+  if(url.startsWith('data:image/')&&url.length<2_000_000) return url;
+  if(/^https:\/\//.test(url)) return url;
   return null;
-}
-
-// 🔧 [FIX-XSS-CRITICAL] Mesaj eki (fileData) doğrulaması.
-// ÖNCEDEN: fileData hiçbir şema/format kontrolünden geçmeden doğrudan
-// `<img src="${fileData}">` / `<a href="${fileData}">` içine yazılıyordu ve
-// escHtml() de UYGULANMIYORDU. P2P mimaride mesaj içeriği tamamen "diğer
-// istemci ne gönderirse" ile belirlendiği için (bkz. private_msg/group_msg
-// alım kodu), kötü niyetli/değiştirilmiş bir istemci fileData alanına
-// `"><script>...</script>` gibi bir string koyarak attribute'tan kaçıp
-// alıcının tarayıcısında KEYFİ HTML/JS ÇALIŞTIRABİLİYORDU (stored XSS).
-// Bu fonksiyon, expectedKind'a göre yalnızca beklenen data: şemasını kabul
-// eder; her şeyi ayrıca base64 gövdesi karakter kümesi ile doğrular ve
-// makul bir üst boyut sınırı koyar. Uymayan her şey reddedilir (null).
-const _DATA_URI_RE = {
-  image: /^data:image\/(png|jpe?g|gif|webp|bmp|svg\+xml);base64,[A-Za-z0-9+/=]+$/,
-  gif:   /^data:image\/gif;base64,[A-Za-z0-9+/=]+$/,
-  audio: /^data:audio\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i,
-  file:  /^data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i
-};
-function sanitizeFileDataUrl(fileData, expectedKind){
-  if(!fileData || typeof fileData !== 'string') return null;
-  // svg+xml içinde <script>/onload= gibi içerik taşınabildiği için (SVG,
-  // görsel değil aktif içerik yürütebilir) mesaj eki olarak reddediyoruz.
-  if(/^data:image\/svg\+xml/i.test(fileData)) return null;
-  const re = _DATA_URI_RE[expectedKind];
-  if(!re) return null;
-  // 15MB üstü tek bir ek localStorage/bellek için de mantıksız — DoS/şişirme
-  // önleme amacıyla üst sınır.
-  if(fileData.length > 20_000_000) return null;
-  return re.test(fileData) ? fileData : null;
 }
 
 // 🛡️ [HIGH-06] Avatar elementini guvenli sek. set et — innerHTML KULLANILMAZ
@@ -6393,11 +6246,8 @@ window.changePassword=async()=>{
     const ok=await pwVerify(k, old);
     if(!ok){ showToast('Hata','❌ Mevcut şifre yanlış!'); return; }
   }
-  const np=prompt('Yeni şifre (en az 8 karakter):');
-  // 🔧 [FIX] Kendi ayrı (6 karakter) kontrolünü tutmak yerine artık merkezi
-  // _validatePassword() kullanılıyor — böylece parola politikası tek bir
-  // yerden yönetiliyor ve tutarsız kalmıyor.
-  if(!np||!_validatePassword(np)){ showToast('Hata','Şifre en az 8 karakter olmalı.'); return; }
+  const np=prompt('Yeni şifre (en az 6 karakter):');
+  if(!np||np.length<6){ showToast('Hata','Şifre en az 6 karakter olmalı.'); return; }
   const np2=prompt('Yeni şifreyi tekrar girin:');
   if(np!==np2){ showToast('Hata','Şifreler eşleşmiyor!'); return; }
   await pwSave(k, np);
@@ -6832,8 +6682,8 @@ window.showMsgCtx=(e,msgId,fromUser)=>{
       <div style="padding:8px 16px 4px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
         👁️ Görüldü (${readers.length}/${g.members.length-1})
       </div>
-      ${readers.length?readers.map(u=>`<div class="cxi" style="cursor:default;font-size:12px">✅ ${escHtml(u)}</div>`).join(''):'<div style="padding:4px 16px;font-size:12px;color:var(--muted)">Henüz kimse görmedi</div>'}
-      ${notRead.length?`<div style="padding:2px 16px 4px;font-size:11px;color:var(--muted)">⏳ ${escHtml(notRead.join(', '))}</div>`:''}
+      ${readers.length?readers.map(u=>`<div class="cxi" style="cursor:default;font-size:12px">✅ ${u}</div>`).join(''):'<div style="padding:4px 16px;font-size:12px;color:var(--muted)">Henüz kimse görmedi</div>'}
+      ${notRead.length?`<div style="padding:2px 16px 4px;font-size:11px;color:var(--muted)">⏳ ${notRead.join(', ')}</div>`:''}
       <div style="height:1px;background:var(--border);margin:4px 0"></div>`;
   }
 
@@ -8530,10 +8380,146 @@ function _stopCallNotif(){
     const dy=e.changedTouches[0].clientY-ty;
     // Yatay swipe > 60px, dikey < 40px
     if(Math.abs(dx)>60&&Math.abs(dy)<40){
-      if(dx>0&&tx<40) openMobileSidebar();   // sol kenardan sağa → aç
-      if(dx<0) closeMobileSidebar();          // sola kaydır → kapat
+      if(dx>0&&tx<40){ openMobileSidebar(); _haptic(10); }   // sol kenardan sağa → aç
+      if(dx<0){ closeMobileSidebar(); _haptic(10); }          // sola kaydır → kapat
     }
   },{passive:true});
+})();
+
+// ══════════════════════════════════════════════════════════════════
+// ✨ [UX-POLISH] Dokunsal geri bildirim (haptic)
+// ══════════════════════════════════════════════════════════════════
+window._haptic = function(ms){
+  try{ if(navigator.vibrate) navigator.vibrate(ms||12); }catch(_e){}
+};
+
+// ══════════════════════════════════════════════════════════════════
+// ✨ [UX-POLISH] Sohbet/grup satırlarında sağdan-sola swipe-to-action
+// (.li-swipe kapsayıcıları updateFriends() içinde üretiliyor)
+// ══════════════════════════════════════════════════════════════════
+(()=>{
+  let curEl=null, startX=0, startY=0, curX=0, dragging=false, decided=false, opened=null;
+  const THRESH=40, MAX=72;
+
+  function closeOpened(except){
+    if(opened && opened!==except){ opened.classList.remove('swiped'); opened.querySelector('.li').style.transform=''; }
+    if(!except) opened=null;
+  }
+
+  document.addEventListener('touchstart', e=>{
+    const wrap=e.target.closest('.li-swipe');
+    if(!wrap){ closeOpened(); return; }
+    if(wrap!==opened) closeOpened();
+    curEl=wrap; startX=e.touches[0].clientX; startY=e.touches[0].clientY; curX=0;
+    dragging=false; decided=false;
+  },{passive:true});
+
+  document.addEventListener('touchmove', e=>{
+    if(!curEl) return;
+    const dx=e.touches[0].clientX-startX, dy=e.touches[0].clientY-startY;
+    if(!decided){
+      if(Math.abs(dx)<8 && Math.abs(dy)<8) return;
+      decided=true;
+      dragging = Math.abs(dx)>Math.abs(dy) && dx<0; // sadece sola çekmeyi yakala
+      if(!dragging){ curEl=null; return; }
+    }
+    if(!dragging) return;
+    const already = curEl.classList.contains('swiped') ? -MAX : 0;
+    curX = Math.max(-MAX, Math.min(0, dx+already));
+    curEl.querySelector('.li').style.transform = `translateX(${curX}px)`;
+  },{passive:true});
+
+  document.addEventListener('touchend', ()=>{
+    if(!curEl || !dragging){ curEl=null; return; }
+    const li=curEl.querySelector('.li');
+    if(curX <= -THRESH){
+      curEl.classList.add('swiped'); li.style.transform=`translateX(-${MAX}px)`;
+      opened=curEl; _haptic(14);
+    } else {
+      curEl.classList.remove('swiped'); li.style.transform='';
+      if(opened===curEl) opened=null;
+    }
+    curEl=null; dragging=false;
+  },{passive:true});
+
+  // Swipe eylem butonuna basınca da titreşim ver + satırı kapat
+  document.addEventListener('click', e=>{
+    const btn=e.target.closest('.li-swipe-btn');
+    if(!btn) return;
+    _haptic(16);
+    const wrap=btn.closest('.li-swipe');
+    if(wrap){ wrap.classList.remove('swiped'); const li=wrap.querySelector('.li'); if(li) li.style.transform=''; if(opened===wrap) opened=null; }
+  });
+})();
+
+// ══════════════════════════════════════════════════════════════════
+// ✨ [UX-POLISH] Pull-to-refresh (sohbet listesi)
+// ══════════════════════════════════════════════════════════════════
+(()=>{
+  const list = document.getElementById('lstChats');
+  if(!list) return;
+  const holder = list.parentElement;
+  if(!holder) return;
+
+  const ind = document.createElement('div');
+  ind.className = 'ptr-indicator';
+  ind.innerHTML = '<span class="ptr-spinner"></span><span>Yenileniyor…</span>';
+  holder.insertBefore(ind, list);
+
+  let startY=0, pulling=false, triggered=false;
+  list.addEventListener('touchstart', e=>{
+    if(list.scrollTop>0) return;
+    startY=e.touches[0].clientY; pulling=true; triggered=false;
+  },{passive:true});
+  list.addEventListener('touchmove', e=>{
+    if(!pulling) return;
+    const dy=e.touches[0].clientY-startY;
+    if(dy>0 && list.scrollTop<=0){
+      if(dy>70 && !triggered){ triggered=true; ind.classList.add('show'); _haptic(10); }
+      else if(dy<=70) ind.classList.remove('show');
+    }
+  },{passive:true});
+  list.addEventListener('touchend', ()=>{
+    if(triggered){
+      try{ if(typeof updateFriends==='function') updateFriends(); }catch(_e){}
+      setTimeout(()=>ind.classList.remove('show'), 400);
+    } else {
+      ind.classList.remove('show');
+    }
+    pulling=false; triggered=false;
+  },{passive:true});
+})();
+
+// ══════════════════════════════════════════════════════════════════
+// ✨ [UX-POLISH] Resim/link önizlemeleri için yumuşak yükleme (skeleton→fade-in)
+// Mevcut render fonksiyonlarına dokunmadan, DOM'a eklenen yeni <img>
+// elemanlarını MutationObserver ile yakalayıp CSP-güvenli şekilde
+// (addEventListener, inline onload YOK) fade-in uyguluyor.
+// ══════════════════════════════════════════════════════════════════
+(()=>{
+  function watch(img){
+    if(img.dataset.uxWatched) return;
+    img.dataset.uxWatched='1';
+    if(img.complete && img.naturalWidth>0) return; // zaten yüklenmiş (cache)
+    img.classList.add('img-loading');
+    const done=()=>img.classList.remove('img-loading');
+    img.addEventListener('load', done, {once:true});
+    img.addEventListener('error', done, {once:true});
+  }
+  function scan(root){
+    root.querySelectorAll && root.querySelectorAll('img.msg-img, img.link-preview-thumb').forEach(watch);
+  }
+  const targets = ['chatMsgs'].map(id=>document.getElementById(id)).filter(Boolean);
+  targets.forEach(t=>{
+    scan(t);
+    new MutationObserver(muts=>{
+      muts.forEach(m=>m.addedNodes.forEach(n=>{
+        if(n.nodeType!==1) return;
+        if(n.matches && (n.matches('img.msg-img')||n.matches('img.link-preview-thumb'))) watch(n);
+        scan(n);
+      }));
+    }).observe(t, {childList:true, subtree:true});
+  });
 })();
 
 // ── Mobil başlangıç ayarları ─────────────────────────────────────
