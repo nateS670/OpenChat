@@ -2715,7 +2715,6 @@ function updateFriends(){
           </div>
           <button data-act="showCtx" data-a="${escHtml(f)}" data-stop="1" data-pass-event="1" style="background:none;border:none;color:var(--muted);padding:4px 6px;font-size:16px;min-width:auto;cursor:pointer;flex-shrink:0">⋮</button>
         </div>
-        <div class="li-swipe-actions"><button class="li-swipe-btn" data-act="rmFriend" data-a="${escHtml(f)}" title="Arkadaşlıktan çıkar">🗑️</button></div>
       </div>`;
     });
 
@@ -3522,9 +3521,11 @@ const SCREEN_QUALITY_PROFILES = {
   '2k':     { w:2560, h:1440, fps:30, bitrate:10_000_000, label:'2K'     },
   '1080p+': { w:1920, h:1080, fps:60, bitrate: 6_000_000, label:'1080p+' },
   '1080p':  { w:1920, h:1080, fps:30, bitrate: 4_000_000, label:'1080p'  },
+  '720p+':  { w:1280, h:720,  fps:60, bitrate: 3_000_000, label:'720p+'  },
+  '720p':   { w:1280, h:720,  fps:30, bitrate: 2_000_000, label:'720p'   },
 };
 // Yüksekten düşüğe sıra — indeks küçük = kalite yüksek
-const SCREEN_QUALITY_ORDER = ['4k','2k','1080p+','1080p'];
+const SCREEN_QUALITY_ORDER = ['4k','2k','1080p+','1080p','720p+','720p'];
 const _profIdx   = k => SCREEN_QUALITY_ORDER.indexOf(k);
 const _lowerProf = k => SCREEN_QUALITY_ORDER[Math.min(_profIdx(k)+1, SCREEN_QUALITY_ORDER.length-1)];
 
@@ -3537,7 +3538,9 @@ function _viewerCountCap(n){
   if(n<=1) return '4k';
   if(n<=3) return '2k';
   if(n<=6) return '1080p+';
-  return '1080p';
+  if(n<=10) return '1080p';
+  if(n<=15) return '720p+';
+  return '720p';
 }
 
 // Tek bir sender'a hedef kalite profilini uygula (çözünürlük + bitrate + fps)
@@ -3613,29 +3616,65 @@ function stopScreenQualityMonitor(){
   _screenPerConnStats.clear();
 }
 
-// ── Kalite seçici arayüzü: screenBtn'in yanına küçük bir dropdown ekler ──
+// ── Kalite seçici arayüzü: görüşme ekranının SOL ÜST köşesine sabit,
+// açılır menülü bir "Yayın Kalitesi" rozeti. #callUI'nin çocuğu olarak
+// eklenir, böylece callUI gizlenince (class="hidden") o da otomatik gizlenir.
 function _mountScreenQualitySelector(){
-  if($('screenQualitySel')) return; // zaten varsa tekrar ekleme
-  const btn = $('screenBtn');
-  if(!btn || !btn.parentNode) return;
-  const sel = document.createElement('select');
-  sel.id = 'screenQualitySel';
-  sel.title = 'Ekran paylaşımı kalitesi';
-  sel.style.cssText = 'margin-left:6px;background:#1e1e1e;color:#eee;border:1px solid #444;border-radius:6px;padding:4px 6px;font-size:12px;cursor:pointer;';
-  sel.innerHTML = `
-    <option value="auto">Otomatik (Ağ + İzleyici)</option>
-    <option value="4k">4K</option>
-    <option value="2k">2K</option>
-    <option value="1080p+">1080p+</option>
-    <option value="1080p">1080p</option>
-  `;
-  sel.value = _screenQualityMode;
-  sel.addEventListener('change', ()=>{
-    _screenQualityMode = sel.value;
-    if(screenOwner===ME.user_id) _computeAndApplyScreenQuality();
-    showToast('📶 Yayın Kalitesi', sel.value==='auto' ? 'Otomatik moda geçildi' : `Tavan: ${SCREEN_QUALITY_PROFILES[sel.value].label}`);
+  if($('screenQualityWidget')) return; // zaten varsa tekrar ekleme
+  const host = $('callUI');
+  if(!host) return;
+  if(getComputedStyle(host).position === 'static') host.style.position = 'relative';
+
+  const OPTS = ['auto','4k','2k','1080p+','1080p','720p+','720p'];
+  const labelOf = v => v==='auto' ? 'Otomatik' : SCREEN_QUALITY_PROFILES[v].label;
+
+  const wrap = document.createElement('div');
+  wrap.id = 'screenQualityWidget';
+  wrap.style.cssText = 'position:absolute;top:12px;left:12px;z-index:99999;font-family:inherit;user-select:none;';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.title = 'Yayın kalitesini ayarla';
+  btn.style.cssText = 'display:flex;align-items:center;gap:6px;background:rgba(20,20,20,.85);backdrop-filter:blur(6px);color:#eee;border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.4);white-space:nowrap;';
+
+  const menu = document.createElement('div');
+  menu.style.cssText = 'display:none;position:absolute;top:calc(100% + 6px);left:0;background:#1a1a1a;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:4px;min-width:190px;box-shadow:0 6px 24px rgba(0,0,0,.55);';
+
+  function refreshBtn(){
+    btn.innerHTML = `📶 Yayın Kalitesi: <b>${labelOf(_screenQualityMode)}</b> <span style="opacity:.6">▾</span>`;
+  }
+  function refreshMenu(){
+    menu.innerHTML = '';
+    OPTS.forEach(val=>{
+      const active = val===_screenQualityMode;
+      const item = document.createElement('div');
+      item.textContent = (active ? '✓  ' : '　  ') + labelOf(val);
+      item.style.cssText = `padding:8px 10px;border-radius:6px;font-size:12.5px;cursor:pointer;color:${active?'#4fc3f7':'#eee'};`;
+      item.addEventListener('mouseenter', ()=>{ item.style.background='rgba(255,255,255,.08)'; });
+      item.addEventListener('mouseleave', ()=>{ item.style.background='transparent'; });
+      item.addEventListener('click', ()=>{
+        _screenQualityMode = val;
+        if(screenOwner===ME.user_id) _computeAndApplyScreenQuality();
+        showToast('📶 Yayın Kalitesi', val==='auto' ? 'Otomatik moda geçildi' : `Tavan: ${SCREEN_QUALITY_PROFILES[val].label}`);
+        refreshBtn(); refreshMenu();
+        menu.style.display='none';
+      });
+      menu.appendChild(item);
+    });
+  }
+
+  btn.addEventListener('click', e=>{
+    e.stopPropagation();
+    menu.style.display = menu.style.display==='none' ? 'block' : 'none';
   });
-  btn.parentNode.insertBefore(sel, btn.nextSibling);
+  menu.addEventListener('click', e=>e.stopPropagation());
+  document.addEventListener('click', ()=>{ menu.style.display='none'; });
+
+  refreshBtn();
+  refreshMenu();
+  wrap.appendChild(btn);
+  wrap.appendChild(menu);
+  host.appendChild(wrap);
 }
 _mountScreenQualitySelector();
 
@@ -8562,6 +8601,7 @@ window._haptic = function(ms){
       case 'rmFriend':          rmFriend(a); break;
       case 'blkUser':           blkUser(a); break;
       case 'unblock':           unblock(a); break;
+      case 'showCtx':           if(el.getAttribute('data-pass-event')) showCtx(e, a); break;
       case 'openPeerVolMenu':   if(el.getAttribute('data-pass-event')) openPeerVolMenu(e, a); break;
       // ── Mesaj eylemleri ──
       case 'startReply':        startReply(a); break;
