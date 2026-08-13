@@ -421,11 +421,42 @@ const _verifyCache          = {};        // tekrar tekrar /api/identity sorgulam
 // hiçbir peer bu kullanıcıyla DataChannel kurmuyordu (bkz. _ensurePeerVerified)
 // → mesajlar outbox'ta sonsuza dek birikiyordu. ECDSA P-256, WebCrypto'da
 // 2014'ten beri TÜM tarayıcılarda var; Ed25519 yoksa ona düşülür.
+//
+// 🛡️ [ÇOK KRİTİK FIX — Kimlik Taklidi] Proje TAMAMEN serverless kalacağı için
+// (kalıcı veritabanı yok) sunucu "bu kullanıcı adı gerçekten kime ait"
+// sorusunu HİÇBİR ZAMAN güvenilir biçimde cevaplayamaz — /api/identity
+// yalnızca kim isterse ona imzalı bir pasaport verir, sahiplik kontrolü
+// yapamaz (bkz. denetim raporu bulgu #1). Bu yüzden güven kökü SUNUCUDAN
+// CİHAZA taşınıyor: tıpkı SSH/PGP/Signal güvenlik numaralarında olduğu gibi
+// "İlk Kullanımda Güven" (TOFU) modeli uygulanıyor (bkz. aşağıda
+// _checkAndPinPeerIdentity). Bunun çalışabilmesi için bu imza anahtarının
+// ARTIK HER OTURUMDA DEĞİL, HESAP BAŞINA BİR KEZ üretilip yerel olarak
+// (parola türevli _lsEncKey ile şifreli) KALICI saklanması gerekiyor —
+// aksi halde meşru kullanıcının anahtarı da her girişte "değişmiş"
+// görünür ve pinleme işe yaramaz.
+function _idKeyStoreKey(){
+  return 'sv_idkp_' + (typeof ME!=='undefined' && ME && ME.user_id ? ME.user_id.toLowerCase() : '_anon');
+}
 async function _ensureIdKeyPair(){
   if(_idKeyPair) return _idKeyPair;
   if(!crypto.subtle || !crypto.subtle.generateKey){
     throw new Error('[SEC] WebCrypto bu tarayıcıda kullanılamıyor');
   }
+  // 1) Bu hesap için daha önce üretilmiş kalıcı bir kimlik anahtarı var mı?
+  try{
+    const raw = await _lsGetDecrypted(_idKeyStoreKey());
+    if(raw){
+      const rec = JSON.parse(raw); // {alg, pub:jwk, priv:jwk}
+      const algObj = rec.alg==='ECDSA-P256' ? {name:'ECDSA', namedCurve:'P-256'} : {name:'Ed25519'};
+      const pubKey  = await crypto.subtle.importKey('jwk', rec.pub,  algObj, true, ['verify']);
+      const privKey = await crypto.subtle.importKey('jwk', rec.priv, algObj, true, ['sign']);
+      _idKeyPair = {publicKey:pubKey, privateKey:privKey};
+      _sigAlgName = rec.alg;
+      return _idKeyPair;
+    }
+  }catch(e){ console.warn('[SEC] Kalıcı kimlik anahtarı geri yüklenemedi, yeniden üretiliyor:', e); }
+
+  // 2) Yoksa yeni üret ve (mümkünse) kalıcı olarak sakla — bir daha asla değişmesin.
   try{
     _idKeyPair = await crypto.subtle.generateKey({name:'Ed25519'}, true, ['sign','verify']);
     _sigAlgName = 'Ed25519';
@@ -434,6 +465,11 @@ async function _ensureIdKeyPair(){
     _idKeyPair = await crypto.subtle.generateKey({name:'ECDSA', namedCurve:'P-256'}, true, ['sign','verify']);
     _sigAlgName = 'ECDSA-P256';
   }
+  try{
+    const pubJwk  = await crypto.subtle.exportKey('jwk', _idKeyPair.publicKey);
+    const privJwk = await crypto.subtle.exportKey('jwk', _idKeyPair.privateKey);
+    await _lsSetEncrypted(_idKeyStoreKey(), JSON.stringify({alg:_sigAlgName, pub:pubJwk, priv:privJwk}));
+  }catch(e){ console.warn('[SEC] Kimlik anahtarı kalıcı kaydedilemedi, bu oturumda geçici kalacak:', e); }
   return _idKeyPair;
 }
 
@@ -559,9 +595,24 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
     }
     const enc = new TextEncoder().encode(fromUserId + '|' + nonce);
     const sigOk = await crypto.subtle.verify(verifyAlg, pubKey, _u8(presenceSig), enc);
-    if(!sigOk) console.warn('[SEC][VERIFY-FAIL] presence imzası pasaportun genel anahtarıyla eşleşmiyor:', fromUserId, 'alg=', decoded.alg);
-    _verifyCache[cacheKey] = sigOk;
-    return sigOk;
+    if(!sigOk){
+      console.warn('[SEC][VERIFY-FAIL] presence imzası pasaportun genel anahtarıyla eşleşmiyor:', fromUserId, 'alg=', decoded.alg);
+      _verifyCache[cacheKey] = false; return false;
+    }
+
+    // 🛡️ [ÇOK KRİTİK FIX — Kimlik Taklidi] İmza matematiksel olarak geçerli
+    // olsa bile bu, sunucunun "bu kullanıcı adı gerçekten bu kişiye ait"
+    // dediği anlamına GELMEZ — sunucuda kalıcı veri/hesap olmadığı için
+    // /api/identity kim isterse ona bu kullanıcı adı için imzalı bir
+    // pasaport verir (bkz. denetim raporu bulgu #1). Asıl güven kararı
+    // burada, CİHAZDA verilir: bu kullanıcı adıyla daha önce hangi kimlik
+    // anahtarını gördük? İlk temassa pinleriz (TOFU); daha önce FARKLI bir
+    // anahtar pinlenmişse (kullanıcı adı çalınmış/aynı ad başkasınca
+    // alınmış/MITM) GÜVENMEYİZ ve kullanıcıyı uyarırız.
+    const pinOk = await _checkAndPinPeerIdentity(fromUserId, _u8(data.identity.pubKey));
+    if(!pinOk) console.warn('[SEC][PIN-FAIL] kimlik anahtarı pinlenmiş değerle eşleşmiyor:', fromUserId);
+    _verifyCache[cacheKey] = pinOk;
+    return pinOk;
   }catch(e){
     console.warn('[SEC][VERIFY-FAIL] Pasaport doğrulama istisnası:', fromUserId, e);
     _verifyCache[cacheKey] = false;
@@ -628,6 +679,75 @@ async function storePeerPublicKey(userId, jwk){
   if(typeof chatId !== 'undefined' && chatId === userId) _updateChatFpDisplay(userId);
 }
 
+// ══════════════════════════════════════════════════════════════════
+// 🛡️ [ÇOK KRİTİK FIX — Kimlik Taklidi] Kalıcı Kimlik Pinleme (TOFU)
+// ══════════════════════════════════════════════════════════════════
+// Bu proje bilinçli olarak sunucusuz/veritabansız kalıyor; bu yüzden
+// sunucu "bu kullanıcı adı gerçekten kime ait" sorusunu ASLA güvenilir
+// biçimde cevaplayamaz. Bunun yerine (SSH known_hosts, PGP, Signal
+// güvenlik numaraları ile aynı mantık): bir kullanıcı adıyla İLK KEZ
+// konuşulduğunda, o kişinin kalıcı kimlik genel anahtarının parmak izi
+// bu cihazda YEREL OLARAK kaydedilir. Sonraki her bağlantıda gelen
+// anahtar bu kayıtla karşılaştırılır. Eşleşmezse (ör. biri aynı
+// kullanıcı adını farklı bir cihazda "kayıt" etmiş ya da bir MITM
+// saldırısı var) bağlantıya GÜVENİLMEZ ve kullanıcı açıkça uyarılır.
+const PEER_ID_PIN_KEY = 'sv_idpin_v1';
+function _getIdPinStore(){
+  try{ return JSON.parse(localStorage.getItem(PEER_ID_PIN_KEY) || '{}'); }catch(e){ return {}; }
+}
+function _setIdPinStore(s){ try{ localStorage.setItem(PEER_ID_PIN_KEY, JSON.stringify(s)); }catch(e){} }
+
+async function _fingerprintIdentityPubKey(rawPubKeyU8){
+  const raw = await crypto.subtle.digest('SHA-256', rawPubKeyU8);
+  return [...new Uint8Array(raw)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+const _peerPendingIdentity = {}; // userId → onay bekleyen YENİ kimlik parmak izi
+
+// pubKeyRawU8: peer pasaportundaki genel anahtarın HAM (raw) baytları.
+// Dönüş: true → güvenilir (pin eşleşti ya da ilk temas), false → pin uyuşmazlığı.
+async function _checkAndPinPeerIdentity(userId, pubKeyRawU8){
+  const uidKey = userId.toLowerCase();
+  const fp = await _fingerprintIdentityPubKey(pubKeyRawU8);
+  const store = _getIdPinStore();
+  const existing = store[uidKey];
+
+  if(!existing){
+    // İlk temas — pinle ve kabul et, kullanıcıyı bilgilendir.
+    store[uidKey] = fp;
+    _setIdPinStore(store);
+    _peerKeyFingerprints[userId] = fp.match(/.{4}/g).join(' ').toUpperCase();
+    if(typeof showToast==='function'){
+      showToast('🔐 Yeni Güvenli Bağlantı', `${userId} ile ilk kez konuşuyorsunuz. Güvenlik kodunu mümkünse başka bir kanaldan doğrulayın.`);
+    }
+    return true;
+  }
+  if(existing === fp){
+    _peerKeyFingerprints[userId] = fp.match(/.{4}/g).join(' ').toUpperCase();
+    return true; // beklenen kimlik — güvenilir
+  }
+
+  // Pin UYUŞMAZLIĞI — sessizce kabul ETME.
+  console.warn('[SEC][PIN-MISMATCH]', userId, 'için pinlenen kimlik anahtarıyla eşleşmiyor.');
+  _peerPendingIdentity[userId] = fp;
+  if(typeof _showKeyChangeWarning==='function') _showKeyChangeWarning(userId);
+  return false;
+}
+
+// Kullanıcı uyarıyı görüp bilerek yeni kimliği kabul ederse çağrılır.
+window._acceptNewPeerIdentity = (userId) => {
+  const fp = _peerPendingIdentity[userId];
+  if(!fp) return;
+  const store = _getIdPinStore();
+  store[userId.toLowerCase()] = fp;
+  _setIdPinStore(store);
+  delete _peerPendingIdentity[userId];
+  // Bu kullanıcı için önbelleklenmiş doğrulama sonuçlarını temizle ki
+  // bir sonraki presence yeni pinle karşı doğru sonucu üretsin.
+  Object.keys(_verifyCache).forEach(k=>{ if(k.startsWith(userId+'|')) delete _verifyCache[k]; });
+  if(typeof showToast==='function') showToast('Kimlik Güncellendi', userId+' için yeni güvenlik anahtarı kabul edildi.');
+};
+
 // 🛡️ [MED-02] Parmak izi değişikliği uyarı banner'ı
 // NOT: onclick="..." attribute KULLANILMAZ — sayfa CSP'si yalnızca derleme
 // anında bilinen, önceden hash'lenmiş inline handler'lara izin veriyor.
@@ -646,7 +766,13 @@ function _showKeyChangeWarning(userId){
       <button type="button" data-fp-dismiss style="font-size:12px;padding:6px 12px;border-radius:8px;background:transparent;color:#991b1b;border:1px solid #991b1b;cursor:pointer">Kapat</button>
     </div>`;
   // 🛡️ addEventListener — CSP-güvenli (inline onclick attribute DEĞİL)
-  warn.querySelector('[data-fp-accept]').addEventListener('click', () => window._acceptNewPeerKey(userId));
+  // 🛡️ [ÇOK KRİTİK FIX] Asıl güvenlik kararı artık kalıcı kimlik pinine
+  // dayandığı için önce onu güncelliyoruz; eski ECDH-gösterim pini varsa
+  // (geriye dönük uyumluluk) onu da güncelleriz.
+  warn.querySelector('[data-fp-accept]').addEventListener('click', () => {
+    window._acceptNewPeerIdentity(userId);
+    if(typeof window._acceptNewPeerKey==='function' && _peerPendingKeys[userId]) window._acceptNewPeerKey(userId);
+  });
   warn.querySelector('[data-fp-dismiss]').addEventListener('click', () => warn.remove());
 
   if(typeof chatId !== 'undefined' && chatId === userId && $('chatMsgs')){
@@ -1893,8 +2019,14 @@ async function handleSig(d){
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
     // Gelen dosya/gif verisini oturum belleğine kaydet
     if(d.msg.fileData&&d.msg.fileData&&!d.msg.fileData.startsWith('__')){
-      _sessionFiles.set(d.msg.id, d.msg.fileData);
-      d.msg.fileData='__session__'+d.msg.id;
+      // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
+      if(d.msg.fileData.length>MAX_INCOMING_FILE_CHARS){
+        console.warn('[SEC] Aşırı büyük dosya payload\'ı reddedildi:', d.from, d.msg.fileData.length);
+        d.msg.fileData=''; d.msg.fileType=d.msg.fileType||'file';
+      } else {
+        _sessionFiles.set(d.msg.id, d.msg.fileData);
+        d.msg.fileData='__session__'+d.msg.id;
+      }
     }
     db.messages[k].push(d.msg);saveDB(db);
     if(chatId===d.from&&chatType==='private'){renderChat();markAsRead(d.from);}
@@ -1936,8 +2068,14 @@ async function handleSig(d){
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
     // Gelen dosya/gif verisini oturum belleğine kaydet
     if(d.msg.fileData&&!d.msg.fileData.startsWith('__')){
-      _sessionFiles.set(d.msg.id, d.msg.fileData);
-      d.msg.fileData='__session__'+d.msg.id;
+      // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
+      if(d.msg.fileData.length>MAX_INCOMING_FILE_CHARS){
+        console.warn('[SEC] Aşırı büyük dosya payload\'ı reddedildi (grup):', d.from, d.msg.fileData.length);
+        d.msg.fileData=''; d.msg.fileType=d.msg.fileType||'file';
+      } else {
+        _sessionFiles.set(d.msg.id, d.msg.fileData);
+        d.msg.fileData='__session__'+d.msg.id;
+      }
     }
     db.messages[k].push(d.msg);saveDB(db);
     if(chatId===d.groupId&&chatType==='group'){
@@ -2715,6 +2853,7 @@ function updateFriends(){
           </div>
           <button data-act="showCtx" data-a="${escHtml(f)}" data-stop="1" data-pass-event="1" style="background:none;border:none;color:var(--muted);padding:4px 6px;font-size:16px;min-width:auto;cursor:pointer;flex-shrink:0">⋮</button>
         </div>
+        <div class="li-swipe-actions"><button class="li-swipe-btn" data-act="rmFriend" data-a="${escHtml(f)}" title="Arkadaşlıktan çıkar">🗑️</button></div>
       </div>`;
     });
 
@@ -3145,8 +3284,12 @@ function renderChat(){
       });
       const barsSVG=bars.map((h,i)=>`<rect x="${i*6+1}" y="${(40-h)/2}" width="4" height="${h}" rx="2" fill="currentColor" opacity="${0.35+i/55}"/>`).join('');
       // fileData'yı şimdi çöz ve _vmAudios'a önceden kaydet (onclick'te büyük string geçme)
-      if(fileData&&!_vmAudios[m.id]){
-        const audio=new Audio(fileData);
+      // 🛡️ [FIX] Ses kaynağı da şema doğrulamasından geçiriliyor — yalnızca
+      // gerçek bir data: URL'si oynatılır (dış URL'lere gizli istek/izleme
+      // pikseli riski önlenir).
+      const safeVoice = sanitizeFileDataUrl(fileData);
+      if(safeVoice&&!_vmAudios[m.id]){
+        const audio=new Audio(safeVoice);
         _vmAudios[m.id]=audio;
       }
       contentHTML=`<div class="voice-msg" id="${sid}">
@@ -3157,21 +3300,29 @@ function renderChat(){
         <span class="vm-time" id="${sid}_t">${durStr}</span>
       </div>`;
     } else if(m.fileType==='image'){
-      if(fileData) contentHTML=`<img class="msg-img" src="${fileData}" alt="${escHtml(m.fileName||'resim')}" data-act="openImageViewer" data-a="${escHtml(fileData)}" data-a2="${escHtml(m.fileName||'')}">`;
+      // 🛡️ [ÇOK KRİTİK FIX] fileData artık src'ye yazılmadan önce şema
+      // doğrulamasından geçiriliyor (yalnızca data:image/ veya https://).
+      const safeImg = sanitizeAvatarUrl(fileData);
+      if(safeImg) contentHTML=`<img class="msg-img" src="${escHtml(safeImg)}" alt="${escHtml(m.fileName||'resim')}" data-act="openImageViewer" data-a="${escHtml(safeImg)}" data-a2="${escHtml(m.fileName||'')}">`;
       else contentHTML=`<div class="file-msg"><span class="file-icon">🖼️</span><div class="file-info"><span class="file-name">${escHtml(m.fileName||'Resim')}</span><span class="file-size" style="color:var(--danger)">Yüklenemedi</span></div></div>`;
     } else if(m.fileType==='gif'){
-      if(fileData) contentHTML=`<img class="msg-gif" src="${fileData}" alt="GIF">`;
+      // 🛡️ [ÇOK KRİTİK FIX] Aynı şema doğrulaması GIF'ler için de uygulanıyor.
+      const safeGif = sanitizeAvatarUrl(fileData);
+      if(safeGif) contentHTML=`<img class="msg-gif" src="${escHtml(safeGif)}" alt="GIF">`;
       else contentHTML=`<span class="msg-text">🎬 GIF</span>`;
     } else if(m.fileType==='file'){
       const ext=(m.fileName||'').split('.').pop().toLowerCase();
       const icon={'pdf':'📄','doc':'📝','docx':'📝','txt':'📄','zip':'🗜️','mp3':'🎵','mp4':'🎬','mov':'🎬'}[ext]||'📎';
       const sizeStr=m.fileSize?`${(m.fileSize/1024).toFixed(0)} KB`:'';
+      // 🛡️ [ÇOK KRİTİK FIX] İndirme bağlantısı yalnızca gerçek bir data: URL'siyse
+      // oluşturuluyor; javascript:/vbscript: gibi şemalar reddediliyor.
+      const safeFile = sanitizeFileDataUrl(fileData);
       contentHTML=`<div class="file-msg">
         <span class="file-icon">${icon}</span>
         <div class="file-info">
           <span class="file-name">${escHtml(m.fileName||'Dosya')}</span>
           <span class="file-size">${sizeStr}</span>
-          ${fileData?`<a class="file-dl" href="${fileData}" download="${escHtml(m.fileName||'dosya')}">⬇ İndir</a>`:'<span style="color:var(--danger);font-size:11px">Yüklenemedi</span>'}
+          ${safeFile?`<a class="file-dl" href="${escHtml(safeFile)}" download="${escHtml(m.fileName||'dosya')}">⬇ İndir</a>`:'<span style="color:var(--danger);font-size:11px">Yüklenemedi</span>'}
         </div>
       </div>`;
     } else if(m.type==='poll'){
@@ -3289,7 +3440,11 @@ function renderChat(){
 }
 
 function escHtml(t){
-  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  // 🛡️ [KRİTİK FIX] Tek tırnak (') artık da kaçırılıyor — önceden yalnızca
+  // &, <, >, " kaçırılıyordu. Şu an tüm öznitelikler çift tırnakla
+  // yazıldığı için doğrudan istismar edilebilir değildi, ama savunma
+  // derinliği (defense-in-depth) için eklendi.
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 // 🛡️ [HIGH-06] Avatar URL dogrulaması — javascript:, data:text, vbscript: reddedilir
@@ -3297,6 +3452,21 @@ function sanitizeAvatarUrl(url){
   if(!url||typeof url!=='string') return null;
   if(url.startsWith('data:image/')&&url.length<2_000_000) return url;
   if(/^https:\/\//.test(url)) return url;
+  return null;
+}
+
+// 🛡️ [ÇOK KRİTİK FIX — Denetim Raporu Bulgu #3 & #5] Dosya/mesaj içeriği
+// (fileData) WebRTC DataChannel üzerinden PEER'DAN gelir — yani gönderen
+// tarafın normal dosya-yükleme arayüzünden geçtiğinin HİÇBİR garantisi
+// yoktur. Değiştirilmiş/özel bir istemci `fileData` alanına
+// `javascript:...` gibi bir URI koyup bunu doğrudan `src`/`href`
+// özniteliğine yazdırabilirdi (attribute-injection / XSS). Bu fonksiyon,
+// dosya indirme bağlantıları için YALNIZCA `data:` şemasına izin verir —
+// gerçek bir yüklenmiş dosya HER ZAMAN bir data: URL'sidir, başka hiçbir
+// şema (javascript:, vbscript:, http(s):, blob: vb.) burada meşru değildir.
+function sanitizeFileDataUrl(url){
+  if(!url||typeof url!=='string') return null;
+  if(url.startsWith('data:')&&url.length<20_000_000) return url;
   return null;
 }
 
@@ -3521,11 +3691,9 @@ const SCREEN_QUALITY_PROFILES = {
   '2k':     { w:2560, h:1440, fps:30, bitrate:10_000_000, label:'2K'     },
   '1080p+': { w:1920, h:1080, fps:60, bitrate: 6_000_000, label:'1080p+' },
   '1080p':  { w:1920, h:1080, fps:30, bitrate: 4_000_000, label:'1080p'  },
-  '720p+':  { w:1280, h:720,  fps:60, bitrate: 3_000_000, label:'720p+'  },
-  '720p':   { w:1280, h:720,  fps:30, bitrate: 2_000_000, label:'720p'   },
 };
 // Yüksekten düşüğe sıra — indeks küçük = kalite yüksek
-const SCREEN_QUALITY_ORDER = ['4k','2k','1080p+','1080p','720p+','720p'];
+const SCREEN_QUALITY_ORDER = ['4k','2k','1080p+','1080p'];
 const _profIdx   = k => SCREEN_QUALITY_ORDER.indexOf(k);
 const _lowerProf = k => SCREEN_QUALITY_ORDER[Math.min(_profIdx(k)+1, SCREEN_QUALITY_ORDER.length-1)];
 
@@ -3538,9 +3706,7 @@ function _viewerCountCap(n){
   if(n<=1) return '4k';
   if(n<=3) return '2k';
   if(n<=6) return '1080p+';
-  if(n<=10) return '1080p';
-  if(n<=15) return '720p+';
-  return '720p';
+  return '1080p';
 }
 
 // Tek bir sender'a hedef kalite profilini uygula (çözünürlük + bitrate + fps)
@@ -3616,65 +3782,29 @@ function stopScreenQualityMonitor(){
   _screenPerConnStats.clear();
 }
 
-// ── Kalite seçici arayüzü: görüşme ekranının SOL ÜST köşesine sabit,
-// açılır menülü bir "Yayın Kalitesi" rozeti. #callUI'nin çocuğu olarak
-// eklenir, böylece callUI gizlenince (class="hidden") o da otomatik gizlenir.
+// ── Kalite seçici arayüzü: screenBtn'in yanına küçük bir dropdown ekler ──
 function _mountScreenQualitySelector(){
-  if($('screenQualityWidget')) return; // zaten varsa tekrar ekleme
-  const host = $('callUI');
-  if(!host) return;
-  if(getComputedStyle(host).position === 'static') host.style.position = 'relative';
-
-  const OPTS = ['auto','4k','2k','1080p+','1080p','720p+','720p'];
-  const labelOf = v => v==='auto' ? 'Otomatik' : SCREEN_QUALITY_PROFILES[v].label;
-
-  const wrap = document.createElement('div');
-  wrap.id = 'screenQualityWidget';
-  wrap.style.cssText = 'position:absolute;top:12px;left:12px;z-index:99999;font-family:inherit;user-select:none;';
-
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.title = 'Yayın kalitesini ayarla';
-  btn.style.cssText = 'display:flex;align-items:center;gap:6px;background:rgba(20,20,20,.85);backdrop-filter:blur(6px);color:#eee;border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.4);white-space:nowrap;';
-
-  const menu = document.createElement('div');
-  menu.style.cssText = 'display:none;position:absolute;top:calc(100% + 6px);left:0;background:#1a1a1a;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:4px;min-width:190px;box-shadow:0 6px 24px rgba(0,0,0,.55);';
-
-  function refreshBtn(){
-    btn.innerHTML = `📶 Yayın Kalitesi: <b>${labelOf(_screenQualityMode)}</b> <span style="opacity:.6">▾</span>`;
-  }
-  function refreshMenu(){
-    menu.innerHTML = '';
-    OPTS.forEach(val=>{
-      const active = val===_screenQualityMode;
-      const item = document.createElement('div');
-      item.textContent = (active ? '✓  ' : '　  ') + labelOf(val);
-      item.style.cssText = `padding:8px 10px;border-radius:6px;font-size:12.5px;cursor:pointer;color:${active?'#4fc3f7':'#eee'};`;
-      item.addEventListener('mouseenter', ()=>{ item.style.background='rgba(255,255,255,.08)'; });
-      item.addEventListener('mouseleave', ()=>{ item.style.background='transparent'; });
-      item.addEventListener('click', ()=>{
-        _screenQualityMode = val;
-        if(screenOwner===ME.user_id) _computeAndApplyScreenQuality();
-        showToast('📶 Yayın Kalitesi', val==='auto' ? 'Otomatik moda geçildi' : `Tavan: ${SCREEN_QUALITY_PROFILES[val].label}`);
-        refreshBtn(); refreshMenu();
-        menu.style.display='none';
-      });
-      menu.appendChild(item);
-    });
-  }
-
-  btn.addEventListener('click', e=>{
-    e.stopPropagation();
-    menu.style.display = menu.style.display==='none' ? 'block' : 'none';
+  if($('screenQualitySel')) return; // zaten varsa tekrar ekleme
+  const btn = $('screenBtn');
+  if(!btn || !btn.parentNode) return;
+  const sel = document.createElement('select');
+  sel.id = 'screenQualitySel';
+  sel.title = 'Ekran paylaşımı kalitesi';
+  sel.style.cssText = 'margin-left:6px;background:#1e1e1e;color:#eee;border:1px solid #444;border-radius:6px;padding:4px 6px;font-size:12px;cursor:pointer;';
+  sel.innerHTML = `
+    <option value="auto">Otomatik (Ağ + İzleyici)</option>
+    <option value="4k">4K</option>
+    <option value="2k">2K</option>
+    <option value="1080p+">1080p+</option>
+    <option value="1080p">1080p</option>
+  `;
+  sel.value = _screenQualityMode;
+  sel.addEventListener('change', ()=>{
+    _screenQualityMode = sel.value;
+    if(screenOwner===ME.user_id) _computeAndApplyScreenQuality();
+    showToast('📶 Yayın Kalitesi', sel.value==='auto' ? 'Otomatik moda geçildi' : `Tavan: ${SCREEN_QUALITY_PROFILES[sel.value].label}`);
   });
-  menu.addEventListener('click', e=>e.stopPropagation());
-  document.addEventListener('click', ()=>{ menu.style.display='none'; });
-
-  refreshBtn();
-  refreshMenu();
-  wrap.appendChild(btn);
-  wrap.appendChild(menu);
-  host.appendChild(wrap);
+  btn.parentNode.insertBefore(sel, btn.nextSibling);
 }
 _mountScreenQualitySelector();
 
@@ -4564,6 +4694,14 @@ let processedStream=null;
 
 // Dosya/GIF verilerini oturum boyunca bellekte tut (localStorage'a güvenme)
 const _sessionFiles = new Map(); // msgId → dataURL / URL
+// 🛡️ [ORTA FIX — Denetim Raporu Bulgu #6] Gönderen tarafta 10MB'lık dosya
+// sınırı yalnızca UI'da uygulanıyordu; değiştirilmiş bir istemci bunu
+// atlayıp alıcıya çok daha büyük bir payload gönderebilir ve alıcının
+// sekmesinde bellek/localStorage tükenmesine (DoS) yol açabilirdi. Bu
+// sınır artık ALICI TARAFINDA da (mesaj oturum belleğine alınmadan önce)
+// uygulanıyor. ~10MB dosya, base64'te ~13.7MB olur; güvenlik payı için üst
+// sınır 15MB karakter olarak belirlendi.
+const MAX_INCOMING_FILE_CHARS = 15_000_000;
 
 // ══════════════════════════════════════════════════════════════════
 //  🎙️ SES İŞLEME — Temiz Yaklaşım
@@ -8601,7 +8739,6 @@ window._haptic = function(ms){
       case 'rmFriend':          rmFriend(a); break;
       case 'blkUser':           blkUser(a); break;
       case 'unblock':           unblock(a); break;
-      case 'showCtx':           if(el.getAttribute('data-pass-event')) showCtx(e, a); break;
       case 'openPeerVolMenu':   if(el.getAttribute('data-pass-event')) openPeerVolMenu(e, a); break;
       // ── Mesaj eylemleri ──
       case 'startReply':        startReply(a); break;
