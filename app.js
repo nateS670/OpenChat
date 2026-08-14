@@ -3420,13 +3420,15 @@ function renderChat(){
     </div>`;
 
     return`<div class="msg-wrap ${me?'me-wrap':''}" data-id="${m.id}" data-ctx-act="showMsgCtx" data-ctx-a="${escHtml(m.id)}" data-ctx-a2="${escHtml(m.from||'')}">
-      ${actionsHTML}
-      <div class="msg ${me?'me':'ot'}">
-        ${chatType==='group'&&!me?`<div class="ms">${escHtml(m.from||'')}</div>`:''}
-        ${replyHTML}
-        ${contentHTML}
-        ${reactHTML}
-        <span class="mi">${m.time||''}${vanishBadge}${ticksHTML}</span>
+      <div class="msg-col">
+        ${actionsHTML}
+        <div class="msg ${me?'me':'ot'}">
+          ${chatType==='group'&&!me?`<div class="ms">${escHtml(m.from||'')}</div>`:''}
+          ${replyHTML}
+          ${contentHTML}
+          ${reactHTML}
+          <span class="mi">${m.time||''}${vanishBadge}${ticksHTML}</span>
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -8739,6 +8741,11 @@ window._haptic = function(ms){
       case 'rmFriend':          rmFriend(a); break;
       case 'blkUser':           blkUser(a); break;
       case 'unblock':           unblock(a); break;
+      // 🐞 [FIX] Sohbet listesindeki "⋮" (üç nokta) butonu data-act="showCtx"
+      // ile işaretliydi ama click dispatcher'da karşılık gelen bir case
+      // yoktu (showCtx yalnızca sağ-tık/contextmenu dispatcher'ında
+      // tanımlıydı) — bu yüzden tıklayınca hiçbir şey olmuyordu.
+      case 'showCtx':           if(el.getAttribute('data-pass-event')) showCtx(e, a); break;
       case 'openPeerVolMenu':   if(el.getAttribute('data-pass-event')) openPeerVolMenu(e, a); break;
       // ── Mesaj eylemleri ──
       case 'startReply':        startReply(a); break;
