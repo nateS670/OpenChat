@@ -537,15 +537,43 @@ html.dark .ver-unknown{background:#1A1A1A;color:#888888}
 .msg-wrap:hover{background:rgba(0,0,0,.025)}
 html.dark .msg-wrap:hover{background:rgba(255,255,255,.025)}
 .msg-wrap.me-wrap{flex-direction:row-reverse}
+/* 🐞 [UI FIX] .msg-actions artık tam genişlikteki .msg-wrap satırına değil,
+   balonla aynı genişlikteki .msg-col sarmalayıcısına göre konumlanıyor.
+   Önceden .msg-wrap (satırın TAMAMI, balonun kendisi değil) positioning
+   context olduğu için -76px ofset balonun yanından çok uzağa, satırın
+   diğer ucuna denk geliyor ve dar pencerelerde ekranın dışına taşıyordu. */
+.msg-col{position:relative;max-width:65%;min-width:0}
 .msg-wrap.me-wrap .msg-actions{left:-76px}
 .msg-wrap:not(.me-wrap) .msg-actions{right:-76px}
-.msg-actions{display:none;flex-direction:row;gap:2px;position:absolute;top:-10px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,.12)}
+.msg-actions{display:none;flex-direction:row;gap:2px;position:absolute;top:-10px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,.12);max-width:calc(100vw - 24px)}
 .msg-wrap:hover .msg-actions{display:flex}
 .ma-btn{width:30px;height:30px;border-radius:7px;background:transparent;border:none;color:var(--muted);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.12s}
 .ma-btn:hover{background:var(--hover);color:var(--text)}
 
+/* ✨ [UI FIX] Sohbet listesi satırlarında swipe-to-action arka planı.
+   JS (touchstart/touchmove/touchend — updateFriends() sonrası oluşan
+   .li-swipe kapsayıcıları için) .li'yi sola kaydırarak altındaki bu
+   aksiyon çubuğunu ortaya çıkarır. Bu CSS kuralları eksikti — sonuç
+   olarak "gizli" olması gereken çöp kutusu butonu her satırın ALTINDA
+   sürekli, kalıcı olarak görünür duruyordu. */
+.li-swipe{position:relative;overflow:hidden;border-radius:10px;margin-bottom:1px}
+.li-swipe .li{position:relative;z-index:1;background:var(--sidebar-bg);margin-bottom:0;touch-action:pan-y}
+.li-swipe-actions{position:absolute;top:0;right:0;bottom:0;z-index:0;display:flex;align-items:stretch;width:72px}
+.li-swipe-btn{flex:1;border:none;border-radius:0;background:var(--danger);color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.li-swipe-btn:hover{opacity:.85}
+
+/* ✨ [UI FIX] Pull-to-refresh göstergesi ("Yenileniyor…"). JS bu elemanı
+   oluşturup .show sınıfını yalnızca gerçek bir aşağı-çekme (pull) hareketi
+   sırasında ekliyordu, ama CSS'de görünürlük tanımlı değildi — bu yüzden
+   gösterge varsayılan olarak SÜREKLİ görünür duruyordu. Artık varsayılan
+   durumda gizli (yükseklik/opaklık 0) ve yalnızca .show ile açılıyor. */
+.ptr-indicator{display:flex;align-items:center;justify-content:center;gap:8px;height:0;overflow:hidden;opacity:0;color:var(--muted);font-size:12px;font-weight:600;transition:height .2s ease,opacity .2s ease}
+.ptr-indicator.show{height:44px;opacity:1}
+.ptr-spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--primary);animation:ptrspin .7s linear infinite;flex-shrink:0}
+@keyframes ptrspin{to{transform:rotate(360deg)}}
+
 /* MESSAGE BUBBLES */
-.msg{max-width:65%;padding:10px 14px;border-radius:18px;font-size:14px;line-height:1.55;position:relative}
+.msg{max-width:100%;padding:10px 14px;border-radius:18px;font-size:14px;line-height:1.55;position:relative}
 .msg.me{align-self:flex-end;background:var(--primary);color:#fff;border-bottom-right-radius:5px;box-shadow:0 2px 8px rgba(0,0,0,.2)}
 .msg.ot{align-self:flex-start;background:var(--msg-ot-bg);border:1px solid var(--border);border-bottom-left-radius:5px;color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.05)}
 html.dark .msg.ot{background:#1E1E1E;border-color:rgba(255,123,123,.15)}
