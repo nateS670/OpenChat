@@ -543,9 +543,14 @@ html.dark .msg-wrap:hover{background:rgba(255,255,255,.025)}
    context olduğu için -76px ofset balonun yanından çok uzağa, satırın
    diğer ucuna denk geliyor ve dar pencerelerde ekranın dışına taşıyordu. */
 .msg-col{position:relative;max-width:65%;min-width:0}
-.msg-wrap.me-wrap .msg-actions{left:-76px}
-.msg-wrap:not(.me-wrap) .msg-actions{right:-76px}
-.msg-actions{display:none;flex-direction:row;gap:2px;position:absolute;top:-10px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,.12);max-width:calc(100vw - 24px)}
+/* 🐞 [UI FIX] Araç çubuğu artık sabit -76px ofset yerine calc(100%) ile
+   balonun tam kenarına yaslanıyor — böylece kendi genişliği ne olursa
+   olsun (buton sayısına göre değişir) HER ZAMAN balonun YANINDA durur,
+   balonun ÜSTÜNE binmez. top:-4px sadece hafif bir "havada süzülme"
+   hissi için; yatayda artık gerçek bir çakışma yok. */
+.msg-wrap.me-wrap .msg-actions{right:calc(100% + 8px)}
+.msg-wrap:not(.me-wrap) .msg-actions{left:calc(100% + 8px)}
+.msg-actions{display:none;flex-direction:row;gap:2px;position:absolute;top:-4px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,.12);max-width:calc(100vw - 24px)}
 .msg-wrap:hover .msg-actions{display:flex}
 .ma-btn{width:30px;height:30px;border-radius:7px;background:transparent;border:none;color:var(--muted);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.12s}
 .ma-btn:hover{background:var(--hover);color:var(--text)}
@@ -861,6 +866,38 @@ html.dark .tslider{background:#475569}
 #callHeader{display:flex;flex-direction:column;align-items:center;gap:6px;z-index:1}
 #callName{font-size:26px;font-weight:800;color:#fff;letter-spacing:-.5px;text-align:center}
 #callTime{font-size:13px;color:rgba(255,255,255,.55);font-family:monospace;letter-spacing:.5px}
+
+/* ✨ [YENİ] Yayın kalitesi seçici — arama ekranının SOL ÜST köşesinde,
+   yalnızca ekran paylaşımı sırasında (.show) görünen cam-efektli pill. */
+.sq-sel{position:absolute;top:16px;left:20px;z-index:10;display:none;font-size:13px;user-select:none}
+.sq-sel.show{display:block}
+.sq-sel-btn{
+  display:flex;align-items:center;gap:6px;
+  background:rgba(255,255,255,.10);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border:1px solid rgba(255,255,255,.16);color:#e2e8f0;
+  border-radius:999px;padding:8px 14px;font-size:13px;font-weight:700;
+  cursor:pointer;transition:.15s;box-shadow:0 4px 14px rgba(0,0,0,.25);
+}
+.sq-sel-btn:hover{background:rgba(255,255,255,.17)}
+.sq-sel-icon{font-size:13px}
+.sq-sel-caret{font-size:10px;opacity:.7;margin-left:2px}
+.sq-sel-menu{
+  position:absolute;top:calc(100% + 8px);left:0;
+  background:rgba(20,22,32,.97);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border:1px solid rgba(255,255,255,.14);border-radius:14px;
+  padding:6px;min-width:200px;box-shadow:0 12px 32px rgba(0,0,0,.45);
+  display:flex;flex-direction:column;gap:2px;
+  animation:sqMenuIn .14s ease;
+}
+.sq-sel-menu.hidden{display:none}
+@keyframes sqMenuIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.sq-sel-opt{padding:9px 12px;border-radius:9px;color:#e2e8f0;font-size:13px;font-weight:600;cursor:pointer;transition:.12s}
+.sq-sel-opt:hover{background:rgba(255,255,255,.10)}
+.sq-sel-opt.active{background:rgba(59,130,246,.28);color:#fff}
+@media(max-width:768px){
+  .sq-sel{top:12px;left:12px}
+  .sq-sel-btn{padding:7px 12px;font-size:12px}
+}
 /* Katılımcı grid — ortada, çoklu kişi için uyarlanabilir */
 #participantsGrid{
   display:flex!important;flex-wrap:wrap;
@@ -1469,7 +1506,7 @@ html:not(.dark) .gs-item.active{background:rgba(255,123,123,.10)}
   .sidebar.mobile-open~#sidebarOverlay{display:block}
 
   /* Mesaj balonları */
-  .msg{max-width:82%}
+  .msg-col{max-width:82%}
 
   /* Input row — mobil için mobile-inp-row'da tanımlı */
   #emojiToggleBtn,#voiceRecBtn{font-size:19px;padding:0 5px;min-width:38px;height:44px}
@@ -1560,7 +1597,7 @@ html:not(.dark) .gs-item.active{background:rgba(255,123,123,.10)}
 }
 
 @media (max-width: 400px) {
-  .msg{max-width:90%}
+  .msg-col{max-width:90%}
   .header h1 span{display:none}
   /* callBtn küçük ekranda gizleme — sadece ikon olarak göster */
   #callBtn{font-size:16px;padding:0 8px;min-width:36px;height:36px}
