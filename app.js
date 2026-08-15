@@ -3693,9 +3693,12 @@ const SCREEN_QUALITY_PROFILES = {
   '2k':     { w:2560, h:1440, fps:30, bitrate:10_000_000, label:'2K'     },
   '1080p+': { w:1920, h:1080, fps:60, bitrate: 6_000_000, label:'1080p+' },
   '1080p':  { w:1920, h:1080, fps:30, bitrate: 4_000_000, label:'1080p'  },
+  // ✨ [YENİ] Daha düşük bant genişliği/işlemci gücü için ek kalite basamakları.
+  '720p+':  { w:1280, h: 720, fps:60, bitrate: 3_000_000, label:'720p+' },
+  '720p':   { w:1280, h: 720, fps:30, bitrate: 2_000_000, label:'720p'  },
 };
 // Yüksekten düşüğe sıra — indeks küçük = kalite yüksek
-const SCREEN_QUALITY_ORDER = ['4k','2k','1080p+','1080p'];
+const SCREEN_QUALITY_ORDER = ['4k','2k','1080p+','1080p','720p+','720p'];
 const _profIdx   = k => SCREEN_QUALITY_ORDER.indexOf(k);
 const _lowerProf = k => SCREEN_QUALITY_ORDER[Math.min(_profIdx(k)+1, SCREEN_QUALITY_ORDER.length-1)];
 
@@ -3777,38 +3780,58 @@ let _screenQualityInterval = null;
 function startScreenQualityMonitor(){
   _computeAndApplyScreenQuality();
   _screenQualityInterval = setInterval(_computeAndApplyScreenQuality, 5000);
+  // ✨ [YENİ] Kalite seçici yalnızca GERÇEKTEN yayına geçildiğinde görünür olur.
+  $('screenQualitySel')?.classList.add('show');
 }
 function stopScreenQualityMonitor(){
   clearInterval(_screenQualityInterval);
   _screenQualityInterval = null;
   _screenPerConnStats.clear();
+  $('screenQualitySel')?.classList.remove('show');
 }
 
-// ── Kalite seçici arayüzü: screenBtn'in yanına küçük bir dropdown ekler ──
+// ── Kalite seçici arayüzü ────────────────────────────────────────
+// ✨ [YENİDEN TASARIM] Önceden screenBtn'in yanına eklenen sade bir
+// native <select> idi. Artık arama ekranının SOL ÜST köşesine, cam
+// efektli modern bir "pill" bileşeni olarak yerleştiriliyor ve yalnızca
+// GERÇEKTEN yayına geçildiğinde görünür oluyor (bkz. start/stopScreenQualityMonitor).
+const _QUALITY_LIST = ['auto', ...SCREEN_QUALITY_ORDER];
+function _qualityLabel(k){ return k==='auto' ? 'Otomatik' : SCREEN_QUALITY_PROFILES[k].label; }
+
 function _mountScreenQualitySelector(){
   if($('screenQualitySel')) return; // zaten varsa tekrar ekleme
-  const btn = $('screenBtn');
-  if(!btn || !btn.parentNode) return;
-  const sel = document.createElement('select');
-  sel.id = 'screenQualitySel';
-  sel.title = 'Ekran paylaşımı kalitesi';
-  sel.style.cssText = 'margin-left:6px;background:#1e1e1e;color:#eee;border:1px solid #444;border-radius:6px;padding:4px 6px;font-size:12px;cursor:pointer;';
-  sel.innerHTML = `
-    <option value="auto">Otomatik (Ağ + İzleyici)</option>
-    <option value="4k">4K</option>
-    <option value="2k">2K</option>
-    <option value="1080p+">1080p+</option>
-    <option value="1080p">1080p</option>
-  `;
-  sel.value = _screenQualityMode;
-  sel.addEventListener('change', ()=>{
-    _screenQualityMode = sel.value;
-    if(screenOwner===ME.user_id) _computeAndApplyScreenQuality();
-    showToast('📶 Yayın Kalitesi', sel.value==='auto' ? 'Otomatik moda geçildi' : `Tavan: ${SCREEN_QUALITY_PROFILES[sel.value].label}`);
-  });
-  btn.parentNode.insertBefore(sel, btn.nextSibling);
+  const host = $('callUI');
+  if(!host) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'screenQualitySel';
+  wrap.className = 'sq-sel';
+  wrap.innerHTML = `
+    <button type="button" class="sq-sel-btn" data-act="_uiToggleQualityMenu" data-stop="1" title="Yayın kalitesi">
+      <span class="sq-sel-icon">📶</span>
+      <span class="sq-sel-label" id="sqSelLabel">Otomatik</span>
+      <span class="sq-sel-caret">▾</span>
+    </button>
+    <div class="sq-sel-menu hidden" id="sqSelMenu">
+      ${_QUALITY_LIST.map(k=>`<div class="sq-sel-opt${k===_screenQualityMode?' active':''}" data-act="_uiSetScreenQuality" data-a="${k}" data-stop="1">${_qualityLabel(k)}</div>`).join('')}
+    </div>`;
+  host.appendChild(wrap);
+  // Menü dışına tıklanınca kapat
+  document.addEventListener('click', ()=>{ $('sqSelMenu')?.classList.add('hidden'); });
 }
 _mountScreenQualitySelector();
+
+window._uiToggleQualityMenu = ()=>{
+  $('sqSelMenu')?.classList.toggle('hidden');
+};
+
+window._uiSetScreenQuality = (k)=>{
+  _screenQualityMode = k;
+  if(screenOwner===ME.user_id) _computeAndApplyScreenQuality();
+  const lbl=$('sqSelLabel'); if(lbl) lbl.textContent=_qualityLabel(k);
+  document.querySelectorAll('.sq-sel-opt').forEach(o=>o.classList.toggle('active', o.getAttribute('data-a')===k));
+  $('sqSelMenu')?.classList.add('hidden');
+  showToast('📶 Yayın Kalitesi', k==='auto' ? 'Otomatik moda geçildi' : `Tavan: ${_qualityLabel(k)}`);
+};
 
 // ── 5. DİNAMİK BİTRATE KONTROLÜ (SESLİ/GÖRÜNTÜLÜ ARAMALAR İÇİN) ────
 // RTCPeerConnection.getStats() ile RTT ve paket kaybını ölçer.
@@ -8747,6 +8770,8 @@ window._haptic = function(ms){
       // tanımlıydı) — bu yüzden tıklayınca hiçbir şey olmuyordu.
       case 'showCtx':           if(el.getAttribute('data-pass-event')) showCtx(e, a); break;
       case 'openPeerVolMenu':   if(el.getAttribute('data-pass-event')) openPeerVolMenu(e, a); break;
+      case '_uiToggleQualityMenu': _uiToggleQualityMenu(); break;
+      case '_uiSetScreenQuality':  _uiSetScreenQuality(a); break;
       // ── Mesaj eylemleri ──
       case 'startReply':        startReply(a); break;
       case 'openReactPicker':   openReactPicker(a, self==='2'?el:null); break;
