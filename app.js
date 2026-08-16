@@ -66,6 +66,48 @@ function _hexToBytes(hex){ return new Uint8Array(hex.match(/.{2}/g).map(b=>parse
 // Anahtar: kullanıcı şifresinden PBKDF2 ile türetilir (login sonrası).
 // XSS veya paylaşılan cihazda ham veri okunamaz.
 // ══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// 🛡️ [AZ RİSK FIX — Denetim Raporu Bulgu #9] Çıkarılamaz (non-extractable)
+// anahtar + IndexedDB tabanlı kalıcılık.
+// ÖNCEDEN: türetilen AES-GCM anahtarı extractable:true idi ve HAM
+// BAYTLARI sessionStorage'a (DevTools > Application > Session Storage'da
+// düz metin olarak görülebilecek şekilde) yazılıyordu. Artık anahtar
+// extractable:false üretiliyor ve ham baytları HİÇBİR ZAMAN JS'e
+// çıkarılmıyor; bunun yerine tarayıcının kendi güvenli CryptoKey
+// nesnesi doğrudan IndexedDB'ye yazılıyor (WebCrypto+IndexedDB
+// entegrasyonu standart bir tarayıcı özelliğidir). sessionStorage'a artık
+// yalnızca "bu sekmede aktif bir oturum var" bilgisini taşıyan zararsız
+// bir işaret ('1') yazılıyor — anahtarın kendisi değil. Sekme kapanınca bu
+// işaret silinir, bu yüzden yeni bir sekmede IndexedDB'deki eski anahtara
+// hiç bakılmaz ve kullanıcıdan yine parola istenir (eski davranışla aynı
+// UX korunuyor, sadece "DevTools'tan kopyala-yapıştır" ile anahtarı
+// çalma riski ortadan kalkıyor).
+const _KEYDB_NAME='sv_keydb_v1', _KEYDB_STORE='keys';
+function _openKeyDB(){
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open(_KEYDB_NAME,1);
+    req.onupgradeneeded=()=>{ try{req.result.createObjectStore(_KEYDB_STORE);}catch(e){} };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+}
+async function _idbPutKey(cryptoKey){
+  const db=await _openKeyDB();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(_KEYDB_STORE,'readwrite');
+    tx.objectStore(_KEYDB_STORE).put(cryptoKey,'current');
+    tx.oncomplete=()=>resolve(); tx.onerror=()=>reject(tx.error);
+  });
+}
+async function _idbGetKey(){
+  const db=await _openKeyDB();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(_KEYDB_STORE,'readonly');
+    const req=tx.objectStore(_KEYDB_STORE).get('current');
+    req.onsuccess=()=>resolve(req.result||null); req.onerror=()=>reject(req.error);
+  });
+}
+
 let _lsEncKey = null; // CryptoKey — başarılı login sonrası set edilir
 
 async function _setLsEncKey(password, saltHex){
@@ -73,19 +115,18 @@ async function _setLsEncKey(password, saltHex){
     const km = await crypto.subtle.importKey(
       'raw', new TextEncoder().encode(password), {name:'PBKDF2'}, false, ['deriveKey']
     );
-    // 🛡️ [MED-03] extractable:true — sessionStorage'a aktarılabilsin diye.
-    // Not: XSS zaten çalışan kodun anahtarına erişebilirdi (_lsGetDecrypted çağırarak);
-    // extractable olması tehdit modelini değiştirmiyor, sadece F5/reload sonrası
-    // şifreyi tekrar sormamayı mümkün kılıyor.
+    // 🛡️ [AZ RİSK FIX] extractable:false — anahtarın ham baytları artık
+    // hiçbir şekilde (ne bu koddan ne de DevTools konsolundan) dışarı
+    // çıkarılamaz; yalnızca encrypt/decrypt işlemleri için kullanılabilir.
     _lsEncKey = await crypto.subtle.deriveKey(
       {name:'PBKDF2', salt:_hexToBytes(saltHex), iterations:100000, hash:'SHA-256'},
-      km, {name:'AES-GCM', length:256}, true, ['encrypt','decrypt']
+      km, {name:'AES-GCM', length:256}, false, ['encrypt','decrypt']
     );
-    // 🛡️ [MED-03] sessionStorage'a geçici aktar (sekme kapanınca otomatik silinir)
-    // Bu, aynı sekmede F5/yenileme sonrası şifreyi tekrar sormayı önler.
+    // 🛡️ [AZ RİSK FIX] Ham bayt YOK — güvenli CryptoKey nesnesi doğrudan
+    // IndexedDB'ye yazılıyor; sessionStorage'a yalnızca zararsız bir işaret.
     try{
-      const raw = await crypto.subtle.exportKey('raw', _lsEncKey);
-      sessionStorage.setItem('_sk', _ab2b64(raw));
+      await _idbPutKey(_lsEncKey);
+      sessionStorage.setItem('_sk','1');
     }catch(e){}
     // 🛡️ [KRİTİK-V3-H1] Anahtar hazır olur olmaz şifreli mesajları belleğe çöz
     await _loadEncryptedMessages();
@@ -96,13 +137,16 @@ async function _setLsEncKey(password, saltHex){
   }catch(e){ _lsEncKey = null; }
 }
 
-// 🛡️ [MED-03] Sayfa yenilemesinde (aynı sekme) anahtarı sessionStorage'dan geri yükle
+// 🛡️ [AZ RİSK FIX] Sayfa yenilemesinde (aynı sekme) anahtarı IndexedDB'den
+// geri yükle — sessionStorage'daki işaret yalnızca "dene" sinyali verir,
+// gerçek anahtar hiçbir zaman Web Storage'a yazılmaz.
 async function _tryRestoreEncKeyFromSession(){
   try{
-    const sk = sessionStorage.getItem('_sk');
-    if(!sk) return false;
-    const raw = _b642ab(sk);
-    _lsEncKey = await crypto.subtle.importKey('raw', raw, {name:'AES-GCM'}, true, ['encrypt','decrypt']);
+    const marker = sessionStorage.getItem('_sk');
+    if(!marker) return false;
+    const key = await _idbGetKey();
+    if(!key) return false;
+    _lsEncKey = key;
     await _loadEncryptedMessages();
     // 🛡️ [SAST-3 FIX] Outbox'ı da artık hazır olan anahtarla yeniden oku/birleştir
     await _reloadOutboxAfterKeyReady();
@@ -333,6 +377,8 @@ function sessionClear(){
   _decryptedMsgCache = {};
   _decryptedFileCache.clear(); // 🛡️ [FIX-4] önceki kullanıcının dosya içerikleri bellekte kalmasın
   try{ sessionStorage.removeItem('_sk'); }catch(e){}
+  // 🛡️ [AZ RİSK FIX] IndexedDB'deki (non-extractable) anahtarı da sil.
+  try{ _openKeyDB().then(db=>{ db.transaction(_KEYDB_STORE,'readwrite').objectStore(_KEYDB_STORE).delete('current'); }).catch(()=>{}); }catch(e){}
 }
 
 // ── Şifre göster/gizle ────────────────────────────────────────────
@@ -1147,6 +1193,23 @@ function debugIce(){
 
 // user_id → { pc, dc, state, queue, iceQueue }
 const _dcPeers = {};
+// 🛡️ [ORTA RİSK FIX — Denetim Raporu Bulgu #8] Avatar veya özel durum
+// değiştiğinde, bunu genel (herkese açık) presence yerine yalnızca o an
+// DataChannel'ı AÇIK olan (yani karşılıklı doğrulanmış) arkadaşlara,
+// uçtan uca şifreli 'profile_sync' paketiyle iletir.
+function _pushProfileToFriends(){
+  if(!ME) return;
+  const payload = {
+    avatar:ME.avatar||null,
+    customEmoji:(window.myCustomStatus&&myCustomStatus.emoji)||'',
+    customText:(window.myCustomStatus&&myCustomStatus.text)||''
+  };
+  for(const uid of Object.keys(_dcPeers)){
+    if(_dcPeers[uid]?.dc?.readyState==='open'){
+      broadcast({type:'profile_sync', to:uid, from:ME.user_id, ...payload}).catch(()=>{});
+    }
+  }
+}
 
 // Bu tipler her zaman MQTT üzerinden gider (DC kurulmadan önce gönderilmesi gereken sinyaller)
 // 🛡️ [FIX] 'friend_accept' / 'friend_remove' BURAYA EKLENDİ:
@@ -1258,6 +1321,16 @@ function _setupDC(userId, dc){
     q.forEach(raw => { try{ dc.send(raw); }catch(e){} });
     // 🛡️ [HIGH-02] Outbox'ta bekleyen mesajları DC üzerinden gönder
     _flushOutbox();
+    // 🛡️ [ORTA RİSK FIX — Denetim Raporu Bulgu #8] Avatar ve özel durumu
+    // artık YALNIZCA bu arkadaşa, DC üzerinden uçtan uca şifreli gönder —
+    // genel presence yayınında bulunmuyorlar (bkz. sendPresence, handleSig).
+    if(ME){
+      broadcast({type:'profile_sync', to:userId, from:ME.user_id,
+        avatar:ME.avatar||null,
+        customEmoji:(window.myCustomStatus&&myCustomStatus.emoji)||'',
+        customText:(window.myCustomStatus&&myCustomStatus.text)||''
+      }).catch(()=>{});
+    }
     updateFriends();
   };
 
@@ -1841,10 +1914,18 @@ const sendPresence=async()=>{
   }catch(e){
     console.error('[SEC] Kimlik pasaportu olmadan presence gönderiliyor (peer\'lar bağlanmayacak):', e);
   }
-  broadcast({type:'presence',from:ME.user_id,avatar:ME.avatar||null,v:APP_VERSION,
+  // 🛡️ [ORTA RİSK FIX — Denetim Raporu Bulgu #8] Avatar ve özel durum
+  // metni/emojisi artık HERKESE AÇIK presence yayınına eklenmiyor. Bu
+  // alanlar kişisel/kimliğe özgü veri sayılır ve önceden paylaşılan
+  // (obfuscated ama /api/config açığı nedeniyle pratikte herkese açık
+  // olabilen) MQTT konusuna abone olan HERKES tarafından görülebiliyordu
+  // — arkadaş olsun olmasın. Artık yalnızca bağlantı kurmak için GEREKLİ
+  // asgari bilgi (kullanıcı adı, durum, ECDH anahtarı, kimlik pasaportu)
+  // genel presence'ta kalıyor; avatar/özel durum ise DataChannel açılır
+  // açılmaz yalnızca o ARKADAŞA, uçtan uca şifreli olarak gönderiliyor
+  // (bkz. _setupDC → dc.onopen → 'profile_sync').
+  broadcast({type:'presence',from:ME.user_id,v:APP_VERSION,
     status:myStatus||'available',
-    customEmoji:(window.myCustomStatus&&myCustomStatus.emoji)||'',
-    customText:(window.myCustomStatus&&myCustomStatus.text)||'',
     ecdhKey, // P-256 public key JWK — private key asla gönderilmez
     ...idFields
   });
@@ -1885,10 +1966,22 @@ async function handleSig(d){
   if(d.from&&blocked.includes(d.from))return;
   const db=getDB(), mk=ME.user_id.toLowerCase();
 
+  // 🛡️ [ORTA RİSK FIX — Denetim Raporu Bulgu #8] Avatar + özel durum artık
+  // MQTT'deki genel presence yayınında DEĞİL, yalnızca kurulmuş bir
+  // DataChannel üzerinden (yani yalnızca karşılıklı arkadaşlar arasında,
+  // uçtan uca şifreli olarak) gönderiliyor — bkz. _setupDC → dc.onopen.
+  if(d.type==='profile_sync'){
+    if(d.avatar&&d.avatar!=='null') avatars[d.from]=d.avatar;
+    if(!window.peerCustomStatuses) window.peerCustomStatuses={};
+    peerCustomStatuses[d.from]={emoji:d.customEmoji||'',text:d.customText||''};
+    updateFriends();
+    return;
+  }
+
   if(d.type==='presence'){
     const wasOffline = !isOn(d.from);
     peers[d.from]=now();
-    if(d.avatar&&d.avatar!=='null'&&d.avatar!==null) avatars[d.from]=d.avatar;
+    // 🛡️ [ORTA RİSK FIX] Avatar artık presence'ta gelmiyor — bkz. 'profile_sync'.
     if(d.v) peerVersions[d.from]=d.v;
     if(d.status) peerStatuses[d.from]=d.status;
     // 🛡️ [HIGH-01] ECDH public key sakla — bu peer'a gönderilecek özel mesajlar şifreli olacak
@@ -1907,7 +2000,18 @@ async function handleSig(d){
     // Lexicographic sıra ile initiator taraf belirlenir (her iki taraf da aynı kararı verir)
     if(d.from !== ME.user_id){
       const myFriends = (db.users[mk]?.friends)||[];
-      const isFriend  = myFriends.includes(d.from);
+      // 🛡️ [ORTA RİSK FIX — yan etki düzeltmesi] DC otomatik bağlantısı
+      // (dolayısıyla profile_sync ile avatar paylaşımı) artık yalnızca
+      // doğrudan arkadaşlarla değil, ORTAK BİR GRUBUN üyesiyle de kuruluyor.
+      // Gruplar zaten yalnızca arkadaş listesinden üye eklenerek
+      // oluşturulduğu için bu, "arkadaş olmayan yabancılara açık" riskini
+      // YENİDEN AÇMAZ — sadece dolaylı (arkadaşınızın arkadaşı ama sizin
+      // doğrudan arkadaşınız olmayan) grup üyeleriyle avatar/mesajlaşmanın
+      // öncekiyle aynı şekilde çalışmaya devam etmesini sağlar.
+      const sharesGroup = Object.values(db.groups||{}).some(g=>
+        Array.isArray(g.members) && g.members.includes(d.from) && g.members.includes(ME.user_id)
+      );
+      const isFriend  = myFriends.includes(d.from) || sharesGroup;
       if(isFriend){
         const peer = _dcPeers[d.from];
         const needsConnect = !peer || peer.state==='closed';
@@ -1929,10 +2033,8 @@ async function handleSig(d){
         // (kabul ânında _dcHandleOffer aynı doğrulamayı yapar)
       }
     }
-    if(d.customEmoji!==undefined||d.customText!==undefined){
-      if(!window.peerCustomStatuses) window.peerCustomStatuses={};
-      peerCustomStatuses[d.from]={emoji:d.customEmoji||'',text:d.customText||''};
-    }
+    // 🛡️ [ORTA RİSK FIX] customEmoji/customText artık presence'ta gelmiyor
+    // — bkz. 'profile_sync' (yalnızca arkadaşlara, DC üzerinden şifreli).
     updateFriends();
     // Kişi yeni online olduysa — bildirim sistemi üstlenir
     if(chatId===d.from&&chatType==='private'){
@@ -3303,12 +3405,12 @@ function renderChat(){
       // 🛡️ [ÇOK KRİTİK FIX] fileData artık src'ye yazılmadan önce şema
       // doğrulamasından geçiriliyor (yalnızca data:image/ veya https://).
       const safeImg = sanitizeAvatarUrl(fileData);
-      if(safeImg) contentHTML=`<img class="msg-img" src="${escHtml(safeImg)}" alt="${escHtml(m.fileName||'resim')}" data-act="openImageViewer" data-a="${escHtml(safeImg)}" data-a2="${escHtml(m.fileName||'')}">`;
+      if(safeImg) contentHTML=`<img class="msg-img" src="${escHtml(safeImg)}" alt="${escHtml(m.fileName||'resim')}" referrerpolicy="no-referrer" data-act="openImageViewer" data-a="${escHtml(safeImg)}" data-a2="${escHtml(m.fileName||'')}">`;
       else contentHTML=`<div class="file-msg"><span class="file-icon">🖼️</span><div class="file-info"><span class="file-name">${escHtml(m.fileName||'Resim')}</span><span class="file-size" style="color:var(--danger)">Yüklenemedi</span></div></div>`;
     } else if(m.fileType==='gif'){
       // 🛡️ [ÇOK KRİTİK FIX] Aynı şema doğrulaması GIF'ler için de uygulanıyor.
-      const safeGif = sanitizeAvatarUrl(fileData);
-      if(safeGif) contentHTML=`<img class="msg-gif" src="${escHtml(safeGif)}" alt="GIF">`;
+      const safeGif = sanitizeGifUrl(fileData);
+      if(safeGif) contentHTML=`<img class="msg-gif" src="${escHtml(safeGif)}" alt="GIF" referrerpolicy="no-referrer">`;
       else contentHTML=`<span class="msg-text">🎬 GIF</span>`;
     } else if(m.fileType==='file'){
       const ext=(m.fileName||'').split('.').pop().toLowerCase();
@@ -3360,10 +3462,10 @@ function renderChat(){
           const safeImg = sanitizeAvatarUrl(lp.image);
           const safeFavicon = sanitizeAvatarUrl(lp.favicon);
           contentHTML += `<div class="link-preview" data-lp-url="${safeUrl}">
-            ${safeImg?`<img class="link-preview-thumb" src="${escHtml(safeImg)}" alt="" loading="lazy" data-onerror="hide">`:''}
+            ${safeImg?`<img class="link-preview-thumb" src="${escHtml(safeImg)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-onerror="hide">`:''}
             <div class="link-preview-body">
               <div class="link-preview-domain">
-                ${safeFavicon?`<img class="link-preview-favicon" src="${escHtml(safeFavicon)}" data-onerror="hide">`:''}
+                ${safeFavicon?`<img class="link-preview-favicon" src="${escHtml(safeFavicon)}" referrerpolicy="no-referrer" data-onerror="hide">`:''}
                 ${escHtml(lp.domain||'')}
               </div>
               <div class="link-preview-title">${escHtml(lp.title)}</div>
@@ -3454,6 +3556,33 @@ function sanitizeAvatarUrl(url){
   if(!url||typeof url!=='string') return null;
   if(url.startsWith('data:image/')&&url.length<2_000_000) return url;
   if(/^https:\/\//.test(url)) return url;
+  return null;
+}
+
+// 🛡️ [AZ RİSK FIX — Denetim Raporu Bulgu #10] GIF URL'leri artık yalnızca
+// bilinen büyük GIF sağlayıcılarından kabul ediliyor. Önceden HERHANGİ bir
+// https:// URL'sine izin veriliyordu (kullanıcı serbestçe bir GIF linki
+// yapıştırabiliyordu) — kötü niyetli bir eş, alıcı istemcinin otomatik
+// yüklediği bu görsel isteğini bir "izleme pikseli" gibi kullanıp alıcının
+// IP adresini/User-Agent'ını öğrenmek için kendi sunucusuna işaret eden
+// bir URL gönderebilirdi. Artık yalnızca aşağıdaki güvenilir CDN'ler kabul
+// ediliyor; bu kontrol hem GÖNDERİRKEN (submitGifUrl) hem de ALIRKEN
+// (renderChat) uygulanıyor — kötü niyetli/özel bir istemci gönderim
+// tarafındaki kontrolü atlasa bile alıcı yine reddeder.
+const _TRUSTED_GIF_HOSTS = [
+  'media.tenor.com','tenor.com','c.tenor.com',
+  'media.giphy.com','giphy.com',
+  'media0.giphy.com','media1.giphy.com','media2.giphy.com','media3.giphy.com','media4.giphy.com',
+  'i.imgur.com','imgur.com',
+];
+function sanitizeGifUrl(url){
+  if(!url||typeof url!=='string') return null;
+  if(url.startsWith('data:image/')&&url.length<2_000_000) return url;
+  if(!/^https:\/\//.test(url)) return null;
+  try{
+    const host=new URL(url).hostname.toLowerCase();
+    if(_TRUSTED_GIF_HOSTS.some(h=>host===h||host.endsWith('.'+h))) return url;
+  }catch(e){}
   return null;
 }
 
@@ -6348,7 +6477,9 @@ $('avatarInput').onchange=e=>{
     const db=getDB();
     db.users[ME.user_id.toLowerCase()].avatar=b64;ME.avatar=b64;saveDB(db);
     updateUI();
-    broadcast({type:'presence',from:ME.user_id,avatar:b64});
+    // 🛡️ [ORTA RİSK FIX] Avatar artık genel presence ile değil, yalnızca
+    // bağlı arkadaşlara özel şifreli 'profile_sync' ile paylaşılıyor.
+    _pushProfileToFriends();
     showToast('Fotoğraf Güncellendi','Arkadaşların kısa süre içinde görecek.');
   };
   img.src=url;
@@ -6416,7 +6547,7 @@ window.deleteCurrentAccount=()=>{
 window.execDeleteCurrentAccount=(key,overlay)=>{
   const db=getDB();
   // Çevrimdışı bildir
-  if(ME) broadcast({type:'presence',from:ME.user_id,avatar:null,v:APP_VERSION,status:'offline'}).catch(()=>{});
+  if(ME) broadcast({type:'presence',from:ME.user_id,v:APP_VERSION,status:'offline'}).catch(()=>{});
   // Veritabanından sil
   delete db.users[key];
   Object.keys(db.messages||{}).forEach(k2=>{
@@ -6566,6 +6697,7 @@ window.saveCustomStatus=function(){
   // LocalStorage'a kaydet
   try{ localStorage.setItem('sv_custom_status', JSON.stringify(myCustomStatus)); }catch(e){}
   sendPresence();
+  _pushProfileToFriends(); // 🛡️ [ORTA RİSK FIX] özel durumu arkadaşlara özel olarak da ilet
   _renderCurrentCustomStatus();
   showToast('Özel Durum','✅ Durum güncellendi!');
 };
@@ -6585,6 +6717,7 @@ window.clearCustomStatus=function(e){
   const inp=$('csStatusText'); if(inp) inp.value='';
   try{ localStorage.removeItem('sv_custom_status'); }catch(e){}
   sendPresence();
+  _pushProfileToFriends(); // 🛡️ [ORTA RİSK FIX] temizlenen durumu arkadaşlara özel olarak da ilet
   _renderCurrentCustomStatus();
 };
 
@@ -6689,7 +6822,8 @@ window.closeGifModal=()=>{
 window.submitGifUrl=()=>{
   const url=$('gifUrlInput').value.trim();
   if(!url){showToast('Hata','GIF URL giriniz.');return;}
-  if(!url.startsWith('http')){showToast('Hata','Geçerli bir URL girin.');return;}
+  // 🛡️ [AZ RİSK FIX] Yalnızca güvenilir GIF CDN'lerinden gelen bağlantılara izin ver.
+  if(!sanitizeGifUrl(url)){showToast('Hata','Yalnızca Tenor, Giphy veya Imgur bağlantılarına izin veriliyor.');return;}
   closeGifModal();
   sendGif(url);
 };
