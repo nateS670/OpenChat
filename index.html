@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
 <head>
   <!-- Supabase/Firebase kaldırıldı: serverless yapıya geri dönüldü -->
 <meta charset="utf-8"/>
@@ -1812,6 +1812,14 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
     <span>🎆 Mesaj Efektleri</span>
     <label class="toggle"><input type="checkbox" id="toggleParticles" checked><span class="tslider"></span></label>
   </div>
+  <div class="sp-sec">🌐 Dil / Language</div>
+  <div class="sp-row">
+    <span>🌐 Dil / Language</span>
+    <select id="langSelect" onchange="setSvLang(this.value)" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer">
+      <option value="en">English</option>
+      <option value="tr">Türkçe</option>
+    </select>
+  </div>
   <div class="sp-sec">Hesap</div>
   <div class="sp-row" style="cursor:pointer" onclick="document.getElementById('avatarInput').click()">
     <span>🖼️ Profil Fotoğrafını Değiştir</span>
@@ -2303,6 +2311,7 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
   </div>
 </div>
 
+<script src="i18n.js"></script>
 <script src="app.js"></script>
   <script src="/notification-auth.js"></script>
 </body></html>
