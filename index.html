@@ -553,6 +553,7 @@ html.dark .msg-wrap:hover{background:rgba(255,255,255,.025)}
 .msg-wrap:not(.me-wrap) .msg-actions{left:calc(100% + 8px)}
 .msg-actions{display:none;flex-direction:row;gap:2px;position:absolute;top:-4px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,.12);max-width:calc(100vw - 24px)}
 .msg-wrap:hover .msg-actions{display:flex}
+body.no-hover-flash .msg-wrap:hover .msg-actions{display:none}
 .ma-btn{width:30px;height:30px;border-radius:7px;background:transparent;border:none;color:var(--muted);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.12s}
 .ma-btn:hover{background:var(--hover);color:var(--text)}
 
