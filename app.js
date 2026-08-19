@@ -2270,7 +2270,7 @@ async function handleSig(d){
     screenOwner=d.from;
     $('screenInd').classList.remove('hidden');
     $('screenBtn').disabled=true;
-    $('screenBtn').innerText='İzleniyor...';
+    $('screenBtn').title='İzleniyor...';
     // remoteVideo zaten ontrack ile dolacak, sadece göster
     $('audioPh').classList.add('hidden');
     showToast('Ekran Paylaşımı',`${d.from} ekranını paylaşıyor.`);
@@ -2279,7 +2279,7 @@ async function handleSig(d){
     screenOwner=null;
     $('screenInd').classList.add('hidden');
     $('screenBtn').disabled=false;
-    $('screenBtn').innerText='Ekran Paylaş';
+    $('screenBtn').title='Ekran Paylaş';
     // Video dondurma sorununu çöz — srcObject'i null'a çek, sonra tekrar audio'ya dön
     const rv=$('remoteVideo');
     rv.pause();
@@ -4043,11 +4043,9 @@ $('screenBtn').onclick=async()=>{
   if(screenOwner&&screenOwner!==ME.user_id){showToast('Ekran Paylaşımı',`${screenOwner} zaten paylaşıyor.`);return;}
 
   // Durdur
-  if($('screenBtn').innerText.includes('Durdur')){
+  if(screenOwner===ME.user_id){
     screenOwner=null;
-    $('screenBtn').innerText='Ekran Paylaş';
-    stopScreenQualityMonitor();
-    // Tüm bağlantılarda video track'i kapat
+    $('screenBtn').innerHTML='🖥️';$('screenBtn').title='Ekran Paylaş';
     const allConns2=[pc,...Object.values(groupCallPeers).map(p=>p.pc)].filter(Boolean);
     for(const conn of allConns2){
       try{
@@ -4109,7 +4107,7 @@ $('screenBtn').onclick=async()=>{
     }catch(e){}
 
     screenOwner=ME.user_id;
-    $('screenBtn').innerText='⏹ Paylaşımı Durdur';
+    $('screenBtn').innerHTML='⏹️';$('screenBtn').title='Paylaşımı Durdur';
 
     const allConns=[pc,...Object.values(groupCallPeers).map(p=>p.pc)].filter(Boolean);
 
@@ -4157,7 +4155,7 @@ $('screenBtn').onclick=async()=>{
     vt.onended=async()=>{
       // Paylaşan kişi tarayıcıdan durdurdu — tüm karşı taraflara bildir
       screenOwner=null;
-      $('screenBtn').innerText='Ekran Paylaş';
+      $('screenBtn').innerHTML='🖥️';$('screenBtn').title='Ekran Paylaş';
       stopScreenQualityMonitor();
       // Tüm video sender'ları temizle
       const conns=[pc,...Object.values(groupCallPeers).map(p=>p.pc)].filter(Boolean);
@@ -4556,7 +4554,7 @@ function endCall(reason){
   // Private call peer stub temizle
   if(targetId&&groupCallPeers[targetId]?._isPrivate) delete groupCallPeers[targetId];
   cleanCall();$('callUI').classList.add('hidden');$('remoteVideo').srcObject=null;
-  screenOwner=null;$('screenBtn').disabled=false;$('screenBtn').innerText='Ekran Paylaş';
+  screenOwner=null;$('screenBtn').disabled=false;$('screenBtn').innerHTML='🖥️';$('screenBtn').title='Ekran Paylaş';
   // 📱 Mobil arka plan ses fix — keep-alive durdur
   _stopAudioKeepAlive();
   // 📱 WakeLock bırak
@@ -6094,7 +6092,7 @@ endCall=reason=>{
   try{$('remoteVideo').srcObject=null;}catch(e){}
   screenOwner=null;
   const sb=$('screenBtn');
-  if(sb){sb.disabled=false;sb.innerText='Ekran Paylaş';}
+  if(sb){sb.disabled=false;sb.innerHTML='🖥️';sb.title='Ekran Paylaş';}
   // callBtn'i sıfırla
   const cb=$('callBtn');
   if(cb){ cb.textContent='📞 Sesli Ara'; cb.style.background=''; }
