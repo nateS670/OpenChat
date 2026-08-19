@@ -3535,6 +3535,14 @@ function renderChat(){
     </div>`;
   }).join('');
   c.scrollTop=c.scrollHeight;
+  // 🐞 [UI FIX] Sohbete girer girmez fare imleci zaten bir mesajın üstünde
+  // duruyorsa, tarayıcı hiç hareket olmadan :hover'ı tetikleyip aksiyon
+  // çubuğunu (silme dahil) anında gösteriyordu. Gerçek bir fare hareketi
+  // gelene kadar hover'ı bastırıyoruz.
+  document.body.classList.add('no-hover-flash');
+  const _clearHoverFlash=()=>{ document.body.classList.remove('no-hover-flash'); document.removeEventListener('mousemove',_clearHoverFlash); };
+  document.addEventListener('mousemove',_clearHoverFlash,{once:true});
+  setTimeout(_clearHoverFlash,1200);
   // Sadece son mesaja animasyon
   const last=c.lastElementChild;
   if(last&&last.classList.contains('msg-wrap')){
