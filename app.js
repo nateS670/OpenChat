@@ -458,6 +458,10 @@ let _sigAlgName       = null; // 'Ed25519' | 'ECDSA-P256' — bu oturumda hangi 
 const _verifiedPeers        = new Set(); // sunucu+yerel olarak doğrulanmış user_id'ler (bu oturum)
 const _lastPresenceIdentity = {};        // user_id → son alınan {passport,passportSig,nonce,presenceSig}
 const _verifyCache          = {};        // tekrar tekrar /api/identity sorgulamamak için
+// 🛡️ [YENİ] Peer'ın DOĞRULANMIŞ kimlik imza anahtarı (CryptoKey) — presence
+// doğrulaması sırasında bir kez import edilip burada saklanır, böylece her
+// sohbet mesajının imzası tekrar ağa gitmeden (senkron/hızlı) doğrulanabilir.
+const _peerSigningKeys       = {};        // user_id → {key: CryptoKey, alg}
 
 // 🛡️ [FIX] Ed25519, WebCrypto'da HER tarayıcıda yok: Safari/iOS 17'den,
 // Firefox 129'dan, Chrome ise ANCAK 137'den (Mayıs 2025) itibaren destekliyor.
@@ -575,6 +579,51 @@ async function _signPresenceNonce(nonce){
   return _b64(sig);
 }
 
+// ══════════════════════════════════════════════════════════════════
+// 🛡️ [YENİ] Mesaj Bazlı İmzalama
+// Şu ana kadar yalnızca presence paketleri imzalanıyordu; asıl sohbet
+// mesajlarının bütünlüğü sadece DTLS (WebRTC) + AES-GCM taşıma şifrelemesine
+// dayanıyordu. Bu, taşıma katmanında bir sorun olsa bile (ör. yanlış
+// eşleşen bir AES anahtarı, ileride keşfedilecek bir hata) mesaj
+// sahteciliğinin sessizce geçebileceği anlamına geliyordu. Artık HER
+// private_msg/group_msg, presence'ta kullanılanla AYNI kimlik anahtarıyla
+// (Ed25519/ECDSA-P256) imzalanıyor ve alıcı tarafta, o peer için zaten
+// doğrulanmış+pinlenmiş genel anahtarla (bkz. _peerSigningKeys, doldurulduğu
+// yer: _verifyPeerPassport) doğrulanıyor.
+// Geriye dönük uyumluluk: imzasız (eski/güncellenmemiş istemciden gelen)
+// mesajlar reddedilmiyor — sadece "doğrulandı" bilgisi yok sayılıyor.
+// Sadece imza VARSA ve geçersizse (gerçek bir tahrifat/sahtecilik işareti)
+// kullanıcıya görsel bir uyarı gösteriliyor (bkz. renderChat).
+// ══════════════════════════════════════════════════════════════════
+function _msgSigCanon(msg){
+  // Mesajın bütünlüğü açısından kritik alanları deterministik biçimde birleştir.
+  return [msg.id||'', msg.from||'', msg.text||'', msg.time||'', msg.fileType||'', msg.fileName||''].join('|');
+}
+async function _signMessageContent(msg){
+  try{
+    const kp = await _ensureIdKeyPair();
+    const enc = new TextEncoder().encode(_msgSigCanon(msg));
+    const signAlg = _sigAlgName === 'ECDSA-P256' ? {name:'ECDSA', hash:'SHA-256'} : 'Ed25519';
+    const sig = await crypto.subtle.sign(signAlg, kp.privateKey, enc);
+    return _b64(sig);
+  }catch(e){
+    console.warn('[SEC] Mesaj imzalanamadı, imzasız gönderilecek:', e);
+    return null;
+  }
+}
+// Dönüş: true (imza geçerli) | false (imza VAR ama geçersiz — tahrifat şüphesi)
+// | null (imza yok [eski mesaj] veya bu peer için henüz doğrulanmış anahtar yok — bilgi verilemez)
+async function _verifyMessageSig(fromUserId, msg){
+  if(!msg || !msg.sig) return null;
+  const entry = _peerSigningKeys[fromUserId];
+  if(!entry) return null;
+  try{
+    const verifyAlg = entry.alg==='ECDSA-P256' ? {name:'ECDSA', hash:'SHA-256'} : 'Ed25519';
+    const enc = new TextEncoder().encode(_msgSigCanon(msg));
+    return await crypto.subtle.verify(verifyAlg, entry.key, _u8(msg.sig), enc);
+  }catch(e){ return false; }
+}
+
 // Bir peer'ın pasaportunu (a) sunucuda doğrula, (b) presence imzasını
 // pasaport içindeki genel anahtarla yerel olarak doğrula. İkisi de
 // geçmezse peer DOĞRULANMAMIŞ sayılır ve onunla WebRTC kurulmaz.
@@ -657,6 +706,10 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
     // alınmış/MITM) GÜVENMEYİZ ve kullanıcıyı uyarırız.
     const pinOk = await _checkAndPinPeerIdentity(fromUserId, _u8(data.identity.pubKey));
     if(!pinOk) console.warn('[SEC][PIN-FAIL] kimlik anahtarı pinlenmiş değerle eşleşmiyor:', fromUserId);
+    // 🛡️ [YENİ] Pin/doğrulama geçtiyse, bu peer'ın imza doğrulama anahtarını
+    // (zaten import edilmiş CryptoKey — tekrar import etmeye gerek yok)
+    // mesaj bazlı imza doğrulaması için sakla.
+    if(pinOk) _peerSigningKeys[fromUserId] = {key: pubKey, alg: decoded.alg || 'Ed25519'};
     _verifyCache[cacheKey] = pinOk;
     return pinOk;
   }catch(e){
@@ -1774,6 +1827,14 @@ async function broadcast(p, qos=0){
     return;
   }
   p.msgId=p.msgId||uid();
+  // 🛡️ [YENİ] Sohbet mesajı içeriğini kimlik anahtarımızla imzala (bkz.
+  // _signMessageContent tanımı). Grup mesajlarında aynı `msg` nesnesi birden
+  // fazla broadcast() çağrısında (her üye için bir kez) paylaşıldığından,
+  // zaten imzalanmışsa (p.msg.sig varsa) tekrar imzalanmaz.
+  if((p.type==='private_msg'||p.type==='group_msg') && p.msg && !p.msg.sig && ME){
+    const _sig = await _signMessageContent(p.msg);
+    if(_sig) p.msg.sig = _sig;
+  }
   if(_RELIABLE_TYPES.includes(p.type)) qos=Math.max(qos,1);
   const targetUser = p.to;
 
@@ -2123,6 +2184,9 @@ async function handleSig(d){
     const k=[ME.user_id,d.from].sort().join('_');
     if(!db.messages[k])db.messages[k]=[];
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
+    // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/null (bkz. _verifyMessageSig).
+    // Sadece false (imza VAR ama geçersiz) durumunda UI'da uyarı gösterilir.
+    d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg);
     // Gelen dosya/gif verisini oturum belleğine kaydet
     if(d.msg.fileData&&d.msg.fileData&&!d.msg.fileData.startsWith('__')){
       // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
@@ -2172,6 +2236,8 @@ async function handleSig(d){
     const k='g_'+d.groupId;
     if(!db.messages[k])db.messages[k]=[];
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
+    // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/null (bkz. _verifyMessageSig).
+    d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg);
     // Gelen dosya/gif verisini oturum belleğine kaydet
     if(d.msg.fileData&&!d.msg.fileData.startsWith('__')){
       // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
@@ -3525,12 +3591,21 @@ function renderChat(){
       <button class="ma-btn" data-act="deleteMsg" data-a="${m.id}" title="Sil" style="color:var(--danger)">🗑️</button>`:''}
     </div>`;
 
+    // 🛡️ [YENİ] İmza VAR ama doğrulanamadıysa (m._sigVerified===false) —
+    // olası mesaj tahrifatı/sahteciliği — küçük bir uyarı rozeti göster.
+    // İmza yoksa (eski mesaj, null) veya imza geçerliyse (true) hiçbir şey
+    // gösterilmez; kullanıcıyı gereksiz yere alarma geçirmemek için sadece
+    // KESİN bir uyuşmazlık durumunda uyarılır.
+    const sigWarnHTML = (!me && m._sigVerified===false)
+      ? `<span class="mi" style="color:var(--danger);font-weight:700" title="Bu mesajın imzası, ${escHtml(m.from||'gönderenin')} için bilinen kimlik anahtarıyla eşleşmiyor. İçerik yolda değiştirilmiş olabilir.">⚠️ İmza doğrulanamadı</span>`
+      : '';
     return`<div class="msg-wrap ${me?'me-wrap':''}" data-id="${m.id}" data-ctx-act="showMsgCtx" data-ctx-a="${escHtml(m.id)}" data-ctx-a2="${escHtml(m.from||'')}">
       <div class="msg-col">
         ${actionsHTML}
         <div class="msg ${me?'me':'ot'}">
           ${chatType==='group'&&!me?`<div class="ms">${escHtml(m.from||'')}</div>`:''}
           ${replyHTML}
+          ${sigWarnHTML}
           ${contentHTML}
           ${reactHTML}
           <span class="mi">${m.time||''}${vanishBadge}${ticksHTML}</span>
