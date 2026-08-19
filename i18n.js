@@ -32,7 +32,13 @@
     // Native language — nothing to translate, skip building the
     // (fairly large) regex engine entirely. Still make sure the
     // Settings dropdown reflects the current choice.
-    const syncTr = ()=>{ const sel=document.getElementById('langSelect'); if(sel) sel.value='tr'; };
+    const syncTr = ()=>{
+      const sel=document.getElementById('langSelect');
+      if(sel){
+        sel.value='tr';
+        if(!sel._svBound){ sel._svBound=true; sel.addEventListener('change', ()=>setSvLang(sel.value)); }
+      }
+    };
     if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', syncTr);
     else syncTr();
     return;
@@ -287,6 +293,75 @@
     "Ekran Paylaşılıyor": "Screen Being Shared",
     "Ekran paylaşımı başlatılamadı:": "Couldn't start screen sharing:",
     "Ekran track hatası:": "Screen track error:",
+
+    // ── Message stats panel ───────────────────────────────────────
+    "🌙 Gece": "🌙 Night",
+    "🌅 Sabah": "🌅 Morning",
+    "☀️ Öğle": "☀️ Afternoon",
+    "🌆 Akşam": "🌆 Evening",
+    "📎 Dosya": "📎 File",
+    "En aktif saat: ": "Most active hour: ",
+    "Bu saatte ": "At this hour, ",
+    " mesaj — toplam ": " messages — total ",
+    " mesaj": " messages",
+    "Henüz mesaj yok.": "No messages yet.",
+
+    // ── System / activity messages (name prefix + this suffix) ────
+    " aramadan ayrıldı.": " left the call.",
+    " aramayı reddetti.": " declined the call.",
+    " arkadaşlık isteğini kabul etti.": " accepted the friend request.",
+    " artık arkadaşın değil.": " is no longer your friend.",
+    " artık engelli değil.": " is no longer blocked.",
+    " artık yönetici değil.": " is no longer an admin.",
+    " artık yönetici.": " is now an admin.",
+    " bağlantısı kesildi.": " connection lost.",
+    " ekranını paylaşıyor.": " is sharing their screen.",
+    " engellenmiş.": " blocked.",
+    " grup adını \"": " changed the group name to \"",
+    " gruptan çıkarıldı.": " was removed from the group.",
+    " ile bağlantı kesildi.": " disconnected.",
+    " ile ilk kez konuşuyorsunuz. Güvenlik kodunu mümkünse başka bir kanaldan doğrulayın.": " — this is your first conversation. Verify the security code through another channel if possible.",
+    " izni daha önce reddedildi — tarayıcı ayarlarından açman gerekebilir.": " permission was previously denied — you may need to enable it in your browser settings.",
+    " için anahtar değişti.": " — security key changed.",
+    " kişisini engellemek istiyor musun?": " — do you want to block this person?",
+    " kişisini gruptan çıkarmak istiyor musun?": " — do you want to remove this person from the group?",
+    " kişisini çıkarmak istiyor musun?": " — do you want to remove this person?",
+    " kişi aktif": " people active",
+    " kişi)": " people)",
+    " kişi": " people",
+    " listeden çıkarıldı.": " removed from the list.",
+    " sizi listeden çıkardı.": " removed you from the list.",
+    " sonuç": " results",
+    " tarafından kapatıldı.": " — closed it.",
+    " yeni yönetici oldu.": " is the new admin.",
+    " zaten paylaşıyor.": " is already sharing.",
+    " · Süre: ": " · Duration: ",
+    " üye · ": " members · ",
+    " Üye": " Member",
+    " üye": " member",
+    " şu anda başka bir aramada.": " is currently in another call.",
+    "Çıkar": "Remove",
+    " grubundan ayrıldınız.": " — you left the group.",
+    " grubundan ayrılmak istiyor musun?": " — do you want to leave this group?",
+    " grubundan çıkardı.": " — removed you from the group.",
+    " hesabı kaldırıldı": " — account removed",
+    " için sonuç bulunamadı.": ": no results found.",
+    " olarak değiştirdi.": " (updated).",
+    "% (Sağ tık: ayarla)": "% (Right-click to set)",
+    "Video kalitesi ayarlandı: ": "Video quality set to: ",
+    "ms Kayıp:": "ms Loss:",
+    "Çağrı ": "Call ",
+    "👥 Grup Araması · ": "👥 Group Call · ",
+    "📞 Aramaya Katıl (": "📞 Join Call (",
+    "📞 Grup araması sona erdi": "📞 Group call ended",
+    "📵 Cevapsız arama · ": "📵 Missed call · ",
+    "🔒 Çok fazla yanlış deneme! ": "🔒 Too many incorrect attempts! ",
+    "Hiç grup yok.": "No groups at all.",
+    " (düzenlendi)": " (edited)",
+    "🔊 Aktif Arama — Katıl": "🔊 Active Call — Join",
+    "Yüklenemedi": "Failed to load",
+    "Seçenek ": "Option ",
+
     "Görüntülü arama başladı 📷": "Video call started 📷",
     "Çağrıyı sonlandırdınız.": "You ended the call.",
     "Arama arka planda sürdürülüyor. Geri dönmek için tekrar arayın.": "The call is continuing in the background. Call again to return.",
@@ -413,6 +488,10 @@
 
   function syncLangSelect(){
     const sel = document.getElementById('langSelect');
+    if(sel && !sel._svBound){
+      sel._svBound = true;
+      sel.addEventListener('change', ()=>setSvLang(sel.value));
+    }
     if(sel) sel.value = window.SV_LANG;
   }
 
