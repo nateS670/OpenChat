@@ -762,15 +762,19 @@ async function _checkAndPinPeerIdentity(userId, pubKeyRawU8){
     // İlk temas — pinle ve kabul et, kullanıcıyı bilgilendir.
     store[uidKey] = fp;
     _setIdPinStore(store);
-    _peerKeyFingerprints[userId] = fp.match(/.{4}/g).join(' ').toUpperCase();
+    // 🐞 [MITM-FIX] Burada _peerKeyFingerprints YAZILMAZ: bu değişken
+    // ekranda gösterilen, her iki tarafta AYNI olması gereken simetrik
+    // güvenlik koduna karşılık gelir (bkz. storePeerPublicKey — sort(myKey,
+    // peerKey) hash'i). Buradaki fp ise sadece KARŞI TARAFIN kimlik
+    // anahtarının tek taraflı hash'i — her iki cihazda FARKLI çıkar ve
+    // önceden yazılmışsa doğru simetrik kodun üzerine yazıp onu bozardı.
     if(typeof showToast==='function'){
       showToast('🔐 Yeni Güvenli Bağlantı', `${userId} ile ilk kez konuşuyorsunuz. Güvenlik kodunu mümkünse başka bir kanaldan doğrulayın.`);
     }
     return true;
   }
   if(existing === fp){
-    _peerKeyFingerprints[userId] = fp.match(/.{4}/g).join(' ').toUpperCase();
-    return true; // beklenen kimlik — güvenilir
+    return true; // beklenen kimlik — güvenilir (gösterilen kod storePeerPublicKey'den gelir)
   }
 
   // Pin UYUŞMAZLIĞI — sessizce kabul ETME.
