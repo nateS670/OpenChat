@@ -288,6 +288,8 @@
     "🔊 Varsayılan Hoparlör": "🔊 Default Speaker",
     "Cihaz listesi alınamadı:": "Couldn't get device list:",
     "Ekran Paylaş": "Share Screen",
+    "Paylaşımı Durdur": "Stop Sharing",
+    "🔐 PBKDF2-SHA256 · Şifren ağa gitmez · Mesajlar P2P şifreli (WebRTC)": "🔐 PBKDF2-SHA256 · Your password never leaves your device · Messages are P2P encrypted (WebRTC)",
     "⏹ Paylaşımı Durdur": "⏹ Stop Sharing",
     "Ekran Paylaşımı": "Screen Sharing",
     "Ekran Paylaşılıyor": "Screen Being Shared",
