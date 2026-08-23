@@ -1027,7 +1027,16 @@ async function aesDecrypt(pkt, fromUserId=null){
       if(!peerKey) continue;
       try{
         const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:_u8(pkt.v)},peerKey,_u8(pkt.e));
-        return JSON.parse(new TextDecoder().decode(pt));
+        const parsed = JSON.parse(new TextDecoder().decode(pt));
+        // 🛡️ [YENİ-SEC — KRİTİK] Paketi HANGİ peer'ın anahtarının çözdüğünü
+        // işaretle. Önceden bu bilgi kayboluyordu: paket içindeki `from`
+        // alanı, o anahtarın GERÇEK sahibiyle hiç karşılaştırılmıyordu.
+        // Yani benimle e2e anahtarı olan HERHANGİ bir arkadaşım, kendi
+        // anahtarıyla şifrelediği paketin içine `from:"başka-biri"` yazarak
+        // o kişiymiş gibi davranabilirdi (group_update/group_kick admin
+        // kontrolü dahil — bkz. çağıran taraftaki `_e2eKeyOwner` kontrolü).
+        parsed._e2eKeyOwner = uid_;
+        return parsed;
       }catch(e){ /* bu peer'ın anahtarı değil — sıradakini dene */ }
     }
   }
@@ -1401,6 +1410,43 @@ function _setupDC(userId, dc){
       const fromHint = (typeof pkt.f==='string' && isWhitelisted(pkt.f)) ? pkt.f : null;
       const d = await aesDecrypt(pkt, fromHint);
       if(!d){ console.warn('[DC][SEC] Çözülemeyen DC paketi, atlandı.'); return; }
+      // 🛡️ [YENİ-SEC] Aynı e2e-anahtar-sahipliği kontrolü DC girişinde de
+      // uygulanıyor (bkz. mq.on('message') içindeki not).
+      if(d._e2eKeyOwner){
+        if(d.from && d.from!==d._e2eKeyOwner){
+          console.warn('[DC][SEC] e2e paket kimlik sahteciliği tespit edildi, reddedildi. İddia edilen from:', d.from, 'gerçek anahtar sahibi:', d._e2eKeyOwner);
+          return;
+        }
+        // 🛡️ [YENİ-SEC] Kalıcı bir "bu paket e2e ile kriptografik olarak
+        // kimliklendirildi" bayrağı bırak — hassas yetki-taşıyan tipler
+        // (group_update, group_kick, msg_edit/delete, msg_react) bu bayrak
+        // yoksa (yani sadece paylaşılan bootstrap anahtarıyla çözüldüyse)
+        // `from` alanına HİÇ güvenmeyip reddedecek (bkz. handleSig).
+        d._isE2E = true;
+        delete d._e2eKeyOwner;
+      }
+      // 🛡️ [YENİ-SEC — KRİTİK] "from" alanı bağlantı kimliğine bağlanıyor.
+      // Önceden `d.from` sadece genel whitelist'e (arkadaş listesi) karşı
+      // kontrol ediliyordu — bu DC bağlantısının GERÇEKTEN KİME AİT olduğuna
+      // hiç bakılmıyordu. Yani kimlik doğrulaması yapılmış arkadaşınız A,
+      // size gönderdiği (şifreli) paketin İÇİNDEKİ `from` alanına başka bir
+      // arkadaşınızın (B) kullanıcı adını yazarak, B'nin sizinle konuştuğu
+      // sohbete mesaj enjekte edebilir, B'nin mesajlarını "sizin adınıza"
+      // düzenleyip silebilir, ya da B'nin okundu bilgisini/reaksiyonunu taklit
+      // edebilirdi — çünkü `from` alanı, paketin GERÇEKTEN geldiği (kimliği
+      // handshake sırasında doğrulanmış) DataChannel bağlantısıyla hiç
+      // eşleştirilmiyordu. Artık bu DC bağlantısı (_setupDC'ye verilen
+      // `userId` — kimliği zaten _ensurePeerVerified ile doğrulanmış) ile
+      // paket içindeki `from` alanı birebir eşleşmek ZORUNDA.
+      if(d.from && d.from !== userId){
+        console.warn('[DC][SEC] "from" alanı bu bağlantının doğrulanmış kimliğiyle eşleşmiyor, reddedildi. Bağlantı:', userId, 'İddia edilen from:', d.from);
+        return;
+      }
+      // 🛡️ [YENİ-SEC] Bu DC bağlantısı zaten _ensurePeerVerified ile
+      // doğrulanmış TEK bir kimliğe (userId) bağlı ve `from` bununla
+      // birebir eşleşiyor (yukarıdaki kontrol) — dolayısıyla şifreleme
+      // türü (e2e/bs) fark etmeksizin `from` burada zaten güvenilir.
+      if(d.from) d._isE2E = true;
       if(d.from && !isWhitelisted(d.from)){ console.warn('[DC][SEC] Whitelist dışı kaynak'); return; }
       // DC'den gelen mesajlar için de rate limit uygula
       if(d.from && ME && d.from !== ME.user_id){
@@ -1753,6 +1799,17 @@ async function connectNetwork(){
       const fromHint=(typeof pkt.f==='string'&&isWhitelisted(pkt.f))?pkt.f:null;
       const d=await aesDecrypt(pkt, fromHint);
       if(!d){console.warn('[SEC] Çözülemeyen paket, atlandı.');return;}
+      // 🛡️ [YENİ-SEC — KRİTİK] e2e paketlerde "from" alanı, paketi GERÇEKTEN
+      // çözen anahtarın sahibiyle eşleşmek zorunda (bkz. aesDecrypt'teki not).
+      if(d._e2eKeyOwner){
+        if(d.from && d.from!==d._e2eKeyOwner){
+          console.warn('[SEC] e2e paket kimlik sahteciliği tespit edildi, reddedildi. İddia edilen from:', d.from, 'gerçek anahtar sahibi:', d._e2eKeyOwner);
+          return;
+        }
+        // 🛡️ [YENİ-SEC] Kalıcı e2e kimliklendirme bayrağı — bkz. DC girişindeki not.
+        d._isE2E = true;
+        delete d._e2eKeyOwner;
+      }
       // [DEBUG-FR] geçici loglama kaldırıldı — sorun çözüldü, console koruması yeniden aktif (bkz. SAST-8)
       // Whitelist kontrolü — from alanı formata uymuyorsa işleme
       if(d.from && !isWhitelisted(d.from)){
@@ -2283,6 +2340,18 @@ async function handleSig(d){
 
   if(d.to!==ME.user_id)return;
   if(d.type==='rtc_offer'){
+    // 🛡️ [YENİ-SEC] dc_offer'da zaten yapılan kimlik doğrulaması burada
+    // EKSİKTİ — bootstrap anahtarıyla şifrelenmiş (paylaşılan, kişiye özel
+    // olmayan) paketlerde `from` alanı kriptografik olarak kimseye bağlı
+    // değildir. Bu kontrol olmadan, kimliği hiç doğrulanmamış biri (veya
+    // presence'ı henüz alınmamış biri) sahte bir arama teklifi göndererek
+    // arama modalını açtırabilir, SDP/ICE alışverişini tetikleyebilir ve
+    // olası bir IP-sızıntısı/rahatsız etme (harassment) vektörü oluşturabilirdi.
+    const _rtcVerified = await _ensurePeerVerified(d.from);
+    if(!_rtcVerified){
+      console.warn('[SEC] Doğrulanamayan kimlikten gelen rtc_offer reddedildi:', d.from);
+      return;
+    }
     // ICE restart offer — aktif arama varken geliyorsa yeniden müzakere et
     if(d.iceRestart && pc && pc.signalingState !== 'closed'){
       try{
@@ -5467,6 +5536,13 @@ const _patchedGroupCallSignals=async(d)=>{
   }
 
   if(d.type==='grp_offer'&&d.to===ME.user_id){
+    // 🛡️ [YENİ-SEC] rtc_offer ile aynı gerekçeyle — grup arama teklifleri de
+    // kimlik doğrulamasından geçmeden işlenmiyor.
+    const _grpVerified = await _ensurePeerVerified(d.from);
+    if(!_grpVerified){
+      console.warn('[SEC] Doğrulanamayan kimlikten gelen grp_offer reddedildi:', d.from);
+      return;
+    }
     // Duplikat grp_offer koruma — aynı from'dan 3 saniye içinde tekrar gelirse ignore
     const _grpKey='grpOfferDedup_'+d.from+'_'+d.groupId;
     if(window[_grpKey]){return;}
@@ -5567,6 +5643,17 @@ const _patchedGroupCallSignals=async(d)=>{
     const db=getDB();
     const g=db.groups[d.groupId];
     if(g){
+      // 🛡️ [YENİ-SEC] `from` alanı, paketi GERÇEKTEN kimin şifrelediğine
+      // kriptografik olarak bağlı değilse (yani paylaşılan/herkese açık
+      // bootstrap anahtarıyla çözüldüyse — bkz. aesDecrypt, _isE2E bayrağı)
+      // aşağıdaki admin kontrolü tamamen anlamsız hale gelir: HERHANGİ bir
+      // uygulama kullanıcısı `from` alanına gerçek bir admin'in adını
+      // yazarak bu kontrolü atlatabilir. Bu yüzden yetki-taşıyan bu paket
+      // e2e ile kimliklendirilmemişse baştan reddediliyor.
+      if(!d._isE2E){
+        console.warn('[SEC] e2e-doğrulanmamış group_update reddedildi (bootstrap anahtarıyla "from" güvenilemez):', d.from, 'groupId=', d.groupId);
+        return;
+      }
       // 🛡️ [SAST-1 FIX] Yetki kontrolü: önceden hiç yoktu — herhangi bir
       // üye (veya groupId'yi bilen biri) sahte group_update göndererek
       // kendini admin yapabiliyor, başkalarını üyelikten/yöneticilikten
@@ -5615,6 +5702,13 @@ const _patchedGroupCallSignals=async(d)=>{
     const db=getDB();
     const g=db.groups[d.groupId];
     if(g){
+      // 🛡️ [YENİ-SEC] group_update'teki ile aynı gerekçe — admin kontrolü
+      // `from` alanının kriptografik olarak kimliklendirilmiş olmasını
+      // gerektirir, yoksa herkes "adminmiş" gibi davranıp grubu sildirebilir.
+      if(!d._isE2E){
+        console.warn('[SEC] e2e-doğrulanmamış group_kick reddedildi:', d.from, 'groupId=', d.groupId);
+        return;
+      }
       // 🛡️ [SAST-1 FIX] Yetki kontrolü: önceden hiç yoktu — herhangi bir
       // üye (hatta groupId'yi bilen, üye olmayan biri) sahte group_kick
       // göndererek grubu yerel DB'den sildirebiliyordu. Artık gönderen
@@ -7347,7 +7441,18 @@ handleSig=async(d)=>{
     const db=getDB();
     const k=d.groupId?'g_'+d.groupId:[ME.user_id,d.from].sort().join('_');
     const msg=(db.messages[k]||[]).find(m=>m.id===d.msgId);
-    if(msg){msg.text=d.newText;msg.edited=true;saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
+    // 🛡️ [YENİ-SEC] `msg.from===d.from` kontrolü, `d.from` güvenilir DEĞİLSE
+    // (bkz. _isE2E) hiçbir şey ifade etmez — saldırgan zaten `d.from`'u
+    // mesajın gerçek sahibiyle aynı yazabilir. Bu yüzden önce e2e kimliklendirme
+    // şart koşuluyor, ardından sahiplik kontrolü yapılıyor.
+    // 🛡️ [ÖNCEKİ] Yetki kontrolü: önceden YOKTU — özel sohbette karşı taraf,
+    // grup sohbetinde İSE HERHANGİ BİR ÜYE, msgId'sini bildiği (zaten kendisine
+    // private_msg/group_msg ile gelmiş olan) HERHANGİ BİR mesajı, o mesajın
+    // gerçek sahibi olmasa bile msg_edit göndererek değiştirebiliyordu. Artık
+    // yalnızca mesajın gerçek göndereni (msg.from) kendi mesajını düzenleyebilir.
+    if(msg && !d._isE2E) console.warn('[SEC] e2e-doğrulanmamış msg_edit reddedildi:', d.from);
+    else if(msg && msg.from===d.from){msg.text=d.newText;msg.edited=true;saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
+    else if(msg) console.warn('[SEC] Yetkisiz msg_edit reddedildi:', d.from, '(mesaj sahibi:', msg.from, ')');
     return;
   }
   if(d.type==='msg_delete'&&d.to===ME.user_id){
@@ -7356,14 +7461,22 @@ handleSig=async(d)=>{
     const k=d.groupId?'g_'+d.groupId:[ME.user_id,d.from].sort().join('_');
     const arr=db.messages[k]||[];
     const msg=arr.find(m=>m.id===d.msgId);
-    if(msg){msg.deleted=true;msg.text='';msg.file=null;msg.img=null;saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
+    // 🛡️ [YENİ-SEC] Aynı e2e şartı msg_delete için de — bkz. msg_edit notu.
+    if(msg && !d._isE2E) console.warn('[SEC] e2e-doğrulanmamış msg_delete reddedildi:', d.from);
+    else if(msg && msg.from===d.from){msg.deleted=true;msg.text='';msg.file=null;msg.img=null;saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
+    else if(msg) console.warn('[SEC] Yetkisiz msg_delete reddedildi:', d.from, '(mesaj sahibi:', msg.from, ')');
     return;
   }
   if(d.type==='msg_react'&&d.to===ME.user_id){
     const db=getDB();
     const k=d.groupId?'g_'+d.groupId:[ME.user_id,d.from].sort().join('_');
     const msg=(db.messages[k]||[]).find(m=>m.id===d.msgId);
-    if(msg){if(!msg.reactions)msg.reactions={};if(d.emoji)msg.reactions[d.from]=d.emoji;else delete msg.reactions[d.from];saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
+    // 🛡️ [YENİ-SEC] Reaksiyonlar zaten `d.from` anahtarına göre kendi
+    // slotuna yazılıyor (başkasının reaksiyonu ezilemiyor) ama `d.from`
+    // güvenilir değilse biri BAŞKASI adına sahte reaksiyon bırakabilir —
+    // bu yüzden burada da e2e kimliklendirme şartı aranıyor.
+    if(msg && d._isE2E){if(!msg.reactions)msg.reactions={};if(d.emoji)msg.reactions[d.from]=d.emoji;else delete msg.reactions[d.from];saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
+    else if(msg) console.warn('[SEC] e2e-doğrulanmamış msg_react reddedildi:', d.from);
     return;
   }
   if(d.type==='group_read'&&d.to===ME.user_id){
