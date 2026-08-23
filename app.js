@@ -8651,7 +8651,7 @@ window.addEventListener('resize',()=>{
   if(!('serviceWorker' in navigator)) return;
   // Inline SW — ayrı dosya gerekmez
   const swCode=`
-const CACHE='sv-v1';
+const CACHE='sv-v2';
 const ASSETS=['/'];
 self.addEventListener('install',e=>{
   e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)));
@@ -8662,7 +8662,17 @@ self.addEventListener('activate',e=>{
   self.clients.claim();
 });
 self.addEventListener('fetch',e=>{
-  // Network first — çevrimdışı için cache fallback
+  // 🛡️ [YENİ] Sayfa/döküman (navigasyon) istekleri: sadece Service Worker'ın
+  // KENDİ Cache Storage'ını değil, TARAYICININ HTTP önbelleğini de bypass et
+  // ({cache:'no-store'}) — aksi halde 'network first' olsa bile bazı
+  // durumlarda eski bir HTTP yanıtı (dolayısıyla ESKİ CSP header'ı) devreye
+  // girip yeni deploy'ların gecikmeyle/gecikmeden yansımamasına yol açabilir.
+  // Gerçekten çevrimdışıysak yine cache fallback'e düşülür.
+  if(e.request.mode==='navigate'){
+    e.respondWith(fetch(e.request,{cache:'no-store'}).catch(()=>caches.match(e.request)));
+    return;
+  }
+  // Diğer istekler: network first — çevrimdışı için cache fallback
   e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));
 });
 // Push bildirimi
