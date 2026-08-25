@@ -108,9 +108,17 @@ function openChangelog(){
   $('changelogBody').innerHTML = CHANGELOG_HTML;
   $('changelogModal').classList.remove('hidden');
 }
-$('dnrChangelog').onclick = ()=>{ if(ME) openChangelog(); };
-$('changelogCloseBtn').onclick = ()=>{ $('changelogModal').classList.add('hidden'); };
-$('changelogModal').onclick = (e)=>{ if(e.target.id==='changelogModal') $('changelogModal').classList.add('hidden'); };
+// 🐛 [3.6 FIX] Bu 3 satır önceden BURADA, $ helper'ı (aşağıda satır ~133'te
+// tanımlanıyor) henüz tanımlanmadan ÖNCE çalıştırılıyordu — bu da
+// "$ is not defined" hatasıyla TÜM script'in burada çökmesine, dolayısıyla
+// giriş/kayıt dahil ondan sonraki hiçbir kodun hiç çalışmamasına yol
+// açıyordu. Bağlama işlemi artık $ tanımlandıktan SONRA, DOMContentLoaded
+// ile güvenli şekilde yapılıyor.
+document.addEventListener('DOMContentLoaded', ()=>{
+  $('dnrChangelog').onclick = ()=>{ if(ME) openChangelog(); };
+  $('changelogCloseBtn').onclick = ()=>{ $('changelogModal').classList.add('hidden'); };
+  $('changelogModal').onclick = (e)=>{ if(e.target.id==='changelogModal') $('changelogModal').classList.add('hidden'); };
+});
 
 const ACC_KEY = 'sv_accounts';
 const THEME_KEY = 'sv_theme'; // dark theme preference
