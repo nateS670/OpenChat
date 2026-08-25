@@ -20,6 +20,98 @@ let _decryptedMsgCache = {}; // bellekteki çözülmüş mesajlar — getDB()/sa
 let _decryptedFileCache = new Map();
 const APP_VERSION = '3.5.0';
 const SES_KEY = 'shareview_ultra_session_v6';
+
+// ══════════════════════════════════════════════════════════════════
+// 🛡️ [YENİ] KULLANIM ŞARTLARI ONAYI
+// Hem yeni kayıt olan kullanıcılara hem de daha önce kayıtlı/giriş
+// yapmış kullanıcılara (ilk kez bu ekranı görüyorlarsa) gösterilir.
+// Kabul, o hesabın yerel DB kaydına (ME.termsAcceptedVersion) yazılır
+// — sunucuya hiçbir şey gönderilmez, mimarinin "kayıtsız" doğasıyla
+// tutarlı. TERMS_VERSION artırılırsa TÜM kullanıcılar (yeni metni)
+// bir sonraki girişte tekrar onaylamak zorunda kalır.
+// ══════════════════════════════════════════════════════════════════
+const TERMS_VERSION = 1;
+const TERMS_HTML = `
+<p><strong>OpenChat</strong>; merkezi sunucusu, veritabanı ve log kaydı olmayan, tamamen kullanıcılar arası doğrudan iletişim (P2P) teknolojisiyle çalışan gizlilik odaklı bir platformdur. Platformu kullanabilmek için sistemin doğası gereği sahip olduğu şu teknik koşulları kabul etmeniz gerekmektedir:</p>
+<p><strong>Gizlilik ve Kayıtsız Yapı:</strong> Mesajlarınız, sesli/görüntülü görüşmeleriniz veya dosyalarınız hiçbir merkezi sunucuda saklanmaz. Sekmeyi kapattığınızda veya oturumu sonlandırdığınızda cihazınızdaki anlık veriler tamamen silinir ve geri getirilemez.</p>
+<p><strong>Çevrimdışı Mesajlaşma Sınırı:</strong> İletişim doğrudan iki cihaz arasında kurulur. Karşı taraf çevrimdışıysa veya internet bağlantısı koptuysa, gönderdiğiniz mesajlar iletilemeyebilir ya da kaybolabilir.</p>
+<p><strong>Arka Plan Bildirimleri ve Bağlantı:</strong> Mobil cihazlarda tarayıcının arka plana atılması veya ekranın kilitlenmesi durumunda P2P bağlantısı kesilebilir, anlık arama veya mesaj bildirimleri düşmeyebilir.</p>
+<p><strong>Performans ve Sistem Yükü:</strong> Çoklu grup görüşmelerinde veya yüksek kalitede yayınlarda şifreleme ve veri işleme yükü doğrudan cihazınızın işlemcisi (CPU/GPU) ve internet bant genişliği tarafından karşılanır.</p>
+<p><strong>Bağlantı Kopmaları:</strong> IP değişikliği (Wi-Fi'dan mobil veriye geçiş vb.) veya katı ağ güvenlik duvarları (NAT) durumunda bağlantı kopabilir. Bu gibi durumlarda oturumun yenilenmesi gerekebilir.</p>
+<p><strong>Kimlik Doğrulama Sınırı — Yeni Kişilerle İlk Temas:</strong> OpenChat, her kullanıcı için benzersiz bir kimlik anahtarı üretir ve bu anahtarları birbirine bağlı olduğunuz kişilerle karşılaştırarak (parmak izi doğrulama) sonraki görüşmelerinizin güvenliğini sağlar. Ancak <strong>hiç tanımadığınız biriyle ilk kez</strong> iletişime geçtiğinizde, karşı tarafın gerçekten iddia ettiği kişi olduğunu platform kendi başına garanti edemez — bu, merkezi bir kimlik doğrulama otoritesi bulunmayan, uçtan uca şifreli tüm P2P sistemlerin ortak, bilinen bir sınırıdır.</p>
+<p style="color:var(--primary);font-weight:600">→ Önemli/hassas bir konuşmaya başlamadan önce, sohbet ekranındaki kimlik parmak izini karşı tarafla sesli veya yüz yüze bir kanaldan karşılaştırın. Eşleşmiyorsa konuşmayı sonlandırıp bize bildirin.</p>
+<p><strong>Sorumluluk Reddi:</strong> Yukarıdaki teknik çalışma prensipleri, P2P mimarisinin doğal sonucudur ve merkezi olmayan bir sistem tercih etmenin getirdiği bilinen ödünleşimlerdir. Platform "olduğu gibi" sunulmaktadır; kesintisiz iletişim veya mesaj teslimatı garanti edilmez.</p>
+`;
+
+function _needsTermsAcceptance(user){
+  return !user || user.termsAcceptedVersion !== TERMS_VERSION;
+}
+
+function showTermsModal(){
+  return new Promise(resolve=>{
+    const modal = $('termsModal');
+    const body  = $('termsBody');
+    const cb    = $('termsCheckbox');
+    const btn   = $('termsAcceptBtn');
+    body.innerHTML = TERMS_HTML;
+    cb.checked = false;
+    btn.disabled = true;
+    modal.classList.remove('hidden');
+    // Her açılışta temiz dinleyiciler — eski Promise'i tetiklememesi için
+    cb.onchange = ()=>{ btn.disabled = !cb.checked; };
+    btn.onclick = ()=>{
+      modal.classList.add('hidden');
+      cb.onchange = null; btn.onclick = null;
+      resolve();
+    };
+  });
+}
+
+// Terms onayını gerekiyorsa gösterip, ardından ana uygulamayı açan tek
+// merkezi fonksiyon. authScreen→mainApp geçişi yapan HER yer bunu kullanır.
+async function revealApp(){
+  if(_needsTermsAcceptance(ME)){
+    await showTermsModal();
+    ME.termsAcceptedVersion = TERMS_VERSION;
+    const db = getDB();
+    const k2 = (ME.user_id||'').toLowerCase();
+    if(db.users[k2]){ db.users[k2].termsAcceptedVersion = TERMS_VERSION; saveDB(db); }
+  }
+  $('authScreen').style.display='none';
+  $('mainApp').classList.remove('hidden');
+  document.body.classList.add('sv-logged-in');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ✨ [3.6] GÜNCELLEME LOGU
+// Yeni sürüm çıktıkça buraya en üste yeni bir <div> ekleyin — liste en
+// yeni üstte olacak şekilde tutulur. Kullanıcı bir kez görüp kapattıktan
+// sonra tekrar rahatsız etmemek isterseniz CHANGELOG_LATEST sabitini
+// kontrol edip localStorage'da hangi sürümü gördüğünü saklayabilirsiniz
+// (şu an için sadece nav rail'den elle açılıyor, otomatik açılmıyor).
+// ══════════════════════════════════════════════════════════════════
+const CHANGELOG_HTML = `
+<div style="margin-bottom:18px">
+  <div style="font-weight:800;color:var(--primary);font-size:14px;margin-bottom:6px">Sürüm 3.6</div>
+  <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px">
+    <li>🔒 Kapsamlı güvenlik sıkılaştırması: mesaj bazlı imzalama, DataChannel/e2e kimlik sahteciliği koruması, grup yönetici yetki kontrolleri</li>
+    <li>🛡️ CSP (Content Security Policy) sıkılaştırıldı; eksik güvenlik başlıkları ve SRI eklendi</li>
+    <li>📋 Yeni: Kayıt/giriş sırasında kullanım şartları ve sistem bilgilendirme onayı</li>
+    <li>🖥️ Nav rail: gruplar arası boşluk ve ince ayırıcılar eklendi, ayarlar ikonu hizalaması düzeltildi</li>
+    <li>📶 Bağlantı göstergesine üzerine gelince detaylı P2P/sinyal durumu gösteren tooltip eklendi</li>
+    <li>📞 Grup aramalarında bazı katılımcılara yeni gelen kişinin görünmemesi/duyulmaması sorunu giderildi</li>
+  </ul>
+</div>
+`;
+
+function openChangelog(){
+  $('changelogBody').innerHTML = CHANGELOG_HTML;
+  $('changelogModal').classList.remove('hidden');
+}
+$('dnrChangelog').onclick = ()=>{ if(ME) openChangelog(); };
+$('changelogCloseBtn').onclick = ()=>{ $('changelogModal').classList.add('hidden'); };
+$('changelogModal').onclick = (e)=>{ if(e.target.id==='changelogModal') $('changelogModal').classList.add('hidden'); };
+
 const ACC_KEY = 'sv_accounts';
 const THEME_KEY = 'sv_theme'; // dark theme preference
 
@@ -1863,6 +1955,7 @@ setInterval(()=>{
       dcEl.style.display = 'none';
     }
   }
+  _updateNetTooltip();
 },15000);
 function setNet(s){
   const el=$('netStatus'); if(!el)return;
@@ -1871,6 +1964,22 @@ function setNet(s){
   // Nav rail dot güncelle
   const dot=$('dnrNetDot');
   if(dot) dot.style.background=c;
+  _lastNetState = s;
+  _updateNetTooltip();
+}
+// ✨ [3.6] Nav rail bağlantı göstergesinin detaylı hover tooltip metnini
+// günceller — MQTT broker durumu + kaç arkadaşla P2P (WebRTC) bağlantısı
+// olduğu bilgisini birlikte gösterir.
+let _lastNetState = 'connecting';
+function _updateNetTooltip(){
+  const wrap = $('dnrNetWrap'); if(!wrap) return;
+  const stateLabel = {online:'Bağlı', offline:'Bağlantı Kesildi', connecting:'Bağlanıyor...'}[_lastNetState] || 'Bilinmiyor';
+  const dcCount = _dcConnectedCount();
+  const lines = [
+    `Sinyal sunucusu (MQTT): ${stateLabel}`,
+    `P2P bağlantı: ${dcCount} kişi ile aktif`
+  ];
+  wrap.setAttribute('data-tip', lines.join('\n'));
 }
 async function broadcast(p, qos=0){
   // [FIX] RTC sinyal tipleri ve MQTT-only tipler rate limit'e TAKILMAMALI.
@@ -2911,7 +3020,7 @@ $('authBtn').onclick=async()=>{
     sessionMark(k); // ← Sayfa yenilenince şifre sormaz
     bfSuccess(name); // 🛡️ Başarılı giriş → brute force sayacı sıfırla
     clearInterval(_bfCountdownTimer);
-    $('authScreen').style.display='none';$('mainApp').classList.remove('hidden');document.body.classList.add('sv-logged-in');
+    await revealApp();
     $('authBtn').disabled=false;$('authBtn').innerText='Giriş Yap';
     updateUI(); setTimeout(sendPresence,500);
     // ME.username tanımlandıktan hemen sonra bu fonksiyonu çağır:
@@ -2937,7 +3046,7 @@ $('authBtn').onclick=async()=>{
     sessionMark(k); // ← Sayfa yenilenince şifre sormaz
     bfSuccess(name); // 🛡️ Brute force sıfırla
     clearInterval(_bfCountdownTimer);
-    $('authScreen').style.display='none';$('mainApp').classList.remove('hidden');document.body.classList.add('sv-logged-in');
+    await revealApp();
     $('authBtn').disabled=false;$('authBtn').innerText='Giriş Yap';
     updateUI(); setTimeout(sendPresence,500);
     // ME.username tanımlandıktan hemen sonra bu fonksiyonu çağır:
@@ -5442,10 +5551,25 @@ async function startGroupCall(){
   if(!_speakInterval) _startSpeakLoop();
 
   const g=getDB().groups[chatId];
-  g.members.forEach(m=>{
-    if(m!==ME.user_id&&isOn(m)){
-      broadcastGroupCallOffer(m);
-    }
+  // 🐛 [3.6 FIX] Önceden sadece isOn() (genel presence, 20sn'lik pencere)
+  // kontrolüne bakılıyordu — bir üyenin presence sinyali kısa bir an
+  // gecikirse (arka plan sekmesi, ufak ağ titremesi) o kişi tamamen
+  // atlanıyor, kendisine hiç grp_offer gönderilmiyordu. Bu da "bazı
+  // katılımcılara yeni gelen kişi hiç görünmüyor/duyulmuyor" sorununa yol
+  // açıyordu — bağlantı hiç kurulmadığı için, sonradan da düzelmiyordu.
+  // Artık activeGroupCalls[chatId] — aramadaki HERKESİN kendi tarafından
+  // her 8sn'de bir yayınladığı, dolayısıyla presence'tan bağımsız ve daha
+  // güncel "bu aramada gerçekten kim var" listesi — isOn() ile birleştirilip
+  // kullanılıyor. Böylece "zaten aramada olduğu kesin olarak bilinen"
+  // kişiler, anlık presence gecikmesi yüzünden asla atlanmıyor.
+  const _activeCallMembers = activeGroupCalls[chatId]?.members || [];
+  const _joinTargets = new Set([
+    ..._activeCallMembers.filter(m=>g.members.includes(m)),
+    ...g.members.filter(m=>isOn(m))
+  ]);
+  _joinTargets.delete(ME.user_id);
+  _joinTargets.forEach(m=>{
+    broadcastGroupCallOffer(m);
   });
   updateParticipantsGrid();
   // Aktif arama bildir — Discord tarzı sidebar göstergesi
@@ -7761,9 +7885,7 @@ if(saved){
       if(sessionValid){
         // ✅ Aynı sekme oturumu devam ediyor (ve gerekiyorsa anahtar hazır) — şifre sormadan giriş
         ME=user; blocked=ME.blocked||[];
-        $('authScreen').style.display='none';
-        $('mainApp').classList.remove('hidden');
-        document.body.classList.add('sv-logged-in');
+        await revealApp();
         updateUI();setTimeout(sendPresence,2000);
         // ME.username tanımlandıktan hemen sonra bu fonksiyonu çağır:
         initPushNotifications();
@@ -7804,9 +7926,7 @@ if(saved){
           const sessionValid = sess && sess.u===saved.toLowerCase() && (!needsKey2 || keyRestored);
           if(sessionValid){
             ME=restoredUser; blocked=ME.blocked||[];
-            $('authScreen').style.display='none';
-            $('mainApp').classList.remove('hidden');
-            document.body.classList.add('sv-logged-in');
+            await revealApp();
             updateUI();setTimeout(sendPresence,2000);
             showToast('Hesap Geri Yüklendi','Hesabınız yedekten kurtarıldı.');
             // ME.username tanımlandıktan hemen sonra bu fonksiyonu çağır:
