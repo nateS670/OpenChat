@@ -186,7 +186,7 @@ html.dark #desktopNavRail{background:#111111}
   overflow:hidden;margin-bottom:16px;
   flex-shrink:0;cursor:default;
   transition:transform .2s;
-  box-shadow:0 4px 18px rgba(255,123,123,.4);
+  box-shadow:0 2px 8px rgba(255,123,123,.25);
 }
 .dnr-logo:hover{transform:scale(1.06)}
 .dnr-logo img{width:100%;height:100%;object-fit:cover}
@@ -224,14 +224,53 @@ html.dark .dnr-item::after{background:#0f172a}
   border:2px solid var(--panel);padding:0 3px;pointer-events:none;
 }
 
+/* ✨ [3.6] Nav rail item grupları arası ince ayırıcı çizgi + nefes payı.
+   Sohbetler/İstekler/Ara arasında ve Profil/Ayarlar arasında kullanılır. */
+.dnr-divider{
+  width:26px;height:1px;
+  background:var(--border);
+  margin:6px 0;
+  flex-shrink:0;
+}
+html.dark .dnr-divider{background:rgba(255,255,255,.08)}
+/* Üst grup (Sohbetler/İstekler/Ara) butonları arasına biraz daha nefes payı */
+#dnrChats,#dnrRequests{margin-bottom:4px}
+
 /* Spacer */
 .dnr-spacer{flex:1}
 
 /* Bottom section */
 .dnr-bottom{
-  display:flex;flex-direction:column;align-items:center;gap:2px;
+  display:flex;flex-direction:column;align-items:center;gap:4px;
   padding-top:8px;border-top:1px solid var(--border);width:100%;
 }
+
+/* ✨ [3.6] Bağlantı göstergesi — nokta + altında küçük "Bağlantı" etiketi,
+   üzerine gelince detaylı (MQTT + P2P peer sayısı) bilgi gösteren tooltip. */
+.dnr-net-wrap{
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  margin-bottom:8px;cursor:default;position:relative;
+}
+.dnr-net-wrap::after{
+  content:attr(data-tip);
+  position:absolute;left:58px;top:50%;transform:translateY(-50%);
+  background:#1e293b;color:#fff;font-size:11px;font-weight:600;
+  padding:8px 12px;border-radius:8px;white-space:pre-line;
+  opacity:0;pointer-events:none;transition:opacity .15s;
+  z-index:9999;min-width:170px;line-height:1.6;text-align:left;
+  box-shadow:0 4px 16px rgba(0,0,0,.25);
+}
+html.dark .dnr-net-wrap::after{background:#0f172a}
+.dnr-net-wrap:hover::after{opacity:1}
+.dnr-net-label{
+  font-size:8px;font-weight:800;color:var(--muted);
+  letter-spacing:.3px;text-transform:uppercase;line-height:1;
+  user-select:none;
+}
+/* ✨ [3.6 FIX] Ayarlar dişli emoji'si (⚙️) diğer emojilere göre farklı glyph
+   metriğine sahip — kutunun içinde görsel olarak hafifçe aşağı/sağa kaymış
+   duruyordu. transform ile ince bir düzeltme. */
+.dnr-settings-icon{display:inline-block;transform:translateY(-1px)}
 
 /* Profile avatar in nav rail */
 .dnr-av{
@@ -452,7 +491,7 @@ html.dark .sv-status-btn.active{background:rgba(88,101,242,.18)}
 .av img{width:100%;height:100%;object-fit:cover;border-radius:50%}
 .av-badge{position:absolute;bottom:-2px;right:-2px;width:18px;height:18px;background:var(--primary);border-radius:50%;border:2px solid var(--panel);display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff}
 .online-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-left:5px;vertical-align:middle;animation:glow 2s infinite}
-@keyframes glow{0%,100%{box-shadow:0 0 0 2px rgba(59,165,92,.3)}50%{box-shadow:0 0 0 5px rgba(59,165,92,.1)}}
+@keyframes glow{0%,100%{box-shadow:0 0 0 2px rgba(59,165,92,.22)}50%{box-shadow:0 0 0 4px rgba(59,165,92,.08)}}
 .prof-info{flex:1;min-width:0}
 .prof-info h3{margin:0 0 1px;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;color:var(--text)}
 #myToken{margin:0;color:var(--muted);font-size:10px;font-family:monospace;cursor:pointer;transition:color .15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -582,7 +621,7 @@ body.no-hover-flash .msg-wrap:hover .msg-actions{display:none}
 
 /* MESSAGE BUBBLES */
 .msg{max-width:100%;padding:10px 14px;border-radius:18px;font-size:14px;line-height:1.55;position:relative}
-.msg.me{align-self:flex-end;background:var(--primary);color:#fff;border-bottom-right-radius:5px;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.msg.me{align-self:flex-end;background:var(--primary);color:#fff;border-bottom-right-radius:5px;box-shadow:0 1px 3px rgba(0,0,0,.12)}
 .msg.ot{align-self:flex-start;background:var(--msg-ot-bg);border:1px solid var(--border);border-bottom-left-radius:5px;color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.05)}
 html.dark .msg.ot{background:#1E1E1E;border-color:rgba(255,123,123,.15)}
 .msg.sys{align-self:center;background:transparent;color:var(--muted);font-size:12px;border-radius:0;padding:4px 0;box-shadow:none;border:none;display:flex;align-items:center;gap:8px;max-width:100%}
@@ -1192,36 +1231,15 @@ body:not(.sv-logged-in) #callModal {
 .gdp-member{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;transition:.15s}
 .gdp-member:hover{background:var(--hover)}
 
-/* GRUP ARAMA — katılımcı grid (eski compat) */
+/* ✨ [3.6 TEMİZLİK] Bu blok önceden .part-card/.part-av/.part-name/
+   .part-vol-bar/.part-mute-badge/.deafen-badge/.part-card-sm/.part-vol-btn
+   için YUKARIDAKİ (satır ~965) tanımla ÇAKIŞAN, "eski compat" etiketli
+   ikinci bir kopya içeriyordu. İkisi birbirini kısmen eziyordu (bazısı
+   !important ile kazanıyor, bazısı dosya sırasıyla) — sonuç, hiç kimsenin
+   tam olarak kastetmediği, tesadüfi bir karışımdı. Tek, eksiksiz ve doğru
+   çalışan tanım yukarıda kaldığı için burası yalnızca GERÇEKTEN benzersiz
+   olan kurallara indirildi. */
 .call-ui.group-call{width:100%!important}
-.part-card{background:#0f172a;border-radius:12px;padding:10px 8px;display:flex;flex-direction:column;align-items:center;gap:6px;border:2px solid #334155;position:relative;transition:border-color .15s,box-shadow .15s;cursor:context-menu;user-select:none}
-/* Konuşan kişi — Discord tarzı beyaz ışık */
-.part-card.speaking{
-  border-color:#fff;
-  box-shadow:0 0 0 2px rgba(255,255,255,.15), 0 0 16px 2px rgba(255,255,255,.2);
-}
-@keyframes speakPulse{
-  0%,100%{box-shadow:0 0 0 2px rgba(255,255,255,.15),0 0 12px 1px rgba(255,255,255,.15)}
-  50%{box-shadow:0 0 0 3px rgba(255,255,255,.25),0 0 22px 4px rgba(255,255,255,.3)}
-}
-.part-card.speaking{animation:speakPulse .7s ease-in-out infinite}
-.part-av{width:48px;height:48px;border-radius:50%;background:#334155;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;overflow:hidden;transition:.15s}
-.part-av img{width:100%;height:100%;object-fit:cover}
-.part-name{font-size:11px;color:#94a3b8;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
-/* Ses seviyesi göstergesi */
-.part-vol-bar{
-  width:100%;height:3px;background:#1e293b;border-radius:3px;overflow:hidden;
-}
-.part-vol-fill{height:100%;background:linear-gradient(90deg,#22c55e,#86efac);border-radius:3px;width:0%;transition:width .08s linear}
-.part-mute-badge{position:absolute;top:5px;right:5px;font-size:12px;line-height:1}
-.deafen-badge{position:absolute;top:5px;left:5px;font-size:12px;line-height:1}
-/* Kişisel ses seviyesi göstergesi */
-.part-vol-indicator{
-  position:absolute;bottom:5px;right:5px;
-  font-size:10px;color:#64748b;font-weight:700;
-  background:rgba(0,0,0,.4);border-radius:4px;padding:1px 4px;
-  pointer-events:none;
-}
 /* Ses kontrol context menu */
 #peerVolMenu{
   position:fixed;z-index:9999;
@@ -1244,18 +1262,6 @@ body:not(.sv-logged-in) #callModal {
 /* Mute / Deafen butonları */
 .call-ctrl button.active-mute{background:#ef4444!important}
 .call-ctrl button.active-deafen{background:#7c3aed!important}
-/* Ses ayar butonu — her kartta görünür */
-.part-vol-btn{
-  position:absolute;bottom:5px;left:5px;
-  background:rgba(255,255,255,.1);border:none;
-  color:#94a3b8;font-size:11px;
-  width:22px;height:22px;border-radius:6px;
-  cursor:pointer;display:flex;align-items:center;justify-content:center;
-  padding:0;transition:.15s;line-height:1;
-}
-.part-vol-btn:hover{background:rgba(88,101,242,.4);color:#fff}
-/* Küçük kart — 4+ kişi */
-.part-card-sm{padding:7px 5px;gap:4px;}
 
 /* Empty state */
 #emptyState{background:var(--bg)!important;transition:background .3s}
@@ -1860,19 +1866,26 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
 
     <!-- Sohbetler (arkadaş + grup birleşik) -->
     <button class="dnr-item active" id="dnrChats" onclick="if(!ME)return;dnrSwitch('chats')" data-tip="Sohbetler">💬</button>
+    <div class="dnr-divider"></div>
     <!-- İstekler -->
     <button class="dnr-item" id="dnrRequests" onclick="if(!ME)return;dnrSwitch('requests')" data-tip="İstekler">
       🔔<span id="dnrReqBadge" class="dnr-badge hidden">0</span>
     </button>
+    <div class="dnr-divider"></div>
     <!-- Ara -->
     <button class="dnr-item" onclick="if(!ME)return;openGlobalSearch()" data-tip="Ara">🔍</button>
+    <!-- ✨ [3.6] Güncelleme Logu — inline onclick yok, app.js'ten bağlanıyor -->
+    <button class="dnr-item" id="dnrChangelog" data-tip="Yenilikler">🆕</button>
 
     <!-- Spacer -->
     <div class="dnr-spacer"></div>
 
     <!-- Bottom -->
     <div class="dnr-bottom">
-      <div id="dnrNetDot" style="width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-bottom:4px;transition:.3s" title="Bağlantı"></div>
+      <div class="dnr-net-wrap" id="dnrNetWrap" data-tip="Bağlantı durumu kontrol ediliyor...">
+        <div id="dnrNetDot" style="width:8px;height:8px;border-radius:50%;background:#f59e0b;transition:.3s"></div>
+        <span class="dnr-net-label">Bağlantı</span>
+      </div>
       <button class="dnr-item" onclick="toggleDarkMode()" data-tip="Tema"><span id="dnrThemeIcon">🌙</span></button>
       <button class="dnr-item" onclick="if(!ME)return;dnrSwitch('profile')" id="dnrProfile" data-tip="Profil">
         <div class="dnr-profile-wrap">
@@ -1880,7 +1893,8 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
           <div class="dnr-online-dot" id="dnrOnlineDot"></div>
         </div>
       </button>
-      <button class="dnr-item" onclick="if(!ME)return;toggleSettings()" data-tip="Ayarlar" style="font-size:20px">⚙️</button>
+      <div class="dnr-divider"></div>
+      <button class="dnr-item dnr-settings-item" onclick="if(!ME)return;toggleSettings()" data-tip="Ayarlar"><span class="dnr-settings-icon">⚙️</span></button>
     </div>
   </nav>
 
@@ -2310,6 +2324,38 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
     <div id="gdpMembers"></div>
     <div style="padding:12px 0 4px">
       <button id="leaveGroupBtn" onclick="leaveGroup()" class="btn-d" style="width:100%;padding:10px;font-size:13px">🚪 Gruptan Çık</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── KULLANIM ŞARTLARI ONAY MODALI ─────────────────────────────
+     🛡️ [YENİ] Hiçbir inline onclick/onchange kullanılmıyor — tüm
+     event'ler app.js'ten .addEventListener ile bağlanıyor, böylece
+     CSP script-src hash listesine yeni bir şey eklemeye gerek kalmıyor. -->
+<!-- ✨ [3.6] GÜNCELLEME LOGU MODALI — inline onclick yok, app.js'ten bağlanıyor -->
+<div id="changelogModal" class="overlay hidden">
+  <div class="card" style="width:480px;max-width:94vw;text-align:left;max-height:80vh;display:flex;flex-direction:column;padding:0">
+    <div style="padding:22px 26px 4px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+      <h3 style="margin:0;font-size:18px">🆕 Yenilikler</h3>
+      <button id="changelogCloseBtn" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--muted);padding:0;min-width:auto">✕</button>
+    </div>
+    <div id="changelogBody" style="overflow-y:auto;padding:14px 26px 24px;font-size:13px;line-height:1.7;color:var(--text);flex:1"></div>
+  </div>
+</div>
+
+<div id="termsModal" class="overlay hidden" style="z-index:9999">
+  <div class="card" style="width:520px;max-width:94vw;text-align:left;max-height:85vh;display:flex;flex-direction:column;padding:0">
+    <div style="padding:22px 26px 4px;flex-shrink:0">
+      <h3 style="margin:0 0 4px;font-size:18px">📋 Kullanım Şartları ve Sistem Bilgilendirmesi</h3>
+      <p style="margin:0;font-size:12px;color:var(--muted)">Devam etmeden önce lütfen okuyun.</p>
+    </div>
+    <div id="termsBody" style="overflow-y:auto;padding:14px 26px;font-size:13px;line-height:1.6;color:var(--text);flex:1"></div>
+    <div style="padding:16px 26px 22px;border-top:1px solid var(--border);flex-shrink:0">
+      <label style="display:flex;align-items:flex-start;gap:10px;font-size:12.5px;color:var(--text);cursor:pointer;margin-bottom:14px">
+        <input type="checkbox" id="termsCheckbox" style="margin-top:2px;width:16px;height:16px;flex-shrink:0;cursor:pointer">
+        <span>Yukarıdaki teknik çalışma prensiplerini, platformun kısıtlamalarını ve sorumluluk reddini okudum, anladım ve kabul ediyorum.</span>
+      </label>
+      <button id="termsAcceptBtn" disabled style="width:100%;padding:12px">Kayıt Ol / Devam Et</button>
     </div>
   </div>
 </div>
