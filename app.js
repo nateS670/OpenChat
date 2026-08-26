@@ -118,6 +118,26 @@ document.addEventListener('DOMContentLoaded', ()=>{
   $('dnrChangelog').onclick = ()=>{ if(ME) openChangelog(); };
   $('changelogCloseBtn').onclick = ()=>{ $('changelogModal').classList.add('hidden'); };
   $('changelogModal').onclick = (e)=>{ if(e.target.id==='changelogModal') $('changelogModal').classList.add('hidden'); };
+
+  // 🐛 [3.6 FIX] Bağlantı tooltip'i — fixed pozisyonlu, rail'in
+  // overflow:hidden'ından etkilenmeyen bağımsız eleman. Hover'da konumu
+  // wrap'ın gerçek ekran koordinatlarına göre hesaplanıp gösteriliyor.
+  const netWrap = $('dnrNetWrap');
+  const netTip  = $('dnrNetTooltip');
+  if(netWrap && netTip){
+    netWrap.addEventListener('mouseenter', ()=>{
+      _updateNetTooltip();
+      netTip.textContent = _netTooltipText;
+      const r = netWrap.getBoundingClientRect();
+      netTip.style.left = (r.right + 10) + 'px';
+      netTip.style.top  = (r.top + r.height/2) + 'px';
+      netTip.style.transform = 'translateY(-50%)';
+      netTip.classList.add('show');
+    });
+    netWrap.addEventListener('mouseleave', ()=>{
+      netTip.classList.remove('show');
+    });
+  }
 });
 
 const ACC_KEY = 'sv_accounts';
@@ -1978,16 +1998,22 @@ function setNet(s){
 // ✨ [3.6] Nav rail bağlantı göstergesinin detaylı hover tooltip metnini
 // günceller — MQTT broker durumu + kaç arkadaşla P2P (WebRTC) bağlantısı
 // olduğu bilgisini birlikte gösterir.
+// 🐛 [3.6 FIX] Metni artık data-tip attribute'una değil, doğrudan
+// #dnrNetTooltip elemanının içeriğine yazıyor (bkz. mouseenter/mouseleave
+// bağlama kısmı, DOMContentLoaded içinde) — CSS ::after'ın overflow:hidden
+// tarafından kesilmesi sorununu çözmek için tooltip artık ayrı, sabit
+// (fixed) konumlu bir eleman.
 let _lastNetState = 'connecting';
+let _netTooltipText = '';
 function _updateNetTooltip(){
-  const wrap = $('dnrNetWrap'); if(!wrap) return;
   const stateLabel = {online:'Bağlı', offline:'Bağlantı Kesildi', connecting:'Bağlanıyor...'}[_lastNetState] || 'Bilinmiyor';
   const dcCount = _dcConnectedCount();
-  const lines = [
+  _netTooltipText = [
     `Sinyal sunucusu (MQTT): ${stateLabel}`,
     `P2P bağlantı: ${dcCount} kişi ile aktif`
-  ];
-  wrap.setAttribute('data-tip', lines.join('\n'));
+  ].join('\n');
+  const tip = document.getElementById('dnrNetTooltip');
+  if(tip && tip.classList.contains('show')) tip.textContent = _netTooltipText;
 }
 async function broadcast(p, qos=0){
   // [FIX] RTC sinyal tipleri ve MQTT-only tipler rate limit'e TAKILMAMALI.
