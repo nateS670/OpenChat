@@ -433,6 +433,55 @@
     "Geri": "Back",
     "Sil 🗑️": "Delete 🗑️",
     "openchat": "openchat",
+
+    // ── [3.6] Nav rail tooltips (data-tip) ──────────────────────────
+    "Tema": "Theme",
+    "Yenilikler": "What's New",
+
+    // ── [3.6] Changelog panel ────────────────────────────────────────
+    "Sürüm 3.6": "Version 3.6",
+    "🔒 Kapsamlı güvenlik sıkılaştırması: mesaj bazlı imzalama, DataChannel/e2e kimlik sahteciliği koruması, grup yönetici yetki kontrolleri": "🔒 Comprehensive security hardening: per-message signing, DataChannel/e2e identity-spoofing protection, group admin authorization checks",
+    "🛡️ CSP (Content Security Policy) sıkılaştırıldı; eksik güvenlik başlıkları ve SRI eklendi": "🛡️ Content Security Policy (CSP) hardened; missing security headers and SRI added",
+    "📋 Yeni: Kayıt/giriş sırasında kullanım şartları ve sistem bilgilendirme onayı": "📋 New: terms-of-use and system-information consent during sign-up/login",
+    "🖥️ Nav rail: gruplar arası boşluk ve ince ayırıcılar eklendi, ayarlar ikonu hizalaması düzeltildi": "🖥️ Nav rail: spacing and thin dividers added between groups, settings icon alignment fixed",
+    "📶 Bağlantı göstergesine üzerine gelince detaylı P2P/sinyal durumu gösteren tooltip eklendi": "📶 The connection indicator now shows a detailed P2P/signal-status tooltip on hover",
+    "📞 Grup aramalarında bazı katılımcılara yeni gelen kişinin görünmemesi/duyulmaması sorunu giderildi": "📞 Fixed an issue where a newly joined participant wasn't visible or audible to some people in group calls",
+
+    // ── [3.6] Kullanım Şartları / Terms modal ────────────────────────
+    "Kullanım Şartları ve Sistem Bilgilendirmesi": "Terms of Use & System Information",
+    "Devam etmeden önce lütfen okuyun.": "Please read before continuing.",
+    "merkezi sunucusu, veritabanı ve log kaydı olmayan, tamamen kullanıcılar arası doğrudan iletişim (P2P) teknolojisiyle çalışan gizlilik odaklı bir platformdur. Platformu kullanabilmek için sistemin doğası gereği sahip olduğu şu teknik koşulları kabul etmeniz gerekmektedir:": "is a privacy-focused platform that works entirely through direct peer-to-peer (P2P) communication technology, with no central server, database, or logging. To use the platform, you must accept the following technical conditions inherent to how the system works:",
+    "Gizlilik ve Kayıtsız Yapı:": "Privacy & No-Record Architecture:",
+    "Mesajlarınız, sesli/görüntülü görüşmeleriniz veya dosyalarınız hiçbir merkezi sunucuda saklanmaz. Sekmeyi kapattığınızda veya oturumu sonlandırdığınızda cihazınızdaki anlık veriler tamamen silinir ve geri getirilemez.": "Your messages, voice/video calls, and files are never stored on any central server. When you close the tab or end your session, the temporary data on your device is completely erased and cannot be recovered.",
+    "Çevrimdışı Mesajlaşma Sınırı:": "Offline Messaging Limitation:",
+    "İletişim doğrudan iki cihaz arasında kurulur. Karşı taraf çevrimdışıysa veya internet bağlantısı koptuysa, gönderdiğiniz mesajlar iletilemeyebilir ya da kaybolabilir.": "Communication is established directly between two devices. If the other party is offline or their internet connection drops, messages you send may fail to deliver or may be lost.",
+    "Arka Plan Bildirimleri ve Bağlantı:": "Background Notifications & Connection:",
+    "Mobil cihazlarda tarayıcının arka plana atılması veya ekranın kilitlenmesi durumunda P2P bağlantısı kesilebilir, anlık arama veya mesaj bildirimleri düşmeyebilir.": "On mobile devices, if the browser is sent to the background or the screen locks, the P2P connection may drop, and instant call or message notifications may not come through.",
+    "Performans ve Sistem Yükü:": "Performance & System Load:",
+    "Çoklu grup görüşmelerinde veya yüksek kalitede yayınlarda şifreleme ve veri işleme yükü doğrudan cihazınızın işlemcisi (CPU/GPU) ve internet bant genişliği tarafından karşılanır.": "In multi-party group calls or high-quality streams, the encryption and data-processing load is handled directly by your device's processor (CPU/GPU) and your internet bandwidth.",
+    "Bağlantı Kopmaları:": "Connection Drops:",
+    "IP değişikliği (Wi-Fi'dan mobil veriye geçiş vb.) veya katı ağ güvenlik duvarları (NAT) durumunda bağlantı kopabilir. Bu gibi durumlarda oturumun yenilenmesi gerekebilir.": "An IP change (e.g., switching from Wi-Fi to mobile data) or strict network firewalls (NAT) can cause the connection to drop. In such cases, the session may need to be refreshed.",
+    "Kimlik Doğrulama Sınırı — Yeni Kişilerle İlk Temas:": "Identity Verification Limit — First Contact With New People:",
+    "OpenChat, her kullanıcı için benzersiz bir kimlik anahtarı üretir ve bu anahtarları birbirine bağlı olduğunuz kişilerle karşılaştırarak (parmak izi doğrulama) sonraki görüşmelerinizin güvenliğini sağlar. Ancak": "OpenChat generates a unique identity key for every user and secures your future conversations by comparing these keys with people you're already connected to (fingerprint verification). However,",
+    "hiç tanımadığınız biriyle ilk kez": "the very first time you contact someone you've never met",
+    "iletişime geçtiğinizde, karşı tarafın gerçekten iddia ettiği kişi olduğunu platform kendi başına garanti edemez — bu, merkezi bir kimlik doğrulama otoritesi bulunmayan, uçtan uca şifreli tüm P2P sistemlerin ortak, bilinen bir sınırıdır.": ", the platform cannot on its own guarantee that the other party truly is who they claim to be — this is a well-known, shared limitation of all end-to-end encrypted P2P systems with no central identity authority.",
+    "→ Önemli/hassas bir konuşmaya başlamadan önce, sohbet ekranındaki kimlik parmak izini karşı tarafla sesli veya yüz yüze bir kanaldan karşılaştırın. Eşleşmiyorsa konuşmayı sonlandırıp bize bildirin.": "→ Before starting an important or sensitive conversation, compare the identity fingerprint shown on the chat screen with the other party over a voice call or in person. If it doesn't match, end the conversation and let us know.",
+    "Sorumluluk Reddi:": "Disclaimer:",
+    "Yukarıdaki teknik çalışma prensipleri, P2P mimarisinin doğal sonucudur ve merkezi olmayan bir sistem tercih etmenin getirdiği bilinen ödünleşimlerdir. Platform \"olduğu gibi\" sunulmaktadır; kesintisiz iletişim veya mesaj teslimatı garanti edilmez.": "The technical principles above are natural consequences of the P2P architecture and known trade-offs of choosing a decentralized system. The platform is provided \"as is\"; uninterrupted communication or message delivery is not guaranteed.",
+    "Yukarıdaki teknik çalışma prensiplerini, platformun kısıtlamalarını ve sorumluluk reddini okudum, anladım ve kabul ediyorum.": "I have read, understood, and accept the technical principles, platform limitations, and disclaimer above.",
+    "Kayıt Ol / Devam Et": "Sign Up / Continue",
+
+    // ── [3.6] Hesap silme onay modalı / Account-deletion confirmation ──
+    "Hesabı Kalıcı Sil": "Permanently Delete Account",
+    "hesabını kalıcı olarak silmek istediğinden emin misin?": ", are you sure you want to permanently delete this account?",
+    "⚠️ Bu işlem geri alınamaz!": "⚠️ This action cannot be undone!",
+    "Tüm mesajlar silinir": "All messages will be deleted",
+    "Tüm arkadaş listesi silinir": "Your entire friend list will be deleted",
+    "Hesap bilgileri kalıcı olarak kaldırılır": "Account information will be permanently removed",
+    "Onaylamak için": "To confirm, type",
+    "yazın:": "below:",
+    "Vazgeç": "Cancel",
+    "Hesabı Sil": "Delete Account",
   };
 
   // Build a single regex from all keys, longest-first so full
@@ -457,7 +506,7 @@
   }
   window._t = translateStr; // exposed in case app.js-side code wants it later
 
-  const ATTRS = ['title','placeholder','aria-label'];
+  const ATTRS = ['title','placeholder','aria-label','data-tip'];
 
   function translateEl(el){
     if(el.nodeType!==1) return;
