@@ -51,7 +51,7 @@ Anyone who reviews, clones, or forks the project has the following rights:
 
 Because of the experimental nature of this project, please keep the following in mind:
 
-* **🤖 100% AI-Powered Infrastructure:** The architecture, codebase, and optimizations of this project were built entirely from scratch with the assistance of artificial intelligence. While AI enables rapid development and high performance, its experimental nature means minor security edge cases or unexpected bugs may occasionally surface.
+* **🤖 AI-Powered Infrastructure:** The architecture, codebase, and optimizations of this project were built entirely from scratch with the assistance of artificial intelligence. While AI enables rapid development and high performance, its experimental nature means minor security edge cases or unexpected bugs may occasionally surface.
 * **🌐 Synchronous (Online) Communication:** Since the system relies purely on a P2P model, it performs best and most seamlessly when both users are online at the same time.
 * **📬 Offline Message Instability:** There is no central database server storing messages for days. If parties remain offline for extended periods or browser connections drop entirely, undelivered offline messages may be lost.
 * **🔒 Secure Data Flow (Hack-Resilient):** Thanks to the serverless design and E2EE, even if a code vulnerability arises, your data never flows to a third-party server because there is **no central message database** to compromise. Data exists solely on the two communicating devices.
