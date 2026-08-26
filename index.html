@@ -245,23 +245,28 @@ html.dark .dnr-divider{background:rgba(255,255,255,.08)}
   padding-top:8px;border-top:1px solid var(--border);width:100%;
 }
 
-/* ✨ [3.6] Bağlantı göstergesi — nokta + altında küçük "Bağlantı" etiketi,
-   üzerine gelince detaylı (MQTT + P2P peer sayısı) bilgi gösteren tooltip. */
+/* ✨ [3.6] Bağlantı göstergesi — nokta + altında küçük "Bağlantı" etiketi.
+   🐛 [3.6 FIX] Detaylı tooltip artık CSS ::after ile DEĞİL, ayrı bir
+   #dnrNetTooltip elemanıyla ve JS ile konumlandırılıyor — çünkü
+   #desktopNavRail'de overflow:hidden var ve rail'in dışına taşan mutlak
+   konumlu (::after) tooltip'ler bu yüzden kesilip hiç görünmüyordu
+   ("arkaya kayıp gösterilmeme" şikayeti buydu). position:fixed + body'ye
+   eklenmiş bağımsız bir eleman, hiçbir ebeveynin overflow:hidden'ından
+   etkilenmez. */
 .dnr-net-wrap{
   display:flex;flex-direction:column;align-items:center;gap:4px;
-  margin-bottom:8px;cursor:default;position:relative;
+  margin-bottom:8px;cursor:default;
 }
-.dnr-net-wrap::after{
-  content:attr(data-tip);
-  position:absolute;left:58px;top:50%;transform:translateY(-50%);
+#dnrNetTooltip{
+  position:fixed;
   background:#1e293b;color:#fff;font-size:11px;font-weight:600;
   padding:8px 12px;border-radius:8px;white-space:pre-line;
-  opacity:0;pointer-events:none;transition:opacity .15s;
-  z-index:9999;min-width:170px;line-height:1.6;text-align:left;
-  box-shadow:0 4px 16px rgba(0,0,0,.25);
+  pointer-events:none;z-index:99999;min-width:170px;line-height:1.6;
+  text-align:left;box-shadow:0 4px 16px rgba(0,0,0,.25);
+  opacity:0;transition:opacity .15s;
 }
-html.dark .dnr-net-wrap::after{background:#0f172a}
-.dnr-net-wrap:hover::after{opacity:1}
+#dnrNetTooltip.show{opacity:1}
+html.dark #dnrNetTooltip{background:#0f172a}
 .dnr-net-label{
   font-size:8px;font-weight:800;color:var(--muted);
   letter-spacing:.3px;text-transform:uppercase;line-height:1;
@@ -1874,6 +1879,7 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
     <div class="dnr-divider"></div>
     <!-- Ara -->
     <button class="dnr-item" onclick="if(!ME)return;openGlobalSearch()" data-tip="Ara">🔍</button>
+    <div class="dnr-divider"></div>
     <!-- ✨ [3.6] Güncelleme Logu — inline onclick yok, app.js'ten bağlanıyor -->
     <button class="dnr-item" id="dnrChangelog" data-tip="Yenilikler">🆕</button>
 
@@ -1882,7 +1888,7 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
 
     <!-- Bottom -->
     <div class="dnr-bottom">
-      <div class="dnr-net-wrap" id="dnrNetWrap" data-tip="Bağlantı durumu kontrol ediliyor...">
+      <div class="dnr-net-wrap" id="dnrNetWrap">
         <div id="dnrNetDot" style="width:8px;height:8px;border-radius:50%;background:#f59e0b;transition:.3s"></div>
         <span class="dnr-net-label">Bağlantı</span>
       </div>
@@ -1897,6 +1903,8 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
       <button class="dnr-item dnr-settings-item" onclick="if(!ME)return;toggleSettings()" data-tip="Ayarlar"><span class="dnr-settings-icon">⚙️</span></button>
     </div>
   </nav>
+  <!-- 🐛 [3.6 FIX] Rail'in DIŞINDA, position:fixed — overflow:hidden'dan etkilenmez -->
+  <div id="dnrNetTooltip"></div>
 
   <!-- ═══ ANA İÇERİK KOLONU: Header (mobil) + Sidebar + Chat ═══ -->
   <div id="mainContent" style="flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden">
@@ -2360,6 +2368,6 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
   </div>
 </div>
 
-<script src="i18n.js" integrity="sha384-1vpWAOFY87U6PBIvWihjphlV8glQdr/BgZnlTR2Kl/EqgVB821bMTnKOzAIA1iqN" crossorigin="anonymous"></script>
+<script src="i18n.js" integrity="sha384-wNb9NNCmGVeSNImresfapV8894ogtlbosxRdV9gSknuN8PDIyX+kVUI6tPKEfDOR" crossorigin="anonymous"></script>
 <script src="app.js"></script>
 </body></html>
