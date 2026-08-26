@@ -1,0 +1,19 @@
+{
+  "name": "openchat",
+  "version": "3.5.0",
+  "description": "OpenChat - Privacy-focused P2P messaging platform",
+  "type": "module",
+  "scripts": {
+    "install:analytics": "npm install"
+  },
+  "dependencies": {
+    "@vercel/analytics": "^1.1.1"
+  },
+  "devDependencies": {},
+  "keywords": [
+    "chat",
+    "p2p",
+    "privacy"
+  ],
+  "license": "SEE LICENSE IN LICENSE"
+}
