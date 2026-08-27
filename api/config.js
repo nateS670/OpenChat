@@ -25,11 +25,23 @@ const ALLOWED_ORIGINS = [
     // 'https://ozel-domaininiz.com',      // ← varsa özel domain'inizi buraya ekleyin (yorum satırını kaldırın)
 ];
 
+// 🐛 [YENİ-SEC FIX] ÖNCEKİ HALİ `referer.startsWith(o)` kullanıyordu — bu,
+// `https://openchatt.vercel.app.saldirgan.com` gibi bir adresin de
+// (gerçek origin'in TAM OLARAK önek olarak içinde geçtiği herhangi bir
+// domain) kontrolü GEÇMESİNE izin veriyordu, çünkü string düz metin
+// olarak "başlıyor" test ediliyordu. Artık `URL` API'siyle referer'ın
+// GERÇEK origin'i (şema+host+port) ayrıştırılıp allowlist'le BİREBİR
+// karşılaştırılıyor — prefix/subdomain taklidi artık işe yaramaz.
 function isAllowedRequest(req) {
     const origin  = req.headers['origin'];
     const referer = req.headers['referer'] || req.headers['referrer'];
     if (origin && ALLOWED_ORIGINS.includes(origin)) return true;
-    if (referer && ALLOWED_ORIGINS.some(o => referer.startsWith(o))) return true;
+    if (referer) {
+        try {
+            const refererOrigin = new URL(referer).origin;
+            if (ALLOWED_ORIGINS.includes(refererOrigin)) return true;
+        } catch (e) { /* bozuk/eksik referer — reddedilmiş sayılır */ }
+    }
     return false;
 }
 
@@ -50,12 +62,12 @@ export default function handler(req, res) {
     // 🛡️ KRİTİK KONTROL: Eğer Vercel panelindeki anahtar değişkenler eksikse hata döndür.
     // Böylece kodun içine asla sabit (hardcoded) bir şifre veya yedek adres yazmak zorunda kalmayız.
     if (!process.env.MQTT_BROKER_URL || !process.env.TOPIC_ROTATE_SECRET) {
-        return res.status(500).json({ 
-            error: 'Sunucu Yapılandırma Hatası: Gerekli ortam değişkenleri Vercel üzerinde tanımlanmamış!' 
+        return res.status(500).json({
+            error: 'Sunucu Yapılandırma Hatası: Gerekli ortam değişkenleri Vercel üzerinde tanımlanmamış!'
         });
     }
 
-    // [MED-01] ve [HIGH-02] KESİN ÇÖZÜMÜ: 
+    // [MED-01] ve [HIGH-02] KESİN ÇÖZÜMÜ:
     // Bilgiler tamamen Vercel hafızasından okunur, GitHub reponuzda hiçbir iz kalmaz.
     res.status(200).json({
         mqttBroker: process.env.MQTT_BROKER_URL,
