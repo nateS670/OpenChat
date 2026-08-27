@@ -744,6 +744,43 @@ async function _verifyMessageSig(fromUserId, msg){
   }catch(e){ return false; }
 }
 
+// 🛡️ [YENİ-SEC — KRİTİK] Grup üyeliği kontrolü.
+// Önceden: bir üye kickle gruptan çıkarıldığında, kicklenen kişiye ve kalan
+// üyelere doğru bilgi gidiyordu (group_kick / group_update — ikisi de admin
+// yetkisi ve e2e kimlik kontrolünden geçiyor), AMA gelen group_msg/
+// group_read/msg_edit/msg_delete/msg_react hiçbir yerde "gönderen HÂLÂ bu
+// grubun üyesi mi?" diye sormuyordu. Kicklenen kişi kimliğini kaybetmediği
+// için (sadece grup ÜYELİĞİNİ kaybetti) imza doğrulaması geçmeye devam
+// ediyor, ve eğer kalan bir üyeyle DC bağlantısı hâlâ açıksa, o bağlantı
+// üzerinden gruba mesaj enjekte etmeye devam edebiliyordu. Artık her
+// grup-bazlı işlem, gönderenin YEREL üye listesinde hâlâ var olduğunu
+// doğruluyor.
+function _isGroupMember(groupId, userId){
+  const g = getDB().groups[groupId];
+  return !!(g && Array.isArray(g.members) && g.members.includes(userId));
+}
+
+// 🛡️ [YENİ — Replay Koruması #7] group_update/group_kick için tazelik
+// kontrolü. İki katman: (1) paket 10 dakikadan eskiyse doğrudan reddedilir
+// (eskiden yakalanmış herhangi bir paketin çok sonra tekrar oynatılmasını
+// engeller), (2) bu grup için daha önce UYGULANMIŞ bir paketten daha eski/
+// eşit zaman damgalıysa reddedilir (yakın zamanda yakalanıp, aradan daha
+// yeni bir meşru güncelleme geçtikten SONRA tekrar oynatılan bir paketi
+// yakalar — ör. biri kicklenip sonra yeniden eklendiyse eski "kick" paketi
+// tekrar gönderilirse artık işe yaramaz).
+const _lastGroupStateTs = {}; // groupId -> son UYGULANMIŞ group_update zaman damgası
+const _lastGroupKickTs  = {}; // groupId -> son UYGULANMIŞ group_kick zaman damgası
+const _REPLAY_MAX_AGE_MS = 10 * 60 * 1000; // 10 dakika
+function _isFreshGroupPacket(groupId, ts, lastSeenMap){
+  if(!ts || typeof ts!=='number') return false; // ts yoksa (eski/uyumsuz istemci) güvenli tarafta kal, reddet
+  const now = Date.now();
+  if(now - ts > _REPLAY_MAX_AGE_MS) return false; // çok eski
+  if(ts > now + 60000) return false; // gelecekte bir zaman damgası — saat manipülasyonu şüphesi
+  const lastSeen = lastSeenMap[groupId] || 0;
+  if(ts <= lastSeen) return false; // zaten daha yeni/aynı bir paket uygulanmış
+  return true;
+}
+
 // Bir peer'ın pasaportunu (a) sunucuda doğrula, (b) presence imzasını
 // pasaport içindeki genel anahtarla yerel olarak doğrula. İkisi de
 // geçmezse peer DOĞRULANMAMIŞ sayılır ve onunla WebRTC kurulmaz.
@@ -2027,6 +2064,18 @@ async function broadcast(p, qos=0){
     return;
   }
   p.msgId=p.msgId||uid();
+  // 🛡️ [YENİ — Replay Koruması #7] Yetki-taşıyan grup durum değişikliği
+  // paketlerine (group_update/group_kick) zaman damgası ekleniyor. Bu
+  // olmadan, bir saldırganın (ya da eski bir üyenin) daha önce yakaladığı
+  // ESKİ ama geçerli-imzalı bir group_update/group_kick paketini SONRADAN
+  // tekrar göndermesi — mesela biri kicklenip sonra yeniden eklendiyse,
+  // eski "kick" paketini tekrar oynatarak — grup durumunu geçmişe
+  // döndürebilirdi. Alıcı tarafta (bkz. group_update/group_kick
+  // handler'ları) hem "çok eski" (>10dk) hem "zaten daha yeni bir güncelleme
+  // uygulanmış" paketler reddediliyor.
+  if((p.type==='group_update'||p.type==='group_kick') && !p.ts){
+    p.ts = Date.now();
+  }
   // 🛡️ [YENİ] Sohbet mesajı içeriğini kimlik anahtarımızla imzala (bkz.
   // _signMessageContent tanımı). Grup mesajlarında aynı `msg` nesnesi birden
   // fazla broadcast() çağrısında (her üye için bir kez) paylaşıldığından,
@@ -2386,7 +2435,17 @@ async function handleSig(d){
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
     // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/null (bkz. _verifyMessageSig).
     // Sadece false (imza VAR ama geçersiz) durumunda UI'da uyarı gösterilir.
+    // ÖNEMLİ: imza, gönderenin ORİJİNAL (kırpılmamış) metni üzerinden
+    // hesaplanmıştır — bu yüzden doğrulama, aşağıdaki uzunluk kırpmasından
+    // ÖNCE yapılmak ZORUNDA; aksi halde uzun ama tamamen meşru mesajlar
+    // yanlışlıkla "imza geçersiz" uyarısı alırdı.
     d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg);
+    // 🛡️ [YENİ-SEC] Aşırı uzun mesaj metni, imza kontrolünden SONRA
+    // (saklama/gösterim için) kırpılıyor — bkz. MAX_INCOMING_TEXT_CHARS notu.
+    if(typeof d.msg.text==='string' && d.msg.text.length>MAX_INCOMING_TEXT_CHARS){
+      console.warn('[SEC] Aşırı uzun mesaj metni kırpıldı:', d.from, d.msg.text.length);
+      d.msg.text = d.msg.text.slice(0, MAX_INCOMING_TEXT_CHARS) + '…';
+    }
     // Gelen dosya/gif verisini oturum belleğine kaydet
     if(d.msg.fileData&&d.msg.fileData&&!d.msg.fileData.startsWith('__')){
       // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
@@ -2433,11 +2492,23 @@ async function handleSig(d){
   }
   if(d.type==='group_msg'){
     if(!db.groups[d.groupId]||d.from===ME.user_id)return;
+    // 🛡️ [YENİ-SEC — KRİTİK] Gönderen artık bu grubun üyesi değilse
+    // (kicklenmişse) mesaj tamamen reddediliyor — bkz. _isGroupMember notu.
+    if(!_isGroupMember(d.groupId, d.from)){
+      console.warn('[SEC] Grup üyesi olmayan biri group_msg gönderdi, reddedildi:', d.from, 'groupId=', d.groupId);
+      return;
+    }
     const k='g_'+d.groupId;
     if(!db.messages[k])db.messages[k]=[];
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
     // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/null (bkz. _verifyMessageSig).
+    // ÖNEMLİ: kırpma işleminden ÖNCE — bkz. private_msg tarafındaki not.
     d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg);
+    // 🛡️ [YENİ-SEC] Aşırı uzun mesaj metni, imza kontrolünden SONRA kırpılıyor.
+    if(typeof d.msg.text==='string' && d.msg.text.length>MAX_INCOMING_TEXT_CHARS){
+      console.warn('[SEC] Aşırı uzun mesaj metni kırpıldı (grup):', d.from, d.msg.text.length);
+      d.msg.text = d.msg.text.slice(0, MAX_INCOMING_TEXT_CHARS) + '…';
+    }
     // Gelen dosya/gif verisini oturum belleğine kaydet
     if(d.msg.fileData&&!d.msg.fileData.startsWith('__')){
       // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
@@ -5153,6 +5224,14 @@ const _sessionFiles = new Map(); // msgId → dataURL / URL
 // uygulanıyor. ~10MB dosya, base64'te ~13.7MB olur; güvenlik payı için üst
 // sınır 15MB karakter olarak belirlendi.
 const MAX_INCOMING_FILE_CHARS = 15_000_000;
+// 🛡️ [YENİ-SEC] Gelen mesaj METNİ için önceden HİÇBİR uzunluk sınırı
+// yoktu — kötü niyetli/ele geçirilmiş bir peer, devasa boyutta bir `text`
+// alanı göndererek alıcının tarayıcısını (DOM render + localStorage
+// yazma sırasında) donmaya/çökmeye zorlayabilirdi (DoS). Giden mesaj
+// input'unda da bir üst sınır olmadığı için, normal kullanımı hiç
+// etkilemeyecek kadar cömert ama DoS-ölçekli payload'ları engelleyecek
+// kadar düşük bir değer seçildi.
+const MAX_INCOMING_TEXT_CHARS = 20_000;
 
 // ══════════════════════════════════════════════════════════════════
 //  🎙️ SES İŞLEME — Temiz Yaklaşım
@@ -5812,6 +5891,11 @@ const _patchedGroupCallSignals=async(d)=>{
         console.warn('[SEC] e2e-doğrulanmamış group_update reddedildi (bootstrap anahtarıyla "from" güvenilemez):', d.from, 'groupId=', d.groupId);
         return;
       }
+      // 🛡️ [YENİ — Replay Koruması #7] Eski/tekrar oynatılmış bir güncelleme mi?
+      if(!_isFreshGroupPacket(d.groupId, d.ts, _lastGroupStateTs)){
+        console.warn('[SEC] Eski/replay group_update reddedildi:', d.from, 'groupId=', d.groupId, 'ts=', d.ts);
+        return;
+      }
       // 🛡️ [SAST-1 FIX] Yetki kontrolü: önceden hiç yoktu — herhangi bir
       // üye (veya groupId'yi bilen biri) sahte group_update göndererek
       // kendini admin yapabiliyor, başkalarını üyelikten/yöneticilikten
@@ -5827,6 +5911,9 @@ const _patchedGroupCallSignals=async(d)=>{
         return;
       }
       const oldName=g.name;
+      // 🛡️ [YENİ — Replay Koruması #7] Başarıyla uygulanan paketin zaman
+      // damgasını kaydet — bundan eski/eşit bir paket bir daha kabul edilmez.
+      _lastGroupStateTs[d.groupId] = d.ts;
       if(d.name)g.name=d.name;
       if(d.avatar)g.avatar=d.avatar;
       if(d.members)g.members=d.members;
@@ -5867,6 +5954,13 @@ const _patchedGroupCallSignals=async(d)=>{
         console.warn('[SEC] e2e-doğrulanmamış group_kick reddedildi:', d.from, 'groupId=', d.groupId);
         return;
       }
+      // 🛡️ [YENİ — Replay Koruması #7] Eski/tekrar oynatılmış bir kick paketi mi?
+      // Bu, "kicklenip sonra yeniden eklenen" birinin eski kick paketiyle
+      // tekrar dışlanmasını engeller.
+      if(!_isFreshGroupPacket(d.groupId, d.ts, _lastGroupKickTs)){
+        console.warn('[SEC] Eski/replay group_kick reddedildi:', d.from, 'groupId=', d.groupId, 'ts=', d.ts);
+        return;
+      }
       // 🛡️ [SAST-1 FIX] Yetki kontrolü: önceden hiç yoktu — herhangi bir
       // üye (hatta groupId'yi bilen, üye olmayan biri) sahte group_kick
       // göndererek grubu yerel DB'den sildirebiliyordu. Artık gönderen
@@ -5876,6 +5970,7 @@ const _patchedGroupCallSignals=async(d)=>{
         console.warn('[SEC] Yetkisiz group_kick reddedildi:', d.from, 'groupId=', d.groupId);
         return;
       }
+      _lastGroupKickTs[d.groupId] = d.ts;
       delete db.groups[d.groupId];
       delete db.messages['g_'+d.groupId];
       saveDB(db);
@@ -7609,6 +7704,7 @@ handleSig=async(d)=>{
     // gerçek sahibi olmasa bile msg_edit göndererek değiştirebiliyordu. Artık
     // yalnızca mesajın gerçek göndereni (msg.from) kendi mesajını düzenleyebilir.
     if(msg && !d._isE2E) console.warn('[SEC] e2e-doğrulanmamış msg_edit reddedildi:', d.from);
+    else if(msg && d.groupId && !_isGroupMember(d.groupId, d.from)) console.warn('[SEC] Grup üyesi olmayan msg_edit reddedildi:', d.from);
     else if(msg && msg.from===d.from){msg.text=d.newText;msg.edited=true;saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
     else if(msg) console.warn('[SEC] Yetkisiz msg_edit reddedildi:', d.from, '(mesaj sahibi:', msg.from, ')');
     return;
@@ -7621,6 +7717,7 @@ handleSig=async(d)=>{
     const msg=arr.find(m=>m.id===d.msgId);
     // 🛡️ [YENİ-SEC] Aynı e2e şartı msg_delete için de — bkz. msg_edit notu.
     if(msg && !d._isE2E) console.warn('[SEC] e2e-doğrulanmamış msg_delete reddedildi:', d.from);
+    else if(msg && d.groupId && !_isGroupMember(d.groupId, d.from)) console.warn('[SEC] Grup üyesi olmayan msg_delete reddedildi:', d.from);
     else if(msg && msg.from===d.from){msg.deleted=true;msg.text='';msg.file=null;msg.img=null;saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
     else if(msg) console.warn('[SEC] Yetkisiz msg_delete reddedildi:', d.from, '(mesaj sahibi:', msg.from, ')');
     return;
@@ -7633,13 +7730,19 @@ handleSig=async(d)=>{
     // slotuna yazılıyor (başkasının reaksiyonu ezilemiyor) ama `d.from`
     // güvenilir değilse biri BAŞKASI adına sahte reaksiyon bırakabilir —
     // bu yüzden burada da e2e kimliklendirme şartı aranıyor.
-    if(msg && d._isE2E){if(!msg.reactions)msg.reactions={};if(d.emoji)msg.reactions[d.from]=d.emoji;else delete msg.reactions[d.from];saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
-    else if(msg) console.warn('[SEC] e2e-doğrulanmamış msg_react reddedildi:', d.from);
+    const _reactGroupOk = !d.groupId || _isGroupMember(d.groupId, d.from);
+    if(msg && d._isE2E && _reactGroupOk){if(!msg.reactions)msg.reactions={};if(d.emoji)msg.reactions[d.from]=d.emoji;else delete msg.reactions[d.from];saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
+    else if(msg) console.warn('[SEC] e2e-doğrulanmamış veya grup üyesi olmayan msg_react reddedildi:', d.from);
     return;
   }
   if(d.type==='group_read'&&d.to===ME.user_id){
     const db=getDB();
     const k='g_'+d.groupId;
+    // 🛡️ [YENİ-SEC] Kicklenen biri okundu bilgisi sahtekarlığı yapamasın.
+    if(!_isGroupMember(d.groupId, d.from)){
+      console.warn('[SEC] Grup üyesi olmayan group_read reddedildi:', d.from);
+      return;
+    }
     if(db.messages[k]){
       let ch=false;
       db.messages[k].forEach(m=>{
