@@ -1,9 +1,11 @@
+const crypto = require('crypto');
+
 // 🛡️ [KRİTİK FIX — Denetim Raporu Bulgu #2] Origin/Referer doğrulaması
 // ═══════════════════════════════════════════════════════════════════
 // Bu uç nokta önceden HERHANGİ BİR yerden (giriş yapılmasa bile, hatta
 // uygulamayı hiç kullanmayan biri tarafından bile) çağrılabiliyor ve
-// MQTT broker kimlik bilgilerini + "gizli" oda sırrını (TOPIC_ROTATE_SECRET)
-// doğrudan döndürüyordu. Proje veritabanısız/serverless kalacağı için
+// MQTT broker kimlik bilgilerini + o günün MQTT topic adını (artık ham
+// TOPIC_ROTATE_SECRET değil — bkz. aşağıdaki ayrı not) döndürüyordu. Proje veritabanısız/serverless kalacağı için
 // (bilinçli tasarım kararı) gerçek bir oturum/kimlik doğrulaması burada
 // uygulanamıyor. Bunun yerine STATELESS (durumsuz) bir önlem olarak,
 // isteğin GERÇEKTEN kendi sitenizden geldiğini Origin/Referer başlığı
@@ -69,10 +71,31 @@ export default function handler(req, res) {
 
     // [MED-01] ve [HIGH-02] KESİN ÇÖZÜMÜ:
     // Bilgiler tamamen Vercel hafızasından okunur, GitHub reponuzda hiçbir iz kalmaz.
+    //
+    // 🛡️ [YENİ-SEC FIX] TOPIC_ROTATE_SECRET artık YANITA HİÇ KONMUYOR.
+    // ÖNCEDEN: ham `topicSecret` client'a gönderiliyordu, client kendi
+    // tarafında HMAC-SHA256(topicSecret, ROOM+bugününTarihi) hesaplayıp
+    // günlük obfuscated MQTT topic adını türetiyordu (bkz. app.js
+    // deriveObfuscatedTopic). Bu hesaplama TAMAMEN deterministik ve
+    // sunucu-tarafında da yapılabilir olduğu için (ROOM zaten client
+    // kaynağında herkese açık bir sabit, tarih de herkesçe bilinen bir
+    // bilgi) — asıl SIRRI (TOPIC_ROTATE_SECRET) hiç ağa göndermeye gerek
+    // yok, sadece SONUCU (o günün topic adı) göndermek yeterli.
+    // ŞİMDİ: aynı hesaplama burada, sunucuda yapılıyor; client artık
+    // `topicSecret`'i hiç görmüyor, sadece `todayTopic`'i alıp doğrudan
+    // kullanıyor. MQTT/WebRTC/P2P mimarisine hiçbir etkisi yok — client
+    // için nihai sonuç (hangi topic'e bağlanılacağı) birebir aynı.
+    const ROOM = 'shareview_ultra_global_v15_nates'; // app.js'teki ROOM sabitiyle AYNI olmalı
+    const dateSeed = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+    const topicHmac = crypto.createHmac('sha256', process.env.TOPIC_ROTATE_SECRET)
+        .update(ROOM + dateSeed)
+        .digest('hex');
+    const todayTopic = 'sv/' + topicHmac.slice(0, 32);
+
     res.status(200).json({
         mqttBroker: process.env.MQTT_BROKER_URL,
         mqttUsername: process.env.MQTT_USERNAME || "", // Kullanıcı adı zorunlu değilse boş kalabilir
         mqttPassword: process.env.MQTT_PASSWORD || "", // Şifre zorunlu değilse boş kalabilir
-        topicSecret: process.env.TOPIC_ROTATE_SECRET
+        todayTopic: todayTopic
     });
 }
