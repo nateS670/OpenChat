@@ -230,7 +230,7 @@ async function _idbGetKey(){
 
 let _lsEncKey = null; // CryptoKey — başarılı login sonrası set edilir
 
-async function _setLsEncKey(password, saltHex){
+async function _setLsEncKey(password, saltHex, iterations = PBKDF2_ITERATIONS_LEGACY_KEY){
   try{
     const km = await crypto.subtle.importKey(
       'raw', new TextEncoder().encode(password), {name:'PBKDF2'}, false, ['deriveKey']
@@ -239,7 +239,7 @@ async function _setLsEncKey(password, saltHex){
     // hiçbir şekilde (ne bu koddan ne de DevTools konsolundan) dışarı
     // çıkarılamaz; yalnızca encrypt/decrypt işlemleri için kullanılabilir.
     _lsEncKey = await crypto.subtle.deriveKey(
-      {name:'PBKDF2', salt:_hexToBytes(saltHex), iterations:100000, hash:'SHA-256'},
+      {name:'PBKDF2', salt:_hexToBytes(saltHex), iterations, hash:'SHA-256'},
       km, {name:'AES-GCM', length:256}, false, ['encrypt','decrypt']
     );
     // 🛡️ [AZ RİSK FIX] Ham bayt YOK — güvenli CryptoKey nesnesi doğrudan
@@ -418,14 +418,29 @@ function _genSalt(){
   return Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 
-// ── PBKDF2-SHA256 — 310.000 iterasyon ────────────────────────────
-async function _pbkdf2Hash(password, saltHex){
+// ── PBKDF2-SHA256 — bkz. PBKDF2_ITERATIONS_* sabitleri ────────────
+// 🛡️ [YENİ-SEC FIX] İterasyon sayısı artık PARAMETRE — sabit-kodlanmış
+// değil. Neden: mevcut hesapların şifre hash'i/şifreleme anahtarı ESKİ
+// (daha düşük) iterasyon sayısıyla hesaplanmış durumda; bunu sessizce
+// yükseltmek mevcut kullanıcıları giriş yapamaz hale getirir VE zaten
+// şifrelenmiş mesaj geçmişlerini çözülemez kılar. Bunun yerine her hesap
+// kaydında HANGİ iterasyon sayısının kullanıldığı saklanıyor (bkz.
+// pwSave/pwVerify) — mevcut hesaplar kendi eski değerleriyle doğrulanmaya
+// devam eder, YENİ kayıt/şifre değişiklikleri ise güncel (600.000,
+// OWASP 2026 minimum) değeri kullanır. Kayıtta iterasyon bilgisi yoksa
+// (bu düzeltmeden ÖNCE oluşturulmuş eski hesaplar) koddaki eski
+// sabit değerlere (310.000 / 100.000) düşülüyor — bu, o hesapların
+// ilk oluşturulduğu andaki GERÇEK değerdi, tahmin değil.
+const PBKDF2_ITERATIONS_CURRENT     = 600_000; // yeni kayıt/şifre değişikliği
+const PBKDF2_ITERATIONS_LEGACY_HASH = 310_000; // bu fixten önceki hesapların şifre hash'i
+const PBKDF2_ITERATIONS_LEGACY_KEY  = 100_000; // bu fixten önceki hesapların şifreleme anahtarı
+async function _pbkdf2Hash(password, saltHex, iterations = PBKDF2_ITERATIONS_CURRENT){
   const enc = new TextEncoder();
   const keyMat = await crypto.subtle.importKey(
     'raw', enc.encode(password), {name:'PBKDF2'}, false, ['deriveBits']
   );
   const bits = await crypto.subtle.deriveBits(
-    { name:'PBKDF2', salt:_hexToBytes(saltHex), iterations:310_000, hash:'SHA-256' },
+    { name:'PBKDF2', salt:_hexToBytes(saltHex), iterations, hash:'SHA-256' },
     keyMat, 256
   );
   return Array.from(new Uint8Array(bits)).map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -444,14 +459,20 @@ async function pwSave(user_id, password){
   const cleanPw = _sanitizePassword(password);
   if(!_validatePassword(cleanPw)) throw new Error('Geçersiz şifre');
   const salt = _genSalt();
-  const hash = await _pbkdf2Hash(cleanPw, salt);
+  // 🛡️ [YENİ-SEC FIX] Yeni kayıt/şifre değişikliğinde her zaman GÜNCEL
+  // (600.000) iterasyon sayısı kullanılıyor — bkz. yukarıdaki not.
+  const hash = await _pbkdf2Hash(cleanPw, salt, PBKDF2_ITERATIONS_CURRENT);
   const store = _getPwStore();
-  store[_sanitizeUsername(user_id).toLowerCase()] = { salt, hash };
+  store[_sanitizeUsername(user_id).toLowerCase()] = {
+    salt, hash,
+    pwIterations: PBKDF2_ITERATIONS_CURRENT,
+    keyIterations: PBKDF2_ITERATIONS_CURRENT
+  };
   _setPwStore(store);
   // 🛡️ [KRİTİK-V3-H1] Yeni kayıt/şifre belirleme sırasında da anahtarı türet
   // ve AWAIT et — eskiden bu hiç çağrılmıyordu, yeni kullanıcılarda şifreleme
   // hiç başlamıyordu.
-  await _setLsEncKey(cleanPw + salt, salt);
+  await _setLsEncKey(cleanPw + salt, salt, PBKDF2_ITERATIONS_CURRENT);
 }
 
 // ── Şifre doğrula ─────────────────────────────────────────────────
@@ -461,12 +482,40 @@ async function pwVerify(user_id, password){
   const entry = store[_sanitizeUsername(user_id).toLowerCase()];
   if(!entry) return null;
   if(!_validatePassword(cleanPw)) return false;
-  const hash = await _pbkdf2Hash(cleanPw, entry.salt);
+  // 🛡️ [YENİ-SEC FIX] Bu hesap için kayıtlı iterasyon sayısı kullanılıyor
+  // (yoksa — bu fixten önce oluşturulmuş bir hesapsa — eski gerçek
+  // değerlere düşülüyor). Böylece mevcut kullanıcıların hash'i/şifreleme
+  // anahtarı DEĞİŞMEDEN doğru şekilde doğrulanmaya/türetilmeye devam eder.
+  const pwIter  = entry.pwIterations  || PBKDF2_ITERATIONS_LEGACY_HASH;
+  const keyIter = entry.keyIterations || PBKDF2_ITERATIONS_LEGACY_KEY;
+  const hash = await _pbkdf2Hash(cleanPw, entry.salt, pwIter);
   const ok = _safeCompare(hash, entry.hash);
   // 🛡️ [KRİTİK-V3-H1] Başarılı girişte anahtarı AWAIT ederek türet —
   // eskiden fire-and-forget'ti (.catch ile, await edilmeden), bu yüzden
   // çağıran kod anahtar hazır olmadan UI'ı açabiliyordu.
-  if(ok) await _setLsEncKey(cleanPw + entry.salt, entry.salt);
+  if(ok){
+    await _setLsEncKey(cleanPw + entry.salt, entry.salt, keyIter);
+    // 🛡️ [YENİ-SEC FIX] Sessiz kademeli yükseltme: eski bir hesap başarıyla
+    // giriş yaptıysa (yani doğru şifreyi biliyorsa), gelecekteki girişler
+    // için iterasyon sayısını GÜNCEL değere yükselt — şifre hash'ini yeni
+    // parametrelerle yeniden hesaplayıp kaydet. Kullanıcı hiçbir şey fark
+    // etmez, ama hesabı zamanla otomatik olarak güncel korumaya kavuşur.
+    // NOT: keyIterations kasıtlı olarak YÜKSELTİLMİYOR — bunu yapmak
+    // mevcut şifreli mesaj geçmişini yeni anahtarla uyumsuz hale getirir
+    // (tam bir re-encrypt gerektirir, kapsam dışı bırakıldı).
+    if(!entry.pwIterations){
+      try{
+        const upgradedHash = await _pbkdf2Hash(cleanPw, entry.salt, PBKDF2_ITERATIONS_CURRENT);
+        const store2 = _getPwStore();
+        const k2 = _sanitizeUsername(user_id).toLowerCase();
+        if(store2[k2]){
+          store2[k2].hash = upgradedHash;
+          store2[k2].pwIterations = PBKDF2_ITERATIONS_CURRENT;
+          _setPwStore(store2);
+        }
+      }catch(e){ /* yükseltme başarısız olsa da girişi bozma — bir sonraki girişte tekrar denenir */ }
+    }
+  }
   return ok;
 }
 
@@ -770,6 +819,7 @@ function _isGroupMember(groupId, userId){
 // tekrar gönderilirse artık işe yaramaz).
 const _lastGroupStateTs = {}; // groupId -> son UYGULANMIŞ group_update zaman damgası
 const _lastGroupKickTs  = {}; // groupId -> son UYGULANMIŞ group_kick zaman damgası
+const _lastMsgEditTs    = {}; // msgId -> son UYGULANMIŞ düzenleme zaman damgası
 const _REPLAY_MAX_AGE_MS = 10 * 60 * 1000; // 10 dakika
 function _isFreshGroupPacket(groupId, ts, lastSeenMap){
   if(!ts || typeof ts!=='number') return false; // ts yoksa (eski/uyumsuz istemci) güvenli tarafta kal, reddet
@@ -1208,12 +1258,18 @@ async function aesDecrypt(pkt, fromUserId=null){
   }
 }
 
-// ── 3. SUNUCU YAPILANDIRMASI (MQTT broker + kimlik bilgileri + topic sırrı) ─
+// ── 3. SUNUCU YAPILANDIRMASI (MQTT broker + kimlik bilgileri + günlük topic) ─
 // 🛡️ [HIGH-02]/[MED-01] BROKER ve TOPIC_SECRET artık kaynak kodunda SABİT
 // DEĞİL. MQTT bağlantısı kurulmadan hemen önce (connectNetwork içinde)
-// GET /api/config çağrılır; Vercel Environment Variables'tan
-// (örn. TOPIC_ROTATE_SECRET) okunan aşağıdaki gövde döner:
-//   { mqttBroker, mqttUsername, mqttPassword, topicSecret }
+// GET /api/config çağrılır; Vercel Environment Variables'tan okunan
+// aşağıdaki gövde döner:
+//   { mqttBroker, mqttUsername, mqttPassword, todayTopic }
+// 🛡️ [YENİ-SEC FIX] ÖNCEDEN bu gövdede ham `topicSecret` dönüyordu ve
+// client bunu kullanarak KENDİSİ HMAC hesaplıyordu (bkz. eski
+// deriveObfuscatedTopic). Artık bu hesaplama SUNUCUDA yapılıyor —
+// server yalnızca o günün HAZIR topic adını (`todayTopic`) gönderiyor,
+// asıl sır (TOPIC_ROTATE_SECRET) hiçbir zaman ağa çıkmıyor. Sonuç
+// (client'ın bağlandığı topic) birebir aynı — mimariye etkisi yok.
 let _serverConfig = null;
 let _serverConfigPromise = null;
 async function loadServerConfig(){
@@ -1226,8 +1282,8 @@ async function loadServerConfig(){
     if(!cfg || typeof cfg.mqttBroker !== 'string' || !cfg.mqttBroker){
       throw new Error('[SEC] /api/config: mqttBroker alanı eksik/hatalı');
     }
-    if(typeof cfg.topicSecret !== 'string' || !cfg.topicSecret){
-      throw new Error('[SEC] /api/config: topicSecret alanı eksik/hatalı');
+    if(typeof cfg.todayTopic !== 'string' || !cfg.todayTopic){
+      throw new Error('[SEC] /api/config: todayTopic alanı eksik/hatalı');
     }
     _serverConfig = cfg;
     return cfg;
@@ -1250,21 +1306,19 @@ function sanitizeLinkUrl(url){
   return escHtml(url.trim()); // Attribute injection'ı önle
 }
 
-// Gerçek ROOM topic'i sabit değil; günlük dönen, SUNUCUDAN ALINAN
-// topicSecret ile HMAC-SHA256 türetilir. Aynı gün + aynı sır = aynı hash
-// → birlikte çalışır. 🛡️ [MED-01] Sunucuya erişilemezse artık GÜVENSİZ
-// sabit ROOM topic'ine SESSİZCE düşülmez — bağlantı kurulmaz (fail-closed),
-// böylece topic kaynak kodundan tahmin edilemez kalır.
+// Gerçek ROOM topic'i sabit değil; günlük dönen, SUNUCUDA hesaplanıp
+// HAZIR olarak gönderilen bir topic adı kullanılır (bkz. /api/config).
+// Aynı gün + aynı sunucu sırrı = aynı topic → tüm client'lar birlikte
+// çalışır. 🛡️ [MED-01] Sunucuya erişilemezse artık GÜVENSİZ sabit ROOM
+// topic'ine SESSİZCE düşülmez — bağlantı kurulmaz (fail-closed), böylece
+// topic kaynak kodundan tahmin edilemez kalır.
+// 🛡️ [YENİ-SEC FIX] ÖNCEDEN burada topicSecret + ROOM + bugününTarihi'nden
+// HMAC-SHA256 hesaplanıyordu (topicSecret client'a ham gönderiliyordu).
+// Artık bu hesaplama sunucuda yapılıyor (bkz. /api/config), buradaki
+// fonksiyon sadece sunucudan gelen HAZIR günlük topic adını döndürüyor.
 async function deriveObfuscatedTopic(){
   const cfg = await loadServerConfig();
-  const enc = new TextEncoder();
-  const dateSeed = new Date().toISOString().slice(0,10);
-  const keyMat = await crypto.subtle.importKey(
-    'raw', enc.encode(cfg.topicSecret), {name:'HMAC', hash:'SHA-256'}, false, ['sign']
-  );
-  const sig = await crypto.subtle.sign('HMAC', keyMat, enc.encode(ROOM + dateSeed));
-  const hex = [...new Uint8Array(sig)].map(b=>b.toString(16).padStart(2,'0')).join('');
-  return 'sv/' + hex.slice(0, 32);   // "sv/a3f8…" — 35 karakter topic
+  return cfg.todayTopic;
 }
 
 let _obfTopic = null; // başlangıçta null, connectNetwork'te doldurulur
@@ -1901,7 +1955,7 @@ async function connectNetwork(){
     return;
   }
 
-  // Obfuscated topic'i hesapla (async, topicSecret /api/config'ten gelir)
+  // Obfuscated topic'i al (async, hazır todayTopic /api/config'ten gelir)
   try{
     _obfTopic = await deriveObfuscatedTopic();
   }catch(e){
@@ -2074,6 +2128,13 @@ async function broadcast(p, qos=0){
   // handler'ları) hem "çok eski" (>10dk) hem "zaten daha yeni bir güncelleme
   // uygulanmış" paketler reddediliyor.
   if((p.type==='group_update'||p.type==='group_kick') && !p.ts){
+    p.ts = Date.now();
+  }
+  // 🛡️ [YENİ — Replay Koruması #7-devam] msg_edit için de aynı zaman
+  // damgası korunması — bkz. group_update notundaki gerekçe. msg_delete'e
+  // eklemiyoruz: o işlem idempotent (tekrar uygulamak zaten "silinmiş"
+  // durumunu değiştirmiyor), risk yok.
+  if(p.type==='msg_edit' && !p.ts){
     p.ts = Date.now();
   }
   // 🛡️ [YENİ] Sohbet mesajı içeriğini kimlik anahtarımızla imzala (bkz.
@@ -7705,7 +7766,15 @@ handleSig=async(d)=>{
     // yalnızca mesajın gerçek göndereni (msg.from) kendi mesajını düzenleyebilir.
     if(msg && !d._isE2E) console.warn('[SEC] e2e-doğrulanmamış msg_edit reddedildi:', d.from);
     else if(msg && d.groupId && !_isGroupMember(d.groupId, d.from)) console.warn('[SEC] Grup üyesi olmayan msg_edit reddedildi:', d.from);
-    else if(msg && msg.from===d.from){msg.text=d.newText;msg.edited=true;saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
+    // 🛡️ [YENİ — Replay Koruması #7-devam] Eski/tekrar oynatılmış bir
+    // düzenleme mi? (fonksiyon adı "grup" geçiyor ama parametre sadece bir
+    // map anahtarı — burada msgId ile de genel amaçlı çalışıyor.)
+    else if(msg && !_isFreshGroupPacket(d.msgId, d.ts, _lastMsgEditTs)) console.warn('[SEC] Eski/replay msg_edit reddedildi:', d.from, 'msgId=', d.msgId);
+    else if(msg && msg.from===d.from){
+      msg.text=d.newText;msg.edited=true;saveDB(db);
+      _lastMsgEditTs[d.msgId] = d.ts;
+      if(chatId===(d.groupId||d.from))renderChat();
+    }
     else if(msg) console.warn('[SEC] Yetkisiz msg_edit reddedildi:', d.from, '(mesaj sahibi:', msg.from, ')');
     return;
   }
