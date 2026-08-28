@@ -1,9 +1,40 @@
 const crypto = require('crypto');
 
+// 🛡️ [YENİ-SEC FIX] Tutarlılık: config.js/ice-servers.js'teki AYNI Origin/
+// Referer allowlist deseni buraya da eklendi. bootstrapKey diğer sırlar
+// kadar hassas değil (tüm client'lara ortak, kişiye özel olmayan bir
+// anahtar) ama bu uç nokta önceden HİÇBİR koruma olmadan tamamen açıktı —
+// tutarlılık ve savunma derinliği için aynı desen uygulandı. Aynı dürüst
+// sınırlama geçerli: tarayıcı dışı sahte başlıklar taklit edilebilir.
+const ALLOWED_ORIGINS = [
+    'https://openchatt.vercel.app',
+    // 'https://ozel-domaininiz.com',
+];
+
+function isAllowedRequest(req) {
+    const origin  = req.headers['origin'];
+    const referer = req.headers['referer'] || req.headers['referrer'];
+    if (origin && ALLOWED_ORIGINS.includes(origin)) return true;
+    if (referer) {
+        try {
+            const refererOrigin = new URL(referer).origin;
+            if (ALLOWED_ORIGINS.includes(refererOrigin)) return true;
+        } catch (e) { /* bozuk/eksik referer — reddedilmiş sayılır */ }
+    }
+    return false;
+}
+
 export default function handler(req, res) {
     if (req.method !== 'GET') {
         return res.status(405).json({ error: 'Yalnızca GET istekleri kabul edilir.' });
     }
+
+    // 🛡️ [YENİ-SEC FIX] Ortam değişkeni kontrolünden ÖNCE — yetkisiz
+    // isteklerde yapılandırma bilgisi (hata mesajı dahil) sızmasın.
+    if (!isAllowedRequest(req)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
     try {
         const secret = process.env.CHAT_SECRET_KEY;
         if (!secret) {
