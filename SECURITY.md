@@ -1,22 +1,23 @@
-#Security Policy
+# Security Policy
 
-Supported Versions
+## Supported Versions
 
-OpenChat is currently under active development. Security fixes are applied to the latest version on the "main" branch.
+OpenChat is currently under active development. Security fixes are applied to the latest version on the `main` branch.
 
-Version| Supported
-"main"| ✅
-Older versions| ❌
+| Version | Supported |
+|---|---|
+| `main` | ✅ |
+| Older versions | ❌ |
 
-Reporting a Vulnerability
+## Reporting a Vulnerability
 
-Please do not report security vulnerabilities through public GitHub Issues, Discussions, or other public channels.
+Please **do not report security vulnerabilities through public GitHub Issues, Discussions, or other public channels**.
 
-If you believe you have found a security vulnerability in OpenChat, please use GitHub's Private Vulnerability Reporting feature to submit your report privately.
+If you believe you have found a security vulnerability in OpenChat, please use GitHub's **Private Vulnerability Reporting** feature to submit your report privately.
 
 This allows the vulnerability to be investigated and discussed without publicly exposing details before a fix is available.
 
-What to include
+### What to Include
 
 Please provide as much of the following information as possible:
 
@@ -29,7 +30,7 @@ Please provide as much of the following information as possible:
 
 You do not need to provide a complete exploit. A clear description and reproducible steps are sufficient to begin an investigation.
 
-Response Process
+## Response Process
 
 After receiving a report, the maintainer will:
 
@@ -42,13 +43,13 @@ After receiving a report, the maintainer will:
 
 There is currently no guaranteed response or resolution time, but reports will be reviewed as soon as reasonably possible.
 
-Responsible Disclosure
+## Responsible Disclosure
 
 Please allow reasonable time for the issue to be investigated and fixed before publicly disclosing vulnerability details.
 
 Security vulnerabilities should not be intentionally exposed through public issues before a fix is available.
 
-Scope
+## Scope
 
 Security reports are especially welcome for issues affecting:
 
