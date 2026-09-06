@@ -13,6 +13,20 @@ const DB_KEY  = 'shareview_ultra_localdb_v6';
 // 🛡️ [KRİTİK-V3-H1] Mesaj içeriği ARTIK DB_KEY (plaintext) içinde DEĞİL.
 // Ayrı, her zaman şifreli bir depoda tutulur. Anahtar yoksa hiç yazılmaz.
 const MSG_KEY = 'shareview_ultra_msgs_v1';
+// 🛡️ [YENİ-SEC — KRİTİK — Hesap İzolasyonu Fix]
+// ÖNCEKİ HALİ: MSG_KEY tek, GLOBAL bir localStorage anahtarıydı — aynı
+// cihazda birden fazla "kayıtlı hesap" arasında geçiş yapıldığında
+// (uygulamanın kendi desteklediği bir özellik), İKİNCİ hesabın İLK
+// `saveDB()` çağrısı, BİRİNCİ hesabın TÜM şifreli mesaj geçmişinin
+// üzerine YAZIP KALICI OLARAK YOK EDİYORDU (şifreleme onu OKUMAYI
+// engelliyordu ama ÜZERİNE YAZILMASINI engellemiyordu).
+// ŞİMDİ: her hesap kendi `MSG_KEY_<user_id>` anahtarını kullanıyor —
+// bkz. _msgKeyFor. Eski, paylaşımlı global veri ise SADECE kriptografik
+// olarak kanıtlanabiliyorsa (o hesabın anahtarıyla GERÇEKTEN çözülebiliyorsa)
+// yeni hesaba-özel anahtara taşınıyor — bkz. _migrateGlobalMsgKeyIfOwned.
+function _msgKeyFor(userId){
+  return MSG_KEY + '_' + String(userId||'').toLowerCase();
+}
 let _decryptedMsgCache = {}; // bellekteki çözülmüş mesajlar — getDB()/saveDB() buradan okur/yazar
 // 🛡️ [FIX-4] Büyük dosya eklerinin ('fc_' önekli __cache__ girdileri) çözülmüş
 // hâli — render senkron olduğu için (crypto.subtle her zaman async) dosya
@@ -230,7 +244,7 @@ async function _idbGetKey(){
 
 let _lsEncKey = null; // CryptoKey — başarılı login sonrası set edilir
 
-async function _setLsEncKey(password, saltHex, iterations = PBKDF2_ITERATIONS_LEGACY_KEY){
+async function _setLsEncKey(password, saltHex, iterations = PBKDF2_ITERATIONS_LEGACY_KEY, userId = null){
   try{
     const km = await crypto.subtle.importKey(
       'raw', new TextEncoder().encode(password), {name:'PBKDF2'}, false, ['deriveKey']
@@ -249,7 +263,14 @@ async function _setLsEncKey(password, saltHex, iterations = PBKDF2_ITERATIONS_LE
       sessionStorage.setItem('_sk','1');
     }catch(e){}
     // 🛡️ [KRİTİK-V3-H1] Anahtar hazır olur olmaz şifreli mesajları belleğe çöz
-    await _loadEncryptedMessages();
+    // 🛡️ [YENİ-SEC — HESAP İZOLASYONU] `userId` global `ME` değişkeninden
+    // OKUNMUYOR — çağıran (pwSave/pwVerify) kendi `user_id` parametresini
+    // doğrudan buraya geçiriyor. Bunun nedeni: bu fonksiyon çağrıldığı anda
+    // (hesap değişimi/girişi sırasında) `ME` henüz YENİ hesaba güncellenmemiş
+    // olabilir (hâlâ önceki hesabı gösteriyor olabilir) — global `ME`'ye
+    // güvenmek, mesajların YANLIŞ (eski) hesabın anahtarı altına yazılmasına
+    // yol açardı.
+    await _loadEncryptedMessages(userId);
     // 🛡️ [SAST-3 FIX] Outbox'ı da artık hazır olan anahtarla yeniden oku/birleştir
     await _reloadOutboxAfterKeyReady();
     // 🛡️ [FIX-4] Dosya cache'ini de arka planda çöz
@@ -260,14 +281,16 @@ async function _setLsEncKey(password, saltHex, iterations = PBKDF2_ITERATIONS_LE
 // 🛡️ [AZ RİSK FIX] Sayfa yenilemesinde (aynı sekme) anahtarı IndexedDB'den
 // geri yükle — sessionStorage'daki işaret yalnızca "dene" sinyali verir,
 // gerçek anahtar hiçbir zaman Web Storage'a yazılmaz.
-async function _tryRestoreEncKeyFromSession(){
+// 🛡️ [YENİ-SEC — HESAP İZOLASYONU] `userId` parametresi eklendi — bkz.
+// _setLsEncKey'deki aynı gerekçe (global ME'ye güvenilmiyor).
+async function _tryRestoreEncKeyFromSession(userId){
   try{
     const marker = sessionStorage.getItem('_sk');
     if(!marker) return false;
     const key = await _idbGetKey();
     if(!key) return false;
     _lsEncKey = key;
-    await _loadEncryptedMessages();
+    await _loadEncryptedMessages(userId);
     // 🛡️ [SAST-3 FIX] Outbox'ı da artık hazır olan anahtarla yeniden oku/birleştir
     await _reloadOutboxAfterKeyReady();
     // 🛡️ [FIX-4] Dosya cache'ini de arka planda çöz
@@ -354,21 +377,76 @@ async function _lsGetDecrypted(key){
   }catch(e){ return raw; }
 }
 
+// 🛡️ [YENİ-SEC — KRİTİK — Hesap İzolasyonu Fix] `_lsGetDecrypted`'den
+// FARKLI olarak, çözme BAŞARISIZ olursa ham (hâlâ şifreli) string'i DEĞİL,
+// kesin bir `null` döndürür. Bu, "bu anahtarla bu veriyi GERÇEKTEN çözebildim
+// mi" sorusuna belirsizlik bırakmayan bir kriptografik sahiplik testi olarak
+// kullanılıyor (bkz. _migrateGlobalMsgKeyIfOwned) — AES-GCM'in authentication
+// tag'i sayesinde, decrypt SADECE doğru anahtarla başarılı olabilir.
+async function _lsTryDecryptStrict(key, cryptoKey){
+  const raw = localStorage.getItem(key);
+  if(!raw || !cryptoKey) return null;
+  try{
+    const p = JSON.parse(raw);
+    if(!p || p._enc !== 1) return null; // şifreli bir blob bile değil
+    const iv = _b642ab(p.iv);
+    const ct = _b642ab(p.ct);
+    const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv}, cryptoKey, ct);
+    return new TextDecoder().decode(pt);
+  }catch(e){ return null; } // ← KESİN başarısızlık sinyali, ham veri asla dönmez
+}
+
+// 🛡️ [YENİ-SEC — KRİTİK — Hesap İzolasyonu Fix]
+// Eski, PAYLAŞIMLI global MSG_KEY altında kalan veriyi, SADECE bu hesabın
+// anahtarıyla GERÇEKTEN çözülebiliyorsa (kriptografik kanıt) hesaba-özel
+// yeni anahtara taşır. Çözme başarısız olursa (veri BAŞKA bir hesaba aitse
+// ya da bozuksa) HİÇBİR ŞEYE DOKUNULMAZ — eski veri olduğu gibi bırakılır
+// ki gerçek sahibi hesap bir gün bu cihazda tekrar giriş yaparsa onu hâlâ
+// kurtarabilsin. Yanlış hesaba SESSİZCE taşıma YAPILMAZ.
+async function _migrateGlobalMsgKeyIfOwned(userId){
+  if(!_lsEncKey || !userId) return;
+  const newKey = _msgKeyFor(userId);
+  if(localStorage.getItem(newKey)) return; // zaten bu hesaba özel veri var, tekrar deneme
+  if(!localStorage.getItem(MSG_KEY)) return; // eski paylaşımlı veri hiç yok
+  const decrypted = await _lsTryDecryptStrict(MSG_KEY, _lsEncKey);
+  if(decrypted === null){
+    // Bu hesabın anahtarı bu veriyi açamadı — büyük ihtimalle BAŞKA bir
+    // hesaba ait. Dokunmuyoruz; o hesap giriş yaptığında kurtarabilsin.
+    console.log('[SEC] Eski paylaşımlı mesaj deposu bu hesaba ait değil — dokunulmadı, olduğu gibi bırakıldı.');
+    return;
+  }
+  // ✅ Kriptografik kanıt: bu hesabın anahtarı GERÇEKTEN çözdü → veri bu hesaba ait.
+  try{
+    await _lsSetEncrypted(newKey, decrypted);
+    localStorage.removeItem(MSG_KEY); // güvenle taşındı — paylaşımlı eski slot artık gereksiz
+    console.log('[SEC] Eski paylaşımlı mesaj deposu bu hesaba güvenle taşındı ✅');
+  }catch(e){
+    console.error('[SEC] Mesaj deposu taşıma hatası (eski veri korunuyor, yeniden denenecek):', e);
+    // Yazma başarısız olursa eski global veriye DOKUNMUYORUZ — bir sonraki
+    // girişte tekrar denenir.
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════
 // 🛡️ [KRİTİK-V3-H1] Mesaj geçmişi yükleme + tek seferlik migration
 // Önceki sürümlerde mesajlar DB_KEY içinde düz metin tutuluyordu.
 // Anahtar ilk kez hazır olduğunda, eski düz metin mesajları bulup
 // şifreli MSG_KEY deposuna taşır ve DB_KEY'den siler.
 // ══════════════════════════════════════════════════════════════════
-async function _loadEncryptedMessages(){
+async function _loadEncryptedMessages(userId){
   try{
-    if(_lsEncKey && !localStorage.getItem(MSG_KEY)){
+    const myKey = userId ? _msgKeyFor(userId) : null;
+    // 1) ÇOK ESKİ format: DB_KEY içinde düz metin mesajlar (hiç hesaba-özel
+    // şifreleme yokken kaydedilmiş) — doğrudan İÇİNDE BULUNULAN oturuma
+    // (ME.user_id) ait kabul edilir; o dönemde henüz hesap-bazlı ayrım
+    // kavramı yoktu, "yanlış hesaba ait olma" ihtimali söz konusu değil.
+    if(_lsEncKey && myKey && !localStorage.getItem(myKey)){
       try{
         const legacyRaw = localStorage.getItem(DB_KEY);
         if(legacyRaw){
           const legacy = JSON.parse(legacyRaw);
           if(legacy && legacy.messages && Object.keys(legacy.messages).length>0){
-            await _lsSetEncrypted(MSG_KEY, JSON.stringify(legacy.messages));
+            await _lsSetEncrypted(myKey, JSON.stringify(legacy.messages));
             delete legacy.messages;
             localStorage.setItem(DB_KEY, JSON.stringify(legacy));
             console.log('[SEC] Eski düz metin mesajlar şifrelenip taşındı ✅');
@@ -377,7 +455,12 @@ async function _loadEncryptedMessages(){
       }catch(e){ console.error('[SEC] Migration hatası:', e); }
     }
 
-    const raw = await _lsGetDecrypted(MSG_KEY);
+    // 2) 🛡️ [YENİ-SEC — KRİTİK] Eski PAYLAŞIMLI global MSG_KEY → hesaba özel
+    // anahtar. SADECE kriptografik olarak kanıtlanabiliyorsa taşınır —
+    // bkz. _migrateGlobalMsgKeyIfOwned tanımındaki ayrıntılı not.
+    if(_lsEncKey) await _migrateGlobalMsgKeyIfOwned(userId);
+
+    const raw = myKey ? await _lsGetDecrypted(myKey) : null;
     if(!raw){ _decryptedMsgCache = {}; }
     else{
       try{ _decryptedMsgCache = JSON.parse(raw) || {}; }
@@ -472,7 +555,7 @@ async function pwSave(user_id, password){
   // 🛡️ [KRİTİK-V3-H1] Yeni kayıt/şifre belirleme sırasında da anahtarı türet
   // ve AWAIT et — eskiden bu hiç çağrılmıyordu, yeni kullanıcılarda şifreleme
   // hiç başlamıyordu.
-  await _setLsEncKey(cleanPw + salt, salt, PBKDF2_ITERATIONS_CURRENT);
+  await _setLsEncKey(cleanPw + salt, salt, PBKDF2_ITERATIONS_CURRENT, user_id);
 }
 
 // ── Şifre doğrula ─────────────────────────────────────────────────
@@ -494,7 +577,7 @@ async function pwVerify(user_id, password){
   // eskiden fire-and-forget'ti (.catch ile, await edilmeden), bu yüzden
   // çağıran kod anahtar hazır olmadan UI'ı açabiliyordu.
   if(ok){
-    await _setLsEncKey(cleanPw + entry.salt, entry.salt, keyIter);
+    await _setLsEncKey(cleanPw + entry.salt, entry.salt, keyIter, user_id);
     // 🛡️ [YENİ-SEC FIX] Sessiz kademeli yükseltme: eski bir hesap başarıyla
     // giriş yaptıysa (yani doğru şifreyi biliyorsa), gelecekteki girişler
     // için iterasyon sayısını GÜNCEL değere yükselt — şifre hash'ini yeni
@@ -766,12 +849,38 @@ async function _signPresenceNonce(nonce){
 // ══════════════════════════════════════════════════════════════════
 function _msgSigCanon(msg){
   // Mesajın bütünlüğü açısından kritik alanları deterministik biçimde birleştir.
+  // ⚠️ [V1 — LEGACY] Bu canonical form artık SADECE eski (sigV alanı olmayan)
+  // mesajları doğrulamak için kullanılıyor. Bağlam (hangi özel sohbet/hangi
+  // grup) hiç imzaya girmiyor — bu yüzden V2'ye geçildi (bkz. _msgSigCanonV2).
   return [msg.id||'', msg.from||'', msg.text||'', msg.time||'', msg.fileType||'', msg.fileName||''].join('|');
 }
-async function _signMessageContent(msg){
+// 🛡️ [YENİ-SEC — KRİTİK — Bağlam Bağlama / V2 İmza]
+// ÖNCEKİ HALİ (V1): imza sadece [id,from,text,time,fileType,fileName]
+// kapsıyordu — HANGİ konuşmaya (özel sohbet mi, hangi grup mu) ait olduğu
+// hiç imzaya girmiyordu. Bu, "bağlam taşıma" saldırısına açıktı: A'nın B'ye
+// gönderdiği özel bir mesajın aynı (geçerli) imzalı `msg` objesi, A'nın
+// üye olduğu BAŞKA bir gruba veya BAŞKA bir özel sohbete enjekte
+// edilebiliyordu — imza doğrulaması, e2e kimlik kontrolü, grup üyeliği
+// kontrolü hepsi geçiyordu çünkü içerik gerçekten A'ya aitti, sadece
+// YANLIŞ bağlamda tekrar kullanılmıştı.
+//
+// ŞİMDİ (V2): `ctx` (bağlam) canonical formun EN BAŞINA ekleniyor:
+//   özel mesaj → 'p:' + alıcınınUserId'si
+//   grup mesajı → 'g:' + groupId
+// `ctx` hiçbir zaman ayrı, taşınan bir wire-format alanı olarak
+// GÖNDERİLMİYOR — hem imzalayan hem doğrulayan bunu KENDİ güvenilir yerel
+// bilgisinden (imzalayan: broadcast() içinde zaten bildiği p.to/p.groupId;
+// doğrulayan: kendi ME.user_id'si ya da işlediği d.groupId) bağımsızca
+// yeniden hesaplıyor. Saldırgan mesajı başka bir bağlama taşırsa, alıcı
+// tarafta yeniden hesaplanan `ctx` ile imzanın GERÇEKTEN neye karşı
+// üretildiği uyuşmaz → doğrulama kriptografik olarak başarısız olur.
+function _msgSigCanonV2(msg, ctx){
+  return [ctx||'', msg.id||'', msg.from||'', msg.text||'', msg.time||'', msg.fileType||'', msg.fileName||''].join('|');
+}
+async function _signMessageContent(msg, ctx){
   try{
     const kp = await _ensureIdKeyPair();
-    const enc = new TextEncoder().encode(_msgSigCanon(msg));
+    const enc = new TextEncoder().encode(_msgSigCanonV2(msg, ctx));
     const signAlg = _sigAlgName === 'ECDSA-P256' ? {name:'ECDSA', hash:'SHA-256'} : 'Ed25519';
     const sig = await crypto.subtle.sign(signAlg, kp.privateKey, enc);
     return _b64(sig);
@@ -780,16 +889,29 @@ async function _signMessageContent(msg){
     return null;
   }
 }
-// Dönüş: true (imza geçerli) | false (imza VAR ama geçersiz — tahrifat şüphesi)
-// | null (imza yok [eski mesaj] veya bu peer için henüz doğrulanmış anahtar yok — bilgi verilemez)
-async function _verifyMessageSig(fromUserId, msg){
+// Dönüş: true (V2 imza geçerli) | false (V2 imza VAR ama geçersiz — tahrifat/
+// bağlam-taşıma şüphesi, ÇAĞIRAN TARAF MESAJI REDDETMELİ) | 'legacy' (V1/
+// sigV alanı yok — eski istemciden, kabul edilir ama ASLA true ile eşdeğer
+// güvenilmez) | null (imza yok veya bu peer için henüz doğrulanmış anahtar yok)
+async function _verifyMessageSig(fromUserId, msg, ctx){
   if(!msg || !msg.sig) return null;
   const entry = _peerSigningKeys[fromUserId];
   if(!entry) return null;
+  const verifyAlg = entry.alg==='ECDSA-P256' ? {name:'ECDSA', hash:'SHA-256'} : 'Ed25519';
   try{
-    const verifyAlg = entry.alg==='ECDSA-P256' ? {name:'ECDSA', hash:'SHA-256'} : 'Ed25519';
+    if(msg.sigV === 2){
+      // 🛡️ V2 — bağlam-bağlı doğrulama. Alıcı `ctx`'i KENDİ bilgisinden
+      // hesaplayıp geçiriyor (asla mesajın kendi içinden okunmuyor).
+      const enc = new TextEncoder().encode(_msgSigCanonV2(msg, ctx));
+      return await crypto.subtle.verify(verifyAlg, entry.key, _u8(msg.sig), enc);
+    }
+    // ⚠️ [V1 — LEGACY] sigV alanı yok → eski format. Doğrulanabiliyorsa bile
+    // (imza geçerliyse) SONUÇ KASITLI OLARAK 'legacy' string'i — true DEĞİL.
+    // Bu, ileride biri "if(verified)" gibi gevşek bir kontrol yazarsa
+    // legacy mesajların yanlışlıkla tam-güvenilir sayılmasını engeller.
     const enc = new TextEncoder().encode(_msgSigCanon(msg));
-    return await crypto.subtle.verify(verifyAlg, entry.key, _u8(msg.sig), enc);
+    const legacyOk = await crypto.subtle.verify(verifyAlg, entry.key, _u8(msg.sig), enc);
+    return legacyOk ? 'legacy' : false;
   }catch(e){ return false; }
 }
 
@@ -809,25 +931,39 @@ function _isGroupMember(groupId, userId){
   return !!(g && Array.isArray(g.members) && g.members.includes(userId));
 }
 
-// 🛡️ [YENİ — Replay Koruması #7] group_update/group_kick için tazelik
-// kontrolü. İki katman: (1) paket 10 dakikadan eskiyse doğrudan reddedilir
-// (eskiden yakalanmış herhangi bir paketin çok sonra tekrar oynatılmasını
-// engeller), (2) bu grup için daha önce UYGULANMIŞ bir paketten daha eski/
-// eşit zaman damgalıysa reddedilir (yakın zamanda yakalanıp, aradan daha
-// yeni bir meşru güncelleme geçtikten SONRA tekrar oynatılan bir paketi
-// yakalar — ör. biri kicklenip sonra yeniden eklendiyse eski "kick" paketi
-// tekrar gönderilirse artık işe yaramaz).
-const _lastGroupStateTs = {}; // groupId -> son UYGULANMIŞ group_update zaman damgası
-const _lastGroupKickTs  = {}; // groupId -> son UYGULANMIŞ group_kick zaman damgası
-const _lastMsgEditTs    = {}; // msgId -> son UYGULANMIŞ düzenleme zaman damgası
-const _REPLAY_MAX_AGE_MS = 10 * 60 * 1000; // 10 dakika
-function _isFreshGroupPacket(groupId, ts, lastSeenMap){
+// 🛡️ [YENİ — Replay Koruması #7] group_update/group_kick/msg_edit için
+// tazelik kontrolü. İki katman: (1) paket 10 dakikadan eskiyse doğrudan
+// reddedilir (eskiden yakalanmış herhangi bir paketin çok sonra tekrar
+// oynatılmasını engeller), (2) bu anahtar için daha önce UYGULANMIŞ bir
+// paketten daha eski/eşit zaman damgalıysa reddedilir.
+// 🛡️ [YENİ-SEC — KRİTİK — Zehirleme Düzeltmesi] ÖNCEKİ HALİ, durumu
+// SADECE groupId bazında (tüm göndericiler arasında PAYLAŞILAN) takip
+// ediyordu. Bu, kötü niyetli/ele geçirilmiş bir admin'in gelecek-damgalı
+// (now+60000'e kadar) ANLAMSIZ bir paket göndererek `lastSeen`'i ileri
+// "kilitlemesine" ve bu pencerede gelen BAŞKA HERHANGİ BİR göndericinin
+// (dahil kendisini admin listesinden düşüren meşru bir güncelleme)
+// paketini reddettirmesine izin veriyordu — replay koruması, koruma
+// amacının TERSİNE, bir DoS/kendini-koruma silahına dönüşüyordu.
+// ŞİMDİ: çağıran taraflar anahtarı `groupId+'|'+gönderenId` şeklinde
+// oluşturuyor (bkz. çağrı noktaları) — böylece bir gönderici SADECE KENDİ
+// akışını zehirleyebilir, asla başka bir göndericinin akışını etkileyemez
+// (d.from kriptografik olarak doğrulanmış olduğu için, X asla Y'nin
+// anahtarı altında Y gibi imzalayamaz). Ayrıca gelecek toleransı
+// 60sn→10sn'ye daraltıldı (saldırı penceresini küçültür, gerçek saat
+// kaymalarını hâlâ tolere eder).
+const _lastGroupStateTs = {}; // "groupId|senderId" -> son UYGULANMIŞ group_update zaman damgası
+const _lastGroupKickTs  = {}; // "groupId|senderId" -> son UYGULANMIŞ group_kick zaman damgası
+const _lastMsgEditTs    = {}; // "msgId|senderId"   -> son UYGULANMIŞ düzenleme zaman damgası
+const _lastGroupInviteTs = {}; // "groupId|senderId" -> son UYGULANMIŞ davet zaman damgası
+const _REPLAY_MAX_AGE_MS = 10 * 60 * 1000; // 10 dakika — DEĞİŞMEDİ, eski paket koruması
+const _FUTURE_TOLERANCE_MS = 10 * 1000;    // 60sn → 10sn — zehirleme saldırı penceresi daraltıldı
+function _isFreshGroupPacket(key, ts, lastSeenMap){
   if(!ts || typeof ts!=='number') return false; // ts yoksa (eski/uyumsuz istemci) güvenli tarafta kal, reddet
   const now = Date.now();
-  if(now - ts > _REPLAY_MAX_AGE_MS) return false; // çok eski
-  if(ts > now + 60000) return false; // gelecekte bir zaman damgası — saat manipülasyonu şüphesi
-  const lastSeen = lastSeenMap[groupId] || 0;
-  if(ts <= lastSeen) return false; // zaten daha yeni/aynı bir paket uygulanmış
+  if(now - ts > _REPLAY_MAX_AGE_MS) return false; // çok eski — DEĞİŞMEDİ
+  if(ts > now + _FUTURE_TOLERANCE_MS) return false; // gelecekte bir zaman damgası — saat manipülasyonu şüphesi
+  const lastSeen = lastSeenMap[key] || 0;
+  if(ts <= lastSeen) return false; // bu GÖNDERİCİDEN zaten daha yeni/aynı bir paket uygulanmış
   return true;
 }
 
@@ -1117,14 +1253,53 @@ window._acceptNewPeerKey = async (userId) => {
 // görünmesin diye. MITM tespiti için anlamı aynı kalıyor, sadece varsayılan
 // görünüm sadeleşti.
 let _fpExpanded = false;
+// 🛡️ [YENİ — Safety Number: Doğrulandı durumu] Mevcut TOFU pinleme sistemi
+// zaten OTOMATİK olarak ilk görülen anahtarı güvenip parmak izini
+// gösteriyordu — ama kullanıcının "bu kodu karşı tarafla KARŞILAŞTIRDIM,
+// eşleşiyor" dediği AYRI, açık bir durum yoktu. Bu, "Verified/Unverified
+// durumunun anlaşılır olması" için eklendi. Doğrulama, parmak izinin
+// KENDİSİNE bağlı saklanıyor (userId → o anki fingerprint) — bu yüzden
+// anahtar değişirse (bkz. _showKeyChangeWarning) eski "doğrulandı" işareti
+// YENİ parmak iziyle otomatik olarak eşleşmez hale gelir, ayrıca bir
+// "geçersiz kıl" adımına gerek kalmaz.
+function _getVerifiedFpMap(){
+  try{ return JSON.parse(localStorage.getItem('sv_verified_fps')||'{}'); }catch(e){ return {}; }
+}
+function _setVerifiedFpMap(m){
+  try{ localStorage.setItem('sv_verified_fps', JSON.stringify(m)); }catch(e){}
+}
+function _isPeerVerified(userId, fp){
+  if(!userId || !fp) return false;
+  return _getVerifiedFpMap()[userId] === fp;
+}
+function _toggleVerified(userId, fp){
+  if(!userId || !fp) return;
+  const m = _getVerifiedFpMap();
+  if(m[userId]===fp) delete m[userId]; else m[userId]=fp;
+  _setVerifiedFpMap(m);
+  _renderChatFpEl(userId);
+}
 function _renderChatFpEl(userId){
   const fpEl = $('chatKeyFp');
   if(!fpEl) return;
   const fp = userId ? _peerKeyFingerprints[userId] : null;
   if(!fp){ fpEl.style.display='none'; return; }
   fpEl.style.display = 'block';
-  fpEl.textContent = _fpExpanded ? ('🔑 ' + fp) : '🔒 Güvenlik kodu (göster)';
   fpEl.dataset.fpUser = userId;
+  const verified = _isPeerVerified(userId, fp);
+  if(!_fpExpanded){
+    // Daraltılmış: kısa rozet, doğrulanmışsa yeşil ✓ ile
+    fpEl.innerHTML = verified
+      ? '<span style="color:var(--ok)">✅ Güvenlik kodu doğrulandı</span>'
+      : '🔒 Güvenlik kodu (göster)';
+  } else {
+    // Genişletilmiş: tam kod + doğrula/doğrulamayı kaldır butonu.
+    // 🛡️ CSP-güvenli: inline onclick yok, aşağıda addEventListener ile bağlanıyor.
+    fpEl.innerHTML = `<span class="fp-code">🔑 ${escHtml(fp)}</span>` +
+      `<button type="button" class="fp-verify-btn" style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:8px;cursor:pointer;border:1px solid ${verified?'var(--ok)':'var(--border)'};background:${verified?'var(--ok)':'transparent'};color:${verified?'#fff':'var(--muted)'}">${verified?'✓ Doğrulandı':'Karşılaştırdım, doğrula'}</button>`;
+    const btn = fpEl.querySelector('.fp-verify-btn');
+    if(btn) btn.addEventListener('click', (e)=>{ e.stopPropagation(); _toggleVerified(userId, fp); });
+  }
 }
 function _updateChatFpDisplay(userId){
   _renderChatFpEl(userId);
@@ -2130,6 +2305,12 @@ async function broadcast(p, qos=0){
   if((p.type==='group_update'||p.type==='group_kick') && !p.ts){
     p.ts = Date.now();
   }
+  // 🛡️ [YENİ — group_invite Güvenlik Zinciri, adım 1/2] Diğer grup-durumu
+  // paketleriyle aynı zaman damgası koruması — bkz. alım tarafındaki
+  // ayrıntılı not (_isFreshGroupPacket çağrısı).
+  if(p.type==='group_invite' && !p.ts){
+    p.ts = Date.now();
+  }
   // 🛡️ [YENİ — Replay Koruması #7-devam] msg_edit için de aynı zaman
   // damgası korunması — bkz. group_update notundaki gerekçe. msg_delete'e
   // eklemiyoruz: o işlem idempotent (tekrar uygulamak zaten "silinmiş"
@@ -2141,9 +2322,15 @@ async function broadcast(p, qos=0){
   // _signMessageContent tanımı). Grup mesajlarında aynı `msg` nesnesi birden
   // fazla broadcast() çağrısında (her üye için bir kez) paylaşıldığından,
   // zaten imzalanmışsa (p.msg.sig varsa) tekrar imzalanmaz.
+  // 🛡️ [YENİ-SEC — V2 BAĞLAM BAĞLAMA] `ctx`, grup mesajlarında `p.groupId`'den
+  // hesaplanıyor — `p.to` DEĞİL, çünkü `p.to` her üye için ayrı ayrı
+  // değişiyor (aynı imzalanmış `msg` nesnesi TÜM üyelere aynen gönderiliyor,
+  // ctx sabit kalmalı). Özel mesajlarda tek alıcı olduğu için `p.to`
+  // doğrudan kullanılıyor.
   if((p.type==='private_msg'||p.type==='group_msg') && p.msg && !p.msg.sig && ME){
-    const _sig = await _signMessageContent(p.msg);
-    if(_sig) p.msg.sig = _sig;
+    const _ctx = p.type==='group_msg' ? ('g:'+p.groupId) : ('p:'+p.to);
+    const _sig = await _signMessageContent(p.msg, _ctx);
+    if(_sig){ p.msg.sig = _sig; p.msg.sigV = 2; }
   }
   if(_RELIABLE_TYPES.includes(p.type)) qos=Math.max(qos,1);
   const targetUser = p.to;
@@ -2237,7 +2424,7 @@ async function _reloadOutboxAfterKeyReady(){
 const _OUTBOX_KEY = 'shareview_outbox_v1';
 let _outbox=[]; // Senkron erişim için boş başlar — gerçek içerik aşağıda asenkron yüklenir
 _loadOutbox().then(arr=>{ _outbox.push(...arr); }).catch(()=>{});
-const _RELIABLE_TYPES=['private_msg','group_msg','group_invite','friend_req','friend_accept','friend_remove','msg_read','group_read','msg_edit','msg_delete','reaction','msg_vanish'];
+const _RELIABLE_TYPES=['private_msg','group_msg','group_invite','friend_req','friend_accept','friend_remove','msg_read','group_read','msg_delivered','msg_edit','msg_delete','reaction','msg_vanish'];
 async function _flushOutbox(){
   if(!_outbox.length) return;
   // 🛡️ [HIGH-02] Outbox sadece DC üzerinden gönderilir — MQTT'ye mesaj içeriği gönderilmez
@@ -2494,13 +2681,28 @@ async function handleSig(d){
     const k=[ME.user_id,d.from].sort().join('_');
     if(!db.messages[k])db.messages[k]=[];
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
-    // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/null (bkz. _verifyMessageSig).
-    // Sadece false (imza VAR ama geçersiz) durumunda UI'da uyarı gösterilir.
+    // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/'legacy'/null (bkz. _verifyMessageSig).
     // ÖNEMLİ: imza, gönderenin ORİJİNAL (kırpılmamış) metni üzerinden
     // hesaplanmıştır — bu yüzden doğrulama, aşağıdaki uzunluk kırpmasından
     // ÖNCE yapılmak ZORUNDA; aksi halde uzun ama tamamen meşru mesajlar
     // yanlışlıkla "imza geçersiz" uyarısı alırdı.
-    d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg);
+    // 🛡️ [YENİ-SEC — V2 BAĞLAM BAĞLAMA] `ctx`, KENDİ kimliğimizden ('p:'+ME.user_id)
+    // hesaplanıyor — mesajın içinden OKUNMUYOR. Bu mesaj aslında başka bir
+    // özel sohbete veya bir gruba ait, buraya (bana) taşınmışsa, imzanın
+    // üretildiği GERÇEK ctx ile burada hesapladığım ctx uyuşmaz → V2
+    // doğrulama başarısız olur → aşağıda REDDEDİLİR.
+    const _ctx = 'p:'+ME.user_id;
+    d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg, _ctx);
+    // 🛡️ [YENİ-SEC — KRİTİK] V2 imzası VARSA ve GEÇERSİZSE (false) — bu artık
+    // sadece kozmetik bir uyarı değil, mesaj TAMAMEN REDDEDİLİYOR (hiç
+    // saklanmıyor/gösterilmiyor). 'legacy' (V1, eski istemci) ve null
+    // (imzasız/anahtar yok) durumları hâlâ kabul ediliyor — geriye dönük
+    // uyumluluk. 'legacy' ASLA true ile eşdeğer güvenilmiyor, sadece kabul
+    // ediliyor.
+    if(d.msg._sigVerified === false){
+      console.warn('[SEC] V2 imza doğrulaması BAŞARISIZ — mesaj reddedildi (olası bağlam-taşıma denemesi):', d.from, d.msg.id);
+      return;
+    }
     // 🛡️ [YENİ-SEC] Aşırı uzun mesaj metni, imza kontrolünden SONRA
     // (saklama/gösterim için) kırpılıyor — bkz. MAX_INCOMING_TEXT_CHARS notu.
     if(typeof d.msg.text==='string' && d.msg.text.length>MAX_INCOMING_TEXT_CHARS){
@@ -2519,6 +2721,15 @@ async function handleSig(d){
       }
     }
     db.messages[k].push(d.msg);saveDB(db);
+    // 🛡️ [YENİ — Delivered State] Mesaj GERÇEKTEN doğrulanıp (imza+üyelik
+    // kontrollerinden geçip) yerel depoya yazıldıktan SONRA — yani
+    // "receive → validate/decrypt → process" adımları tamamlandıktan
+    // sonra — gönderene teslim alındı bilgisini (ACK) gönderiyoruz.
+    // DataChannel'ın kendi send() başarısı YETERLİ SAYILMIYOR — bu, sadece
+    // paketin BİZİM tarayıcımızdan çıktığını garanti eder, karşı tarafa
+    // ULAŞTIĞINI değil. Gerçek "Delivered" durumu SADECE bu application-level
+    // ACK karşı tarafa ulaşırsa oluşur.
+    broadcast({type:'msg_delivered', to:d.from, from:ME.user_id, msgId:d.msg.id});
     if(chatId===d.from&&chatType==='private'){renderChat();markAsRead(d.from);}
     else if(!isSilentMode()){
       const _msgBody=d.msg.fileType?`📎 ${d.msg.fileName||'Dosya'}`:d.msg.text;
@@ -2534,11 +2745,58 @@ async function handleSig(d){
   }
   if(d.type==='group_invite'){
     const g=d.group;
-    // 🛡️ [SAST-5 FIX] Önceden d.group bütünüyle güvenilip DB'ye yazılıyordu —
-    // tip/uzunluk/içerik kontrolü yoktu. Tam bir sunucu-taraflı yetki kontrolü
-    // bu istemci-güvenir-istemci mimarisinde mümkün değil (bkz. not), ama en
-    // azından temel şekil doğrulaması ve groupId çakışma/ele geçirme koruması
-    // eklenir.
+    // 🛡️ [YENİ-SEC — KRİTİK — group_invite Tam Güvenlik Zinciri]
+    // ÖNCEKİ HALİ: sadece `g` objesinin şeklini (tip/uzunluk) kontrol
+    // ediyordu — gönderenin kimliği (e2e), arkadaşlık durumu ve paket
+    // tazeliği HİÇ doğrulanmıyordu. Bu, arkadaş olmayan HERHANGİ bir
+    // OpenChat kullanıcısının (hatta bootstrap-anahtarıyla kimliği
+    // taklit edilmiş birinin) hedefe sahte bir grup enjekte edebilmesine
+    // izin veriyordu (bkz. red-team raporu, Bulgu 2).
+    //
+    // ŞİMDİ, sırasıyla:
+    // 1) e2e kimlik bağlama (_isE2E) — paket, bootstrap (paylaşılan)
+    //    anahtarla değil, gönderenin GERÇEK kimliğine kriptografik olarak
+    //    bağlı bir anahtarla şifrelenmiş olmalı.
+    // 2) Arkadaşlık kontrolü — private_msg'de zaten var olan aynı kural:
+    //    tanımadığınız biri sizi gruba ekleyemez.
+    // 3) Tazelik/replay koruması — group_update/kick ile aynı desen
+    //    (groupId+gönderenId bazlı, 10dk pencere).
+    // 4) `g.admins.includes(d.from)` tutarlılık kontrolü — gönderen,
+    //    KENDİSİNİ admin listesinde göstermiyorsa (ne yeni grup kurarken
+    //    ne mevcut gruba üye eklerken meşru akışta böyle bir durum asla
+    //    oluşmaz) paket şüpheli sayılır.
+    //
+    // ⚠️ DÜRÜST SINIR: `g.admins`'in TAMAMEN doğru olduğunu (gönderenin
+    // dışında listelenen diğer "adminlerin" gerçekten admin olduğunu)
+    // kriptografik olarak KANITLAYAMAYIZ — bu, sunucusuz/P2P mimaride
+    // identity TOFU ile aynı sınıf bir "ilk temas güveni" sorunu. Meşru
+    // akışta (bkz. addMemberToGroup) mevcut bir grubun TÜM admin listesi
+    // yeni davet edilen kişiye gönderiliyor, bu yüzden admin listesini
+    // sadece göndericiyle sınırlamak GERÇEK işlevselliği kırardı. Elimizden
+    // gelen: gönderenin en azından KENDİSİNİ o listede göstermesini
+    // zorunlu kılmak (aşağıya bkz.).
+    if(!g || typeof g!=='object'){ return; }
+    if(!d._isE2E){
+      console.warn('[SEC] e2e-doğrulanmamış group_invite reddedildi:', d.from);
+      return;
+    }
+    const mk = ME.user_id.toLowerCase();
+    const myFriends = (db.users[mk]?.friends)||[];
+    if(!myFriends.includes(d.from)){
+      console.warn('[SEC] Arkadaş olmayan biri group_invite gönderdi, reddedildi:', d.from);
+      return;
+    }
+    if(typeof g.id!=='string' || !g.id || g.id.length>=128 || !g.id.startsWith('GRP_')){
+      console.warn('[SEC] Geçersiz groupId formatlı group_invite reddedildi:', d.from);
+      return;
+    }
+    // 🛡️ [YENİ] Tazelik/replay koruması — bkz. yukarıdaki not.
+    if(!_isFreshGroupPacket(g.id+'|'+d.from, d.ts, _lastGroupInviteTs)){
+      console.warn('[SEC] Eski/replay group_invite reddedildi:', d.from, 'groupId=', g.id);
+      return;
+    }
+    // 🛡️ [SAST-5 FIX — korunuyor] Şekil doğrulaması ve groupId çakışma/ele
+    // geçirme koruması (mevcut bir gruba enjeksiyon YAPILAMAZ).
     if(g && typeof g==='object' && typeof g.id==='string' && g.id.length<128 && g.id.startsWith('GRP_')
        && typeof g.name==='string' && g.name.length>0 && g.name.length<=64
        && Array.isArray(g.members) && g.members.length>0 && g.members.length<=500
@@ -2547,6 +2805,13 @@ async function handleSig(d){
         // Eski format uyumluluğu: admin string ise diziye çevir
         g.admins=g.admin?[g.admin]:[d.from];
       }
+      // 🛡️ [YENİ] Gönderen kendi admin listesinde yer almıyorsa (meşru
+      // akışta bu HİÇ olmaz — bkz. yukarıdaki not) paket reddedilir.
+      if(!Array.isArray(g.admins) || !g.admins.includes(d.from)){
+        console.warn('[SEC] Gönderen kendi admin listesinde yer almıyor, group_invite reddedildi:', d.from, 'admins=', g.admins);
+        return;
+      }
+      _lastGroupInviteTs[g.id+'|'+d.from] = d.ts;
       db.groups[g.id]=g;saveDB(db);updateUI();showToast('Yeni Grup',`${d.from} sizi '${g.name}' grubuna ekledi.`);
     }
     return;
@@ -2562,9 +2827,21 @@ async function handleSig(d){
     const k='g_'+d.groupId;
     if(!db.messages[k])db.messages[k]=[];
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
-    // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/null (bkz. _verifyMessageSig).
+    // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/'legacy'/null (bkz. _verifyMessageSig).
     // ÖNEMLİ: kırpma işleminden ÖNCE — bkz. private_msg tarafındaki not.
-    d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg);
+    // 🛡️ [YENİ-SEC — V2 BAĞLAM BAĞLAMA] `ctx`, işlediğimiz d.groupId'den
+    // hesaplanıyor — mesajın içinden OKUNMUYOR. Bu mesaj aslında A'nın B'ye
+    // gönderdiği ÖZEL bir mesajsa veya BAŞKA bir gruba aitse, imzanın
+    // üretildiği GERÇEK ctx ile burada hesapladığım ctx uyuşmaz → V2
+    // doğrulama başarısız olur → aşağıda REDDEDİLİR.
+    const _ctx = 'g:'+d.groupId;
+    d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg, _ctx);
+    // 🛡️ [YENİ-SEC — KRİTİK] V2 imzası VARSA ve GEÇERSİZSE (false) — mesaj
+    // TAMAMEN REDDEDİLİYOR (bkz. private_msg tarafındaki aynı not).
+    if(d.msg._sigVerified === false){
+      console.warn('[SEC] V2 imza doğrulaması BAŞARISIZ (grup) — mesaj reddedildi (olası bağlam-taşıma denemesi):', d.from, d.msg.id, 'groupId=', d.groupId);
+      return;
+    }
     // 🛡️ [YENİ-SEC] Aşırı uzun mesaj metni, imza kontrolünden SONRA kırpılıyor.
     if(typeof d.msg.text==='string' && d.msg.text.length>MAX_INCOMING_TEXT_CHARS){
       console.warn('[SEC] Aşırı uzun mesaj metni kırpıldı (grup):', d.from, d.msg.text.length);
@@ -2582,6 +2859,8 @@ async function handleSig(d){
       }
     }
     db.messages[k].push(d.msg);saveDB(db);
+    // 🛡️ [YENİ — Delivered State] bkz. private_msg tarafındaki aynı not.
+    broadcast({type:'msg_delivered', to:d.from, from:ME.user_id, msgId:d.msg.id, groupId:d.groupId});
     if(chatId===d.groupId&&chatType==='group'){
       renderChat();
       broadcastGroupRead(d.groupId, d.msg.id, d.from);
@@ -3914,16 +4193,29 @@ function renderChat(){
       ).join('')}</div>`;
     }
 
-    // Okundu bilgisi — sadece kendi mesajlarında göster
+    // Okundu/teslim bilgisi — sadece kendi mesajlarında göster
+    // 🛡️ [YENİ — Delivered State] Üç durumlu tik: ✓ (gönderildi — DC send()
+    // başarılı ama karşı tarafın ALDIĞI KANITLANMADI), ✓✓ gri (delivered —
+    // karşı taraf application-level ACK ile aldığını doğruladı), ✓✓ renkli
+    // (read — karşı taraf gerçekten görüntüledi). "Sent" durumu, mesajın
+    // sadece kendi tarayıcımızdan çıktığını gösterir — karşı tarafa
+    // ulaştığını ASLA garanti etmez; bu yüzden yanlış bir güven hissi
+    // vermemek için "delivered" onayı gelene kadar tek ✓'de kalır.
     let ticksHTML='';
     if(me){
       if(chatType==='private'){
         const isRead=!!(m.readBy&&m.readBy.includes(chatId));
-        ticksHTML=`<span class="ticks ${isRead?'read':''}">${isRead?'✓✓':'✓'}</span>`;
+        const isDelivered=isRead || !!(m.deliveredTo&&m.deliveredTo.includes(chatId));
+        const cls = isRead?'read':(isDelivered?'delivered':'');
+        const mark = isDelivered ? '✓✓' : '✓';
+        const title = isRead ? 'Okundu' : (isDelivered ? 'İletildi' : 'Gönderildi');
+        ticksHTML=`<span class="ticks ${cls}" title="${title}">${mark}</span>`;
       } else if(chatType==='group'){
         const readers=(m.readBy||[]).filter(u=>u!==ME.user_id);
+        const delivered=(m.deliveredTo||[]).filter(u=>u!==ME.user_id);
         if(readers.length>0) ticksHTML=`<span class="ticks read" title="${readers.join(', ')} okudu">✓✓ ${readers.length}</span>`;
-        else ticksHTML=`<span class="ticks">✓</span>`;
+        else if(delivered.length>0) ticksHTML=`<span class="ticks delivered" title="${delivered.length} kişiye iletildi">✓✓ ${delivered.length}</span>`;
+        else ticksHTML=`<span class="ticks" title="Gönderildi">✓</span>`;
       }
     }
 
@@ -5953,7 +6245,11 @@ const _patchedGroupCallSignals=async(d)=>{
         return;
       }
       // 🛡️ [YENİ — Replay Koruması #7] Eski/tekrar oynatılmış bir güncelleme mi?
-      if(!_isFreshGroupPacket(d.groupId, d.ts, _lastGroupStateTs)){
+      // 🛡️ [ZEHİRLEME DÜZELTMESİ] Anahtar artık groupId+gönderenId birleşik —
+      // bu göndericinin akışını sadece KENDİSİ etkileyebilir, başka bir
+      // göndericinin (ör. onu kicklemeye çalışan başka bir admin'in) akışını
+      // asla zehirleyemez.
+      if(!_isFreshGroupPacket(d.groupId+'|'+d.from, d.ts, _lastGroupStateTs)){
         console.warn('[SEC] Eski/replay group_update reddedildi:', d.from, 'groupId=', d.groupId, 'ts=', d.ts);
         return;
       }
@@ -5974,7 +6270,8 @@ const _patchedGroupCallSignals=async(d)=>{
       const oldName=g.name;
       // 🛡️ [YENİ — Replay Koruması #7] Başarıyla uygulanan paketin zaman
       // damgasını kaydet — bundan eski/eşit bir paket bir daha kabul edilmez.
-      _lastGroupStateTs[d.groupId] = d.ts;
+      // Anahtar groupId+gönderenId birleşik (bkz. yukarıdaki not).
+      _lastGroupStateTs[d.groupId+'|'+d.from] = d.ts;
       if(d.name)g.name=d.name;
       if(d.avatar)g.avatar=d.avatar;
       if(d.members)g.members=d.members;
@@ -6018,7 +6315,7 @@ const _patchedGroupCallSignals=async(d)=>{
       // 🛡️ [YENİ — Replay Koruması #7] Eski/tekrar oynatılmış bir kick paketi mi?
       // Bu, "kicklenip sonra yeniden eklenen" birinin eski kick paketiyle
       // tekrar dışlanmasını engeller.
-      if(!_isFreshGroupPacket(d.groupId, d.ts, _lastGroupKickTs)){
+      if(!_isFreshGroupPacket(d.groupId+'|'+d.from, d.ts, _lastGroupKickTs)){
         console.warn('[SEC] Eski/replay group_kick reddedildi:', d.from, 'groupId=', d.groupId, 'ts=', d.ts);
         return;
       }
@@ -6031,7 +6328,7 @@ const _patchedGroupCallSignals=async(d)=>{
         console.warn('[SEC] Yetkisiz group_kick reddedildi:', d.from, 'groupId=', d.groupId);
         return;
       }
-      _lastGroupKickTs[d.groupId] = d.ts;
+      _lastGroupKickTs[d.groupId+'|'+d.from] = d.ts;
       delete db.groups[d.groupId];
       delete db.messages['g_'+d.groupId];
       saveDB(db);
@@ -7731,6 +8028,33 @@ handleSig=async(d)=>{
   if(!ME) return;
 
   // Yeni mesaj operasyonları
+  // 🛡️ [YENİ — Delivered State] "Sent → Delivered → Read" zincirinin orta
+  // halkası. DataChannel send() başarılı olsa bile karşı tarafa GERÇEKTEN
+  // ULAŞTIĞINI garanti etmiyordu — bu ACK, alıcının mesajı doğrulayıp
+  // yerel deposuna yazdığını (bkz. gönderim noktasındaki not) kanıtlıyor.
+  // 🛡️ e2e kimlik bağlama zorunlu — aksi halde bir yabancı, hiç
+  // ulaşmamış bir mesaj için sahte "teslim edildi" onayı üretebilirdi.
+  // Replay/zaman damgası koruması GEREKMİYOR: işlem idempotent (bir
+  // kullanıcıyı deliveredTo listesine eklemek tekrarlansa da zararsız) —
+  // eski bir ACK'in tekrar gelmesi sadece aynı sonucu doğrular, hiçbir
+  // durumu geri almaz/bozmaz.
+  if(d.type==='msg_delivered'&&d.to===ME.user_id){
+    if(!d._isE2E){ return; }
+    if(d.groupId && !_isGroupMember(d.groupId, d.from)){ return; }
+    const db=getDB();
+    const k=d.groupId?'g_'+d.groupId:[ME.user_id,d.from].sort().join('_');
+    const msg=(db.messages[k]||[]).find(m=>m.id===d.msgId);
+    // Sadece BİZİM gönderdiğimiz bir mesaj için delivered anlamlı.
+    if(msg && msg.from===ME.user_id){
+      if(!msg.deliveredTo) msg.deliveredTo=[];
+      if(!msg.deliveredTo.includes(d.from)){
+        msg.deliveredTo.push(d.from);
+        saveDB(db);
+        if(chatId===(d.groupId||d.from)) renderChat();
+      }
+    }
+    return;
+  }
   if(d.type==='msg_read'&&d.to===ME.user_id){
     const db=getDB();
     const k=[ME.user_id,d.from].sort().join('_');
@@ -7769,10 +8093,10 @@ handleSig=async(d)=>{
     // 🛡️ [YENİ — Replay Koruması #7-devam] Eski/tekrar oynatılmış bir
     // düzenleme mi? (fonksiyon adı "grup" geçiyor ama parametre sadece bir
     // map anahtarı — burada msgId ile de genel amaçlı çalışıyor.)
-    else if(msg && !_isFreshGroupPacket(d.msgId, d.ts, _lastMsgEditTs)) console.warn('[SEC] Eski/replay msg_edit reddedildi:', d.from, 'msgId=', d.msgId);
+    else if(msg && !_isFreshGroupPacket(d.msgId+'|'+d.from, d.ts, _lastMsgEditTs)) console.warn('[SEC] Eski/replay msg_edit reddedildi:', d.from, 'msgId=', d.msgId);
     else if(msg && msg.from===d.from){
       msg.text=d.newText;msg.edited=true;saveDB(db);
-      _lastMsgEditTs[d.msgId] = d.ts;
+      _lastMsgEditTs[d.msgId+'|'+d.from] = d.ts;
       if(chatId===(d.groupId||d.from))renderChat();
     }
     else if(msg) console.warn('[SEC] Yetkisiz msg_edit reddedildi:', d.from, '(mesaj sahibi:', msg.from, ')');
@@ -8073,7 +8397,9 @@ if(saved){
   try{
     // 🛡️ [MED-03] Önce sessionStorage'dan şifreleme anahtarını geri yüklemeyi dene
     // (aynı sekmede F5/yenileme ise anahtar burada bulunur, şifre tekrar sorulmaz)
-    const keyRestored = await _tryRestoreEncKeyFromSession();
+    // 🛡️ [YENİ-SEC — HESAP İZOLASYONU] `saved` (sessionStorage'daki kullanıcı
+    // adı), bu noktada ME'den daha güvenilir — ME henüz set edilmemiş olabilir.
+    const keyRestored = await _tryRestoreEncKeyFromSession(saved.toLowerCase());
 
     const db=getDB();
     const user=db.users&&db.users[saved];
