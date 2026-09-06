@@ -61,6 +61,26 @@ function _needsTermsAcceptance(user){
   return !user || user.termsAcceptedVersion !== TERMS_VERSION;
 }
 
+// 🌐 [YENİ] Terms modalının kendi TR/EN düğmelerini, sayfanın geri kalanıyla
+// AYNI global dil sistemine (window.SV_LANG / setSvLang) bağlar — ayrı bir
+// çeviri mekanizması DEĞİL, sadece ek bir giriş noktası. setSvLang() sayfayı
+// yeniden yüklediği için (mevcut Ayarlar > Dil davranışıyla tutarlı),
+// terms onaylanmamışsa modal otomatik olarak tekrar açılır ve düğmeler
+// yeni dile göre doğru vurgulanmış hâlde görünür.
+function _syncTermsLangToggle(){
+  const wrap = document.getElementById('termsLangToggle');
+  if(!wrap) return;
+  wrap.querySelectorAll('[data-terms-lang]').forEach(b=>{
+    const active = b.dataset.termsLang === (window.SV_LANG || 'en');
+    b.style.background = active ? 'var(--primary)' : 'transparent';
+    b.style.color = active ? '#fff' : 'var(--muted)';
+    if(!b._svBound){
+      b._svBound = true;
+      b.addEventListener('click', ()=>{ if(typeof setSvLang==='function') setSvLang(b.dataset.termsLang); });
+    }
+  });
+}
+
 function showTermsModal(){
   return new Promise(resolve=>{
     const modal = $('termsModal');
@@ -71,6 +91,7 @@ function showTermsModal(){
     cb.checked = false;
     btn.disabled = true;
     modal.classList.remove('hidden');
+    _syncTermsLangToggle();
     // Her açılışta temiz dinleyiciler — eski Promise'i tetiklememesi için
     cb.onchange = ()=>{ btn.disabled = !cb.checked; };
     btn.onclick = ()=>{
