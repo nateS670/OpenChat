@@ -14,11 +14,22 @@
 // uygulanıyor. Aynı dürüst sınırlama geçerli: tarayıcı dışı sahte
 // Origin/Referer başlıkları taklit edilebilir, bu yüzden kararlı/hedefli
 // bir saldırganı durdurmaz — ama otomatik/toplu kota tüketimini engeller.
+// 🛡️ [DÜZELTME — Denetim Raporu Bulgu #2, tekrar tespit edildi] Önceki
+// hâlde localhost:5500/127.0.0.1:5500/localhost:3000 KOŞULSUZ olarak prod
+// allowlist'indeydi. Origin/Referer başlıkları tarayıcı DIŞINDAN (curl,
+// script) serbestçe taklit edilebildiğinden, bu satırlardan biri prod'da
+// dururken herkes `Origin: http://localhost:3000` başlığıyla isteği
+// yollayıp kontrolü atlatabiliyordu. Artık local geliştirme origin'leri
+// SADECE prod olmayan ortamda (Vercel Preview/Development veya yerel
+// `vercel dev`) listeye ekleniyor — gerçek production'da (VERCEL_ENV
+// === 'production') bu satırlar hiç var olmuyor.
 const ALLOWED_ORIGINS = [
   'https://openchatt.vercel.app',
-  'http://localhost:5500',        // VS Code Live Server için
-  'http://127.0.0.1:5500',
-  'http://localhost:3000'         // Eğer başka bir local sunucu kullanıyorsan
+  ...(process.env.VERCEL_ENV !== 'production' ? [
+    'http://localhost:5500',        // VS Code Live Server için
+    'http://127.0.0.1:5500',
+    'http://localhost:3000'         // Eğer başka bir local sunucu kullanıyorsan
+  ] : [])
 ];
 
 function isAllowedRequest(req) {
