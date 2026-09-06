@@ -1,54 +1,65 @@
 import crypto from 'crypto';
-import { kv } from '@vercel/kv';
 
-// 🛡️ [KRİTİK FIX — Güvenlik Araştırmacısı Bulgu #1] ÖNCEKİ HALİ: action=issue
-// HİÇBİR kimlik doğrulaması yapmıyordu — herkes, herhangi bir username/userId
-// için, kendi ürettiği bir public key ile geçerli, sunucu-imzalı bir pasaport
-// alabiliyordu. Saldırgan {username:'victim', userId:'victim',
-// signingPublicKey:<kendi anahtarı>} gönderip 'victim' kimliğine bürünen
-// geçerli bir pasaport elde edebiliyordu.
+// 🛡️ [MİMARİ REVİZYON — Plan A: Güven Kökü Sunucudan Cihaza] ─────────────
+// ÖNCEKİ HALİ (bu dosyanın bir önceki sürümü): action=issue için Vercel KV
+// kullanan sunucu-taraflı "TOFU pinning" uyguluyordu (bir username ilk kez
+// pasaport aldığında public key'ini kalıcı olarak sunucuda sabitliyordu).
+// Bu, KV veritabanı bağlanamadığında (hesap kısıtlaması, "tamamen
+// serverless kalsın" kararı vb.) kv.set() her çağrıda patlayıp 500
+// döndürüyordu — giriş tamamen kırılıyordu.
 //
-// NEDEN Origin/Referer/CORS/rate-limit/client-side validation İLE
-// KAPATILAMAZ: Bunların hiçbiri "bu userId gerçekten bu isteği atana mı ait"
-// sorusuna cevap vermez — sadece isteğin nereden geldiğini kısıtlar, KİMİN
-// GÖNDERDİĞİNİ değil. Saldırgan zaten kendi tarayıcısından, meşru bir origin
-// ile bu isteği atabilir.
+// ŞİMDİ: Bu dosya SADECE bir imzalayıcı. Hiçbir kalıcı depoya ihtiyaç
+// duymuyor, dolayısıyla KV/veritabanı olmadan da normal çalışır.
 //
-// NEDEN CHALLENGE-RESPONSE (imzalanmış public key doğrulaması) DA YETERSİZ:
-// Bu sadece "gönderen, gönderdiği signingPublicKey'in özel anahtarına sahip
-// mi" sorusuna cevap verir. Saldırgan KENDİ ürettiği bir anahtar çifti
-// gönderdiği için bu challenge'ı da sorunsuzca imzalar — kanıtlamamız
-// gereken şey "bu userId'nin sahibi bu mu" sorusu, "bu anahtarın sahibi bu
-// mu" değil. İkisi farklı sorular.
+// NEDEN BU GÜVENSİZ DEĞİL: app.js'te ZATEN çok daha güçlü, tamamen
+// cihaz-taraflı bir TOFU (Trust On First Use) sistemi var — bkz.
+// _checkAndPinPeerIdentity, _fingerprintIdentityPubKey, _peerKeyFingerprints
+// ve kullanıcıya gösterilen "Güvenlik kodu" / "Karşılaştırdım, doğrula" arayüzü.
+// Bu sistem tıpkı SSH known_hosts, PGP parmak izi veya Signal güvenlik
+// numarası gibi çalışır: bir kullanıcı adıyla ilk konuşulduğunda o kişinin
+// kimlik anahtarının parmak izi CİHAZDA kalıcı olarak saklanır; sonraki her
+// bağlantıda gelen anahtar bununla karşılaştırılır, uyuşmazsa kullanıcı
+// açıkça uyarılır (bkz. _showKeyChangeWarning). Sunucunun bu kararı BİR
+// KEZ DAHA, ayrıca ve zayıf bir şekilde (KV'de, cihazlar arası paylaşılan,
+// tek-cihaz sınırlaması getiren bir pinleme ile) tekrar etmesine hiç gerek
+// yok — hatta bu, gerçek mimariyle (bilinçli olarak sunucusuz/veritabansız)
+// tutarsız bir ek bağımlılık yaratıyordu.
 //
-// GERÇEK ÇÖZÜM: Mimari şifreyi sunucuya hiç göndermediği için ("Şifren
-// cihazında saklanır") sunucu şifreyi doğrulayamaz. Bunun yerine TOFU
-// (Trust On First Use) sabitleme uyguluyoruz: bir username için İLK kez
-// pasaport verildiğinde, o public key Vercel KV'de KALICI olarak sabitlenir.
-// Sonraki HER istek, AYNI public key ile gelmek ZORUNDA — aksi halde
-// reddedilir. Meşru kullanıcı doğru şifreyle her girişte (istemci tarafı
-// PBKDF2 türetimi sayesinde) hep AYNI anahtarı üretir, yani bu onu hiç
-// etkilemez; şifreyi BİLMEYEN biri artık farklı bir anahtarla bu username'i
-// ele geçiremez.
+// Bu dosyanın TEK işi: bir pasaportu (username, userId, pubKey, alg,
+// issuedAt, exp) HMAC-SHA256 ile imzalamak (böylece biri "ben imzaladım"
+// diye uydurma bir pasaport üretemez / var olanı tahrif edemez) ve süresi
+// dolmuş ya da imzası uyuşmayan pasaportları reddetmek. Hangi username'in
+// "gerçekten" kime ait olduğu sorusunun cevabı, YUKARIDA açıklanan sebeple,
+// KASITLI OLARAK bu dosyanın sorumluluğunda DEĞİL.
 //
-// KURULUM:
-//   1) `npm install @vercel/kv`
-//   2) Vercel Dashboard → Storage → bir Redis/KV veritabanı oluşturup
-//      projenize bağlayın (gerekli env değişkenlerini otomatik ekler).
-//   3) Bu dosyayı `api/identity.js` ile değiştirip redeploy edin.
-//
-// BİLİNEN SINIR (kasıtlı, kullanıcıyla üzerinde anlaşıldı): Aynı hesaba
-// birden fazla cihazdan giriş desteklenmiyor — ikinci cihaz farklı bir
-// rastgele anahtar üreteceği için 409 ile reddedilir. Tek-cihaz modeli
-// bilinçli bir tercih olarak kabul edildi.
+// KURULUM: Sadece CHAT_SECRET_KEY env değişkeninin Vercel'de tanımlı
+// olması yeterli — başka hiçbir servis/veritabanı gerekmiyor.
 export default async function handler(req, res) {
+  // 🔎 [TEŞHİS] Dış try/catch: öngörülmemiş bir hata patlarsa Vercel
+  // loglarına yazıp genel bir 500 döndürür — "sessiz", log bırakmayan bir
+  // platform hatasıyla uygulamanın kendi kontrollü hatasını ayırt etmek için.
+  try {
+    return await handleIdentity(req, res);
+  } catch (e) {
+    console.error('[identity] Beklenmeyen hata:', e && e.stack ? e.stack : e);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Beklenmeyen sunucu hatası.' });
+    }
+  }
+}
+
+async function handleIdentity(req, res) {
     const { action } = req.query;
     const secretKey = process.env.CHAT_SECRET_KEY;
     if (!secretKey) {
+        console.error('[identity] CHAT_SECRET_KEY env değişkeni tanımlı değil.');
         return res.status(500).json({ error: 'Sunucu yapılandırma hatası: CHAT_SECRET_KEY eksik.' });
     }
 
-    // 1. ADIM: Kullanıcı giriş yaparken kimliğini sunucuya damgalatır
+    // 1. ADIM: Kullanıcı giriş yaparken kimliğini sunucuya imzalatır.
+    // Bkz. dosya başındaki not: burada KASITLI OLARAK hiçbir sahiplik/
+    // benzersizlik kontrolü YAPILMAZ — bu kontrol app.js'te cihaz taraflı
+    // TOFU pinleme ile yapılıyor.
     if (req.method === 'POST' && action === 'issue') {
         const { username, userId, signingPublicKey, alg } = req.body;
         if (!username || !userId || !signingPublicKey) {
@@ -58,40 +69,6 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Geçersiz parametre türü.' });
         }
         const safeAlg = (alg === 'ECDSA-P256') ? 'ECDSA-P256' : 'Ed25519';
-
-        // 🛡️ [KRİTİK FIX] TOFU sabitleme — bkz. dosya başındaki ayrıntılı not.
-        const pinKey = `identity-pin:${userId.toLowerCase()}`;
-        const pinRecord = { pubKey: signingPublicKey, alg: safeAlg, pinnedAt: Date.now() };
-
-        // Atomik "sadece anahtar yoksa yaz" — iki eşzamanlı isteğin aynı
-        // yeni kullanıcı adını birbirinin üzerine yazmasını (race condition)
-        // önler.
-        let claimed;
-        try {
-            claimed = await kv.set(pinKey, pinRecord, { nx: true });
-        } catch (e) {
-            return res.status(500).json({ error: 'Kimlik sabitleme deposuna erişilemedi.' });
-        }
-
-        if (claimed === null) {
-            // Bu userId için zaten sabitlenmiş bir kayıt var — eşleşiyor mu bak.
-            let existingPin;
-            try {
-                existingPin = await kv.get(pinKey);
-            } catch (e) {
-                return res.status(500).json({ error: 'Kimlik sabitleme deposuna erişilemedi.' });
-            }
-            if (!existingPin || existingPin.pubKey !== signingPublicKey) {
-                // 🛡️ Tam olarak güvenlik araştırmacısının bulduğu senaryo
-                // burada engelleniyor: farklı bir anahtar — bu userId zaten
-                // başka bir anahtara sabitlenmiş. Şifreyi bilmeyen biri bu
-                // kullanıcı adına bürünmeye çalışıyor olabilir.
-                return res.status(409).json({
-                    error: 'Bu kullanıcı adı için farklı bir kimlik anahtarı zaten kayıtlı. Şifrenizi yanlış girmiş olabilirsiniz.'
-                });
-            }
-            // Anahtar eşleşiyor — meşru kullanıcı, normal şekilde devam.
-        }
 
         const identityPayload = JSON.stringify({
             username: username.trim(),
@@ -111,7 +88,8 @@ export default async function handler(req, res) {
         });
     }
 
-    // 2. ADIM: Arkadaş, gelen kullanıcının pasaportunun gerçek olup olmadığını sorgular
+    // 2. ADIM: Arkadaş, gelen kullanıcının pasaportunun gerçek (sunucu
+    // tarafından imzalanmış, tahrif edilmemiş) olup olmadığını sorgular.
     if (req.method === 'POST' && action === 'verify') {
         const { passport, signature } = req.body;
         if (!passport || !signature) {
@@ -152,7 +130,6 @@ export default async function handler(req, res) {
                 return res.status(401).json({ valid: false, error: 'Pasaport süresi dolmuş. Lütfen tekrar giriş yap.' });
             }
         } else if (data.timestamp) {
-            // Eski format uyumluluğu: 24 saat tolerance
             if (Math.abs(now - data.timestamp) > 24 * 60 * 60 * 1000) {
                 return res.status(401).json({ valid: false, error: 'Pasaport süresi dolmuş. Lütfen tekrar giriş yap.' });
             }
