@@ -2356,9 +2356,19 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
 
 <div id="termsModal" class="overlay hidden" style="z-index:9999">
   <div class="card" style="width:520px;max-width:94vw;text-align:left;max-height:85vh;display:flex;flex-direction:column;padding:0">
-    <div style="padding:22px 26px 4px;flex-shrink:0">
-      <h3 style="margin:0 0 4px;font-size:18px">📋 Kullanım Şartları ve Sistem Bilgilendirmesi</h3>
-      <p style="margin:0;font-size:12px;color:var(--muted)">Devam etmeden önce lütfen okuyun.</p>
+    <div style="padding:22px 26px 4px;flex-shrink:0;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+      <div>
+        <h3 style="margin:0 0 4px;font-size:18px">📋 Kullanım Şartları ve Sistem Bilgilendirmesi</h3>
+        <p style="margin:0;font-size:12px;color:var(--muted)">Devam etmeden önce lütfen okuyun.</p>
+      </div>
+      <!-- 🌐 [YENİ] Bu metin önemli/uzun olduğu için, kullanıcı Ayarlar'a
+           gitmeden, modal içinden doğrudan TR/EN seçebilsin diye eklendi.
+           Global setSvLang() çağrılır — sayfanın geri kalanıyla aynı dil
+           mekanizması, sadece giriş noktası burası da olsun diye. -->
+      <div id="termsLangToggle" style="flex-shrink:0;display:flex;gap:4px;background:var(--bg2,rgba(127,127,127,.12));border-radius:8px;padding:3px">
+        <button type="button" data-terms-lang="tr" style="font-size:11px;padding:4px 9px;border-radius:6px;border:none;cursor:pointer;background:transparent;color:var(--muted)">TR</button>
+        <button type="button" data-terms-lang="en" style="font-size:11px;padding:4px 9px;border-radius:6px;border:none;cursor:pointer;background:transparent;color:var(--muted)">EN</button>
+      </div>
     </div>
     <div id="termsBody" style="overflow-y:auto;padding:14px 26px;font-size:13px;line-height:1.6;color:var(--text);flex:1"></div>
     <div style="padding:16px 26px 22px;border-top:1px solid var(--border);flex-shrink:0">
