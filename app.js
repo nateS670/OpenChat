@@ -1369,6 +1369,7 @@ async function _getPeerDerivedKey(userId){
 // SESSİZCE düşülmez; hata fırlatılır ve şifreleme/çözme o ana kadar
 // kullanılamaz (fail-closed).
 let _bootstrapKey = null;
+let _bootstrapKeyBase64 = null; // 🛡️ [Bulgu #4 Fix] CryptoKey karşılaştırılamaz — rotasyon kontrolü için ham değeri de saklıyoruz
 let _bootstrapKeyPromise = null;
 async function _getBootstrapKey(){
   if(_bootstrapKey) return _bootstrapKey;
@@ -1383,6 +1384,7 @@ async function _getBootstrapKey(){
     const raw = _u8(data.bootstrapKey);
     const key = await crypto.subtle.importKey('raw', raw, {name:'AES-GCM'}, false, ['encrypt','decrypt']);
     _bootstrapKey = key;
+    _bootstrapKeyBase64 = data.bootstrapKey;
     return key;
   })();
   try{
@@ -1493,14 +1495,9 @@ async function loadServerConfig(){
   }
 }
 
-// 🛡️ [YENİ-H3] Link URL sanitizer — javascript:/vbscript:/data: protokollerini reddeder
-// onclick attribute'u yerine data-lp-url + event delegation pattern'ı kullanılır
-function sanitizeLinkUrl(url){
-  if(!url || typeof url !== 'string') return null;
-  const trimmed = url.trim().toLowerCase().replace(/\s+/g,'');
-  if(!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return null;
-  return escHtml(url.trim()); // Attribute injection'ı önle
-}
+// 🛡️ [KALDIRILDI — Denetim Raporu Bulgu #5] sanitizeLinkUrl yalnızca link
+// önizleme kartının data-lp-url'i için kullanılıyordu; önizleme özelliği
+// kaldırıldığı için bu fonksiyon da ölü kod olarak temizlendi.
 
 // Gerçek ROOM topic'i sabit değil; günlük dönen, SUNUCUDA hesaplanıp
 // HAZIR olarak gönderilen bir topic adı kullanılır (bkz. /api/config).
@@ -2251,6 +2248,64 @@ function schedRec(){
   }
   reconnTmr=setTimeout(connectNetwork,4000);
 }
+
+// 🛡️ [YENİ — Denetim Raporu Bulgu #4 Fix] loadServerConfig() VE
+// _getBootstrapKey() sonuçları hiç süresi dolmayan önbelleklerde
+// (_serverConfig, _bootstrapKey) tutuluyordu. İkisi de sunucuda AYNI
+// UTC-gün sınırından (bkz. config.js/bootstrap-key.js: `new
+// Date().toISOString().slice(0,10)`) türetiliyor — yani gece yarısını
+// aşan bir sekme HEM dünkü MQTT topic'ine HEM dünkü bootstrap AES
+// anahtarına bağlı kalmaya devam ediyordu:
+//   • todayTopic bayatlarsa → yeni güne geçen diğer kullanıcılarla aynı
+//     odada buluşulamıyor (bkz. connectNetwork/_obfTopic).
+//   • _bootstrapKey bayatlarsa → presence/group/discovery gibi bootstrap-
+//     anahtarlı paketlerin şifresi KARŞI TARAFTA çözülemiyor, aesDecrypt
+//     "Şifre çözme başarısız, paket atıldı" ile sessizce paketleri
+//     düşürüyor (peer-özel e2e mesajlaşma bundan ETKİLENMEZ — o ayrı,
+//     _getPeerDerivedKey tabanlı bir anahtarla çalışıyor; sadece canlı
+//     sinyal trafiği etkilenir, yerel geçmiş mesajlar bozulmaz).
+// Sunucunun rotasyon sınırının tam olarak hangi saat diliminde olduğunu
+// İSTEMCİDE TAHMİN ETMEK kırılgan olurdu (saat dilimi/DST/cihaz saati
+// yanlışlığı); bunun yerine periyodik olarak HER İKİ uç noktayı da
+// ÖNBELLEĞİ ATLAYARAK tazeleyip gerçek değerleri kontrol ediyoruz.
+async function _checkTopicRotation(){
+  if(!ME || !_serverConfig) return; // henüz giriş yoksa veya ilk config hiç gelmediyse kontrol gereksiz
+  // ── 1) MQTT topic rotasyonu ──────────────────────────────────────
+  try{
+    const r = await fetch('/api/config', { signal: AbortSignal.timeout(6000), cache:'no-store' });
+    if(r.ok){
+      const fresh = await r.json();
+      if(fresh && typeof fresh.todayTopic === 'string' && fresh.todayTopic
+         && fresh.todayTopic !== _serverConfig.todayTopic){
+        console.warn('[SEC] Günlük konu (topic) değişti — temiz şekilde yeniden bağlanılıyor.');
+        _serverConfig = fresh;        // önbelleği güncelle
+        _serverConfigPromise = null;  // olası yarım kalmış eski promise'i temizle
+        connectNetwork();             // mevcut temiz teardown+reconnect akışını kullan
+      }
+    }
+  }catch(e){ /* sessizce geç — ağ geçici olarak kesilmiş olabilir, 5 dk sonra tekrar denenir */ }
+
+  // ── 2) Bootstrap AES anahtarı rotasyonu ──────────────────────────
+  // Anahtarın kendisi (Base64 hâli) sunucudan sadece bir kez, karşılaştırma
+  // amacıyla ayrıca alınıp _bootstrapKeyBase64 ile kıyaslanıyor; içe
+  // aktarılmış CryptoKey nesnesi karşılaştırılamaz (opak), bu yüzden ham
+  // Base64 değeri ayrıca saklıyoruz.
+  try{
+    const r2 = await fetch('/api/bootstrap-key', { signal: AbortSignal.timeout(6000), cache:'no-store' });
+    if(r2.ok){
+      const fresh2 = await r2.json();
+      if(fresh2 && typeof fresh2.bootstrapKey === 'string' && fresh2.bootstrapKey
+         && fresh2.bootstrapKey !== _bootstrapKeyBase64){
+        console.warn('[SEC] Günlük bootstrap anahtarı değişti — önbellek tazeleniyor.');
+        const raw = _u8(fresh2.bootstrapKey);
+        _bootstrapKey = await crypto.subtle.importKey('raw', raw, {name:'AES-GCM'}, false, ['encrypt','decrypt']);
+        _bootstrapKeyBase64 = fresh2.bootstrapKey;
+        _bootstrapKeyPromise = null; // olası yarım kalmış eski promise'i temizle
+      }
+    }
+  }catch(e){ /* sessizce geç — bir sonraki periyotta tekrar denenir */ }
+}
+setInterval(_checkTopicRotation, 5*60*1000); // her 5 dakikada bir kontrol et
 // ── Stabilite: bağlantı bekçisi ──
 setInterval(()=>{
   if(mq&&mq.connected){
@@ -4149,45 +4204,6 @@ function renderChat(){
       // URL'leri tıklanabilir yap
       txt = txt.replace(/(https?:\/\/[^\s<>"]+)/g,'<a href="$1" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;opacity:.85" data-act="_uiNoop" data-stop="1">$1</a>');
       contentHTML=`<span class="msg-text">${txt}${editedHTML}</span>`;
-      // Link önizleme kartı
-      if(m.linkPreview){
-        const lp = m.linkPreview;
-        // 🛡️ [YENİ-H3] sanitizeLinkUrl: sadece http/https geçer
-        const safeUrl = sanitizeLinkUrl(lp.url||'');
-        if(safeUrl && (lp.type === 'youtube' || lp.ytId)){
-          const thumb = escHtml(lp.thumb || `https://img.youtube.com/vi/${escHtml(lp.ytId||'')}/hqdefault.jpg`);
-          contentHTML += `<div class="link-preview yt" data-lp-url="${safeUrl}">
-            <div class="link-preview-yt-wrap">
-              <img class="link-preview-thumb" src="${thumb}" alt="${escHtml(lp.title||'')}" loading="lazy" data-onerror="ytfallback" data-ytid="${escHtml(lp.ytId||'')}">
-              <div class="link-preview-yt-play"><div class="link-preview-yt-play-btn"></div></div>
-            </div>
-            <div class="link-preview-body">
-              <div class="link-preview-domain">
-                <img class="link-preview-favicon" src="https://www.youtube.com/favicon.ico" data-onerror="hide">
-                YouTube${lp.author?` · ${escHtml(lp.author)}`:''}
-              </div>
-              <div class="link-preview-title">${escHtml(lp.title||'YouTube Video')}</div>
-            </div>
-          </div>`;
-        } else if(safeUrl && lp.title){
-          // 🛡️ [FIX-3] escHtml() sadece HTML-escape yapar, URL şeması filtrelemez.
-          // javascript:/vbscript:/data:text gibi tehlikeli şemaları da reddetmek için
-          // sanitizeAvatarUrl (yalnızca https:// ve data:image/ kabul eder) kullanılır.
-          const safeImg = sanitizeAvatarUrl(lp.image);
-          const safeFavicon = sanitizeAvatarUrl(lp.favicon);
-          contentHTML += `<div class="link-preview" data-lp-url="${safeUrl}">
-            ${safeImg?`<img class="link-preview-thumb" src="${escHtml(safeImg)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-onerror="hide">`:''}
-            <div class="link-preview-body">
-              <div class="link-preview-domain">
-                ${safeFavicon?`<img class="link-preview-favicon" src="${escHtml(safeFavicon)}" referrerpolicy="no-referrer" data-onerror="hide">`:''}
-                ${escHtml(lp.domain||'')}
-              </div>
-              <div class="link-preview-title">${escHtml(lp.title)}</div>
-              ${lp.desc?`<div class="link-preview-desc">${escHtml(lp.desc)}</div>`:''}
-            </div>
-          </div>`;
-        }
-      }
     }
     // Kaybolucak mesaj — geri sayım rozeti
     const vanishBadge = m.expiresAt
@@ -4296,10 +4312,21 @@ function escHtml(t){
 }
 
 // 🛡️ [HIGH-06] Avatar URL dogrulaması — javascript:, data:text, vbscript: reddedilir
+// 🛡️ [YENİ — Denetim Raporu Bulgu #3 Fix] Önceden HERHANGİ bir https://
+// URL'si avatar/görsel olarak kabul ediliyordu (data:image/ yanında).
+// Kötü niyetli bir eş, kendi sunucusuna işaret eden benzersiz bir https
+// URL'sini "avatar" veya gelen resim mesajı olarak gönderip, alıcı
+// istemcinin bu görseli otomatik yüklemesini bir İZLEME PİKSELİ gibi
+// kullanarak alıcının IP adresini/User-Agent'ını/açık olduğu zamanı
+// öğrenebilirdi (GIF'ler için zaten _TRUSTED_GIF_HOSTS ile kapatılmıştı,
+// ama avatar/resim mesajı yolu açık kalmıştı). Gerçek avatar/resim
+// yükleme akışı ZATEN HER ZAMAN data:image/... üretiyor (bkz.
+// $('avatarInput').onchange / $('groupAvatarInput').onchange —
+// canvas.toDataURL() kullanıyorlar) — yani https:// desteğinin hiçbir
+// meşru kullanım senaryosu yok, kaldırılması hiçbir özelliği bozmuyor.
 function sanitizeAvatarUrl(url){
   if(!url||typeof url!=='string') return null;
   if(url.startsWith('data:image/')&&url.length<2_000_000) return url;
-  if(/^https:\/\//.test(url)) return url;
   return null;
 }
 
@@ -4341,8 +4368,25 @@ function sanitizeGifUrl(url){
 // şema (javascript:, vbscript:, http(s):, blob: vb.) burada meşru değildir.
 function sanitizeFileDataUrl(url){
   if(!url||typeof url!=='string') return null;
-  if(url.startsWith('data:')&&url.length<20_000_000) return url;
-  return null;
+  if(!url.startsWith('data:')) return null;
+  if(url.length>=20_000_000) return null;
+  // 🛡️ [YENİ — Denetim Raporu Bulgu #6 Fix] Önceden yalnızca "data:" öneki
+  // ve uzunluk kontrol ediliyordu — data:text/html veya
+  // data:image/svg+xml gibi, açılınca SCRIPT ÇALIŞTIRABİLEN MIME türleri
+  // de kabul ediliyordu. Bu değer bir <a href download> bağlantısına
+  // yazılıyor; `download` özniteliği çoğu tarayıcıda doğrudan navigasyonu
+  // engellese de, sağ-tık > "Bağlantıyı yeni sekmede aç" gibi yollarla bu
+  // atlanabilir ve data: URL'si (izole bir origin'de de olsa) oynatılabilir/
+  // kimlik avı sayfası olarak render edilebilir. Gerçek bir dosya
+  // yüklemesinde script çalıştırabilecek bu türlere hiç ihtiyaç yok —
+  // burada bir İZİN LİSTESİ değil, dar bir ENGEL LİSTESİ kullanıyoruz ki
+  // kullanıcıların gönderebildiği meşru dosya türleri (pdf, zip, mp3,
+  // mp4, docx, vb.) kısıtlanmasın.
+  const mimeMatch = /^data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+)/.exec(url);
+  const mime = (mimeMatch ? mimeMatch[1] : '').toLowerCase();
+  const BLOCKED_MIME = ['text/html','image/svg+xml','application/xhtml+xml','application/xml','text/xml'];
+  if(BLOCKED_MIME.includes(mime)) return null;
+  return url;
 }
 
 // 🛡️ [HIGH-06] Avatar elementini guvenli sek. set et — innerHTML KULLANILMAZ
@@ -8032,14 +8076,9 @@ document.addEventListener('click',e=>{
     $('emojiPicker')?.classList.remove('open');
 });
 
-// 🛡️ [YENİ-H3] Link preview — güvenli event delegation
-// onclick attribute yoktur; data-lp-url http/https kontrol edildikten sonra açılır
-document.addEventListener('click', e => {
-  const card = e.target.closest('[data-lp-url]');
-  if(!card) return;
-  const u = card.dataset.lpUrl;
-  if(u && /^https?:\/\//i.test(u)) window.open(u, '_blank', 'noopener,noreferrer');
-});
+// 🛡️ [KALDIRILDI — Denetim Raporu Bulgu #5] data-lp-url click delegation'ı
+// kaldırıldı — bu, yalnızca artık var olmayan link önizleme kartları
+// içindi.
 
 // ── MSG OPS + READ + SOUND SİNYALLERİ ────────────────────────────
 const _origHSfinal=handleSig;
@@ -8671,87 +8710,20 @@ window.runGlobalSearch=q=>{
 // ══════════════════════════════════════════════════════════════════
 
 // ── YouTube video ID çıkar ──────────────────────────────────────
-function extractYoutubeId(url){
-  const m = url.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-  return m ? m[1] : null;
-}
-
-// ── oEmbed ile YouTube metadata çek (API key gerektirmez) ────────
-async function fetchYoutubeOEmbed(url){
-  try{
-    const oe = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, {signal: AbortSignal.timeout(5000)});
-    if(!oe.ok) return null;
-    return await oe.json();
-  }catch(e){ return null; }
-}
-
-const _lpCache={};
-
-async function fetchLinkPreview(url){
-  if(_lpCache[url]) return _lpCache[url];
-
-  let lp = null;
-
-  // ── YouTube: oEmbed + thumbnail direkt ─────────────────────────
-  const ytId = extractYoutubeId(url);
-  if(ytId){
-    const oe = await fetchYoutubeOEmbed(url);
-    lp = {
-      url,
-      type: 'youtube',
-      ytId,
-      title:   oe?.title  || 'YouTube Video',
-      author:  oe?.author_name || '',
-      thumb:   `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`,
-      domain:  'youtube.com',
-      favicon: 'https://www.youtube.com/favicon.ico',
-    };
-    _lpCache[url] = lp;
-    return lp;
-  }
-
-  // ── Genel site: allorigins proxy ────────────────────────────────
-  try{
-    const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-    const r = await fetch(proxy, {signal: AbortSignal.timeout(6000)});
-    if(!r.ok) return null;
-    const j = await r.json();
-    const html = j.contents || '';
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const g = (sel, attr) => { const el=doc.querySelector(sel); return el?(attr?el.getAttribute(attr):el.textContent?.trim()):null; };
-    const title  = g('meta[property="og:title"]','content') || g('meta[name="twitter:title"]','content') || g('title') || '';
-    const desc   = g('meta[property="og:description"]','content') || g('meta[name="description"]','content') || '';
-    const image  = g('meta[property="og:image"]','content') || g('meta[name="twitter:image"]','content') || null;
-    const domain = new URL(url).hostname.replace('www.','');
-    const favicon= `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-    lp = { url, type:'general', title:title.substring(0,120), desc:desc.substring(0,200), image, domain, favicon };
-    _lpCache[url] = lp;
-    return lp;
-  }catch(e){ return null; }
-}
-
-// ── Mesaj gönderildikten sonra URL varsa önizleme çek ────────────
-async function enrichWithLinkPreview(msgId, text, convKey){
-  const urlMatch = text.match(/https?:\/\/[^\s<>"]{10,}/);
-  if(!urlMatch) return;
-  const lp = await fetchLinkPreview(urlMatch[0]);
-  if(!lp || (!lp.title && lp.type !== 'youtube')) return;
-  const db = getDB();
-  const msgs = db.messages[convKey] || [];
-  const m = msgs.find(x => x.id === msgId);
-  if(m && !m.linkPreview){
-    m.linkPreview = lp;
-    saveDB(db);
-    // Alıcıya da link preview verisini gönder (broadcast)
-    const lpMsg = {type:'link_preview_update', msgId, convKey, lp};
-    if(chatType==='private') broadcast({...lpMsg, to:chatId, from:ME.user_id});
-    else{
-      const g=db.groups[chatId];
-      g&&g.members.forEach(mbr=>{ if(mbr!==ME.user_id) broadcast({...lpMsg, to:mbr, groupId:chatId, from:ME.user_id}); });
-    }
-    if(chatId&&(convKey===([ME.user_id,chatId].sort().join('_'))||convKey==='g_'+chatId)) renderChat();
-  }
-}
+// 🛡️ [KALDIRILDI — Denetim Raporu Bulgu #5] Link önizleme özelliği
+// tamamen kaldırıldı. Önceki hâlde her mesajdaki URL, kullanıcı hiçbir
+// şey yapmadan otomatik olarak www.youtube.com/oembed veya
+// api.allorigins.win (ve Google'ın favicon servisine) gönderiliyordu —
+// bu, mesajlarınızın içeriğinin (URL'ler) sizin sunucunuz DIŞINDA,
+// kontrolünüz olmayan 3. taraflara sızmasına yol açıyordu; ayrıca CSP'nin
+// connect-src'i zaten bu domainlere izin vermediği için özellik prod'da
+// hiçbir zaman çalışmıyordu (bkz. denetim notu). Hem ölü kod hem gizlilik
+// riski olduğu için extractYoutubeId/fetchYoutubeOEmbed/fetchLinkPreview/
+// enrichWithLinkPreview fonksiyonları ve bunlara bağlı render/sinyal kodu
+// (bkz. handleSig'teki 'link_preview_update' case'i ve _hookLinkPreview)
+// tümüyle kaldırıldı. Mesajlardaki URL'ler hâlâ tıklanabilir link olarak
+// gösteriliyor (bkz. yukarıdaki txt.replace) — sadece otomatik önizleme
+// kartı (ve arkasındaki 3. taraf isteği) yok.
 
 // ══════════════════════════════════════════════════════════════════
 //  ③ ANKET / OYLAMA
@@ -8862,40 +8834,11 @@ handleSig=async(d)=>{
     }
     return;
   }
-  // Link önizleme güncellemesi — gönderen taraf çekip alıcıya iletir
-  if(d.type==='link_preview_update'&&d.to===ME.user_id){
-    if(!d.lp||typeof d.lp!=='object'||!d.msgId) return;
-    const db=getDB();
-    const k=d.groupId?'g_'+d.groupId:[ME.user_id,d.from].sort().join('_');
-    const m=(db.messages[k]||[]).find(x=>x.id===d.msgId);
-    // 🛡️ [SAST-7 FIX] Önceden d.lp doğrulanmadan/sınırlandırılmadan kabul
-    // ediliyordu ve HERHANGİ bir msgId'ye iliştirilebiliyordu — yani bir
-    // saldırgan kendi göndermediği (örn. SİZİN attığınız) bir mesaja sahte/
-    // yanıltıcı başlık-açıklama-görsel ekleyebiliyordu. Artık: (a) önizleme
-    // SADECE mesajı gerçekten gönderen kişiden geliyorsa kabul edilir, (b)
-    // alanlar tip/uzunluk olarak sınırlandırılır, (c) url/image sanitizeLinkUrl
-    // ile (render zaten escHtml uyguluyor, bu savunma derinliği).
-    if(m && !m.linkPreview && m.from===d.from){
-      const raw=d.lp;
-      const safeLp={
-        url:    typeof raw.url==='string' ? raw.url.slice(0,500) : '',
-        type:   raw.type==='youtube' ? 'youtube' : 'general',
-        title:  typeof raw.title==='string' ? raw.title.slice(0,120) : '',
-        desc:   typeof raw.desc==='string'  ? raw.desc.slice(0,200)  : '',
-        domain: typeof raw.domain==='string'? raw.domain.slice(0,80) : '',
-        image:  typeof raw.image==='string' ? raw.image.slice(0,500): null,
-        favicon:typeof raw.favicon==='string'? raw.favicon.slice(0,500): null,
-        thumb:  typeof raw.thumb==='string' ? raw.thumb.slice(0,500) : undefined,
-        ytId:   typeof raw.ytId==='string'  ? raw.ytId.slice(0,32)  : undefined,
-        author: typeof raw.author==='string'? raw.author.slice(0,80): undefined,
-      };
-      if(!safeLp.title && safeLp.type!=='youtube') return; // render koşulu (lp.title) zaten bunu gerektiriyor
-      m.linkPreview=safeLp;
-      saveDB(db);
-      if(chatId&&(k===([ME.user_id,chatId].sort().join('_'))||k==='g_'+chatId)) renderChat();
-    }
-    return;
-  }
+  // 🛡️ [KALDIRILDI — Denetim Raporu Bulgu #5] 'link_preview_update' sinyal
+  // işleyicisi kaldırıldı — link önizleme özelliği tamamen sonlandırıldı.
+  // Eski (henüz güncellenmemiş) bir eş istemcisi hâlâ bu tipte bir paket
+  // gönderirse, aşağıdaki _origHSpollBefore(d) zincirine düşüp sessizce
+  // yok sayılır — hata oluşmaz.
   await _origHSpollBefore(d);
 };
 
@@ -9241,26 +9184,9 @@ function buildStats(){
 }
 
 // ══════════════════════════════════════════════════════════════════
-const _origSBClick2=$('sendBtn').onclick;
-// Link preview'u gönderilen normal mesajlara ekle
-const _hookLinkPreview=()=>{
-  const origClick=$('sendBtn').onclick;
-  $('sendBtn').onclick=async()=>{
-    const text=$('msgInput').value.trim();
-    origClick&&origClick();
-    // Sadece normal (vanish olmayan) mesajlarda ve URL varsa
-    if(!_vanishMode&&text&&chatId&&/https?:\/\/[^\s]{10,}/.test(text)){
-      const k=chatType==='private'?[ME.user_id,chatId].sort().join('_'):'g_'+chatId;
-      const db=getDB();
-      const msgs=db.messages[k]||[];
-      // Son eklenen mesajın id'sini bul
-      const last=msgs[msgs.length-1];
-      if(last&&last.from===ME.user_id) enrichWithLinkPreview(last.id, text, k);
-    }
-  };
-};
-// sendBtn.onclick zinciri tamamlandıktan sonra hook'u ekle
-setTimeout(_hookLinkPreview, 100);
+// 🛡️ [KALDIRILDI — Denetim Raporu Bulgu #5] _hookLinkPreview kaldırıldı —
+// mesaj gönderildikten sonra URL'i 3. taraf servislerine (YouTube oEmbed,
+// allorigins.win) gönderip önizleme çeken kod tamamen sonlandırıldı.
 
 // ══════════════════════════════════════════════════════════════════
 //  📱 MOBİL DRAWER — Sidebar aç/kapat
@@ -9724,7 +9650,7 @@ window._haptic = function(ms){
     img.addEventListener('error', done, {once:true});
   }
   function scan(root){
-    root.querySelectorAll && root.querySelectorAll('img.msg-img, img.link-preview-thumb').forEach(watch);
+    root.querySelectorAll && root.querySelectorAll('img.msg-img').forEach(watch);
   }
   const targets = ['chatMsgs'].map(id=>document.getElementById(id)).filter(Boolean);
   targets.forEach(t=>{
@@ -9732,7 +9658,7 @@ window._haptic = function(ms){
     new MutationObserver(muts=>{
       muts.forEach(m=>m.addedNodes.forEach(n=>{
         if(n.nodeType!==1) return;
-        if(n.matches && (n.matches('img.msg-img')||n.matches('img.link-preview-thumb'))) watch(n);
+        if(n.matches && n.matches('img.msg-img')) watch(n);
         scan(n);
       }));
     }).observe(t, {childList:true, subtree:true});
@@ -9850,19 +9776,9 @@ window._haptic = function(ms){
     }
   });
 
-  // ── ERROR delegation (onerror yerine) ─────────────────────────
-  document.addEventListener('error', e=>{
-    const t = e.target;
-    if(t.tagName !== 'IMG') return;
-    const mode = t.getAttribute('data-onerror');
-    if(mode === 'hide'){
-      t.style.display='none';
-    } else if(mode === 'ytfallback'){
-      const ytId = t.getAttribute('data-ytid');
-      if(ytId) t.src=`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`;
-      else t.style.display='none';
-    }
-  }, true); // capture=true: error olayı bubble etmez
+  // 🛡️ [KALDIRILDI — Denetim Raporu Bulgu #5] data-onerror 'hide'/'ytfallback'
+  // handler'ı kaldırıldı — bu iki mod da yalnızca artık var olmayan link
+  // önizleme görsellerinde kullanılıyordu.
 
   // ── CHANGE/INPUT delegation (oninput yerine) ──────────────────
   document.addEventListener('input', e=>{
