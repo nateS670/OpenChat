@@ -1822,6 +1822,15 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
     <span>🔒 Şifre Değiştir</span>
     <span style="color:var(--muted);font-size:12px">→</span>
   </div>
+  <div class="sp-sec">🔐 Kimlik Doğrulama</div>
+  <div class="sp-row" style="cursor:pointer" onclick="openInviteModal('create')">
+    <span>📤 Davet Oluştur</span>
+    <span style="color:var(--muted);font-size:12px">→</span>
+  </div>
+  <div class="sp-row" style="cursor:pointer" onclick="openInviteModal('accept')">
+    <span>📥 Davet ile Doğrula</span>
+    <span style="color:var(--muted);font-size:12px">→</span>
+  </div>
   <div class="sp-sec">İstatistikler</div>
   <div class="sp-row" style="cursor:pointer" onclick="openStats();toggleSettings()">
     <span>📊 Mesaj İstatistiklerim</span>
@@ -2092,6 +2101,12 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
         </div>
       </div>
 
+      <!-- 🛡️ [YENİ — Denetim Raporu Bulgu #1] Kalıcı kimlik güven durumu.
+           chatKeyFp'den (ECDH OTURUM anahtarı kodu) FARKLI bir şey: bu,
+           UZUN VADELİ kimlik anahtarının pinlenmiş/onaylı olup olmadığını
+           gösterir — oturumlar arası kalıcıdır, tek bir toast değil. -->
+      <div id="chatIdentityTrust" style="display:none;padding:8px 14px;font-size:12px;line-height:1.5"></div>
+
       <div id="msgSearchBar" class="hidden">
         <span>🔍</span>
         <input id="msgSearchInp" placeholder="Mesajlarda ara..." oninput="searchMessages()"/>
@@ -2349,6 +2364,47 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
         <span>Yukarıdaki teknik çalışma prensiplerini, platformun kısıtlamalarını ve sorumluluk reddini okudum, anladım ve kabul ediyorum.</span>
       </label>
       <button id="termsAcceptBtn" disabled style="width:100%;padding:12px">Kayıt Ol / Devam Et</button>
+    </div>
+  </div>
+</div>
+
+<!-- 🛡️ [YENİ — Denetim Raporu Bulgu #1, Model B] İmzalı Davet Modalı -->
+<div id="inviteModal" class="overlay hidden" style="z-index:9999">
+  <div class="card" style="width:480px;max-width:94vw;text-align:left;padding:0">
+    <div style="padding:20px 24px 4px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+      <div>
+        <h3 id="inviteModalTitle" style="margin:0 0 4px;font-size:17px">🔐 Kimlik Doğrulama</h3>
+        <p id="inviteModalSub" style="margin:0;font-size:12px;color:var(--muted)">Username tek başına kimlik kanıtı değildir.</p>
+      </div>
+      <button onclick="closeInviteModal()" style="background:none;border:none;color:var(--muted);font-size:18px;padding:0;min-width:auto;cursor:pointer">✕</button>
+    </div>
+    <div style="padding:16px 24px 4px;display:flex;gap:6px">
+      <button type="button" id="inviteTabCreate" onclick="_switchInviteTab('create')" class="btn-sec" style="flex:1;padding:8px;font-size:12.5px;border-radius:8px">📤 Davet Oluştur</button>
+      <button type="button" id="inviteTabAccept" onclick="_switchInviteTab('accept')" class="btn-sec" style="flex:1;padding:8px;font-size:12.5px;border-radius:8px">📥 Davet Kabul Et</button>
+    </div>
+
+    <div id="inviteCreatePane" style="padding:14px 24px 22px">
+      <p style="font-size:12.5px;color:var(--muted);margin:0 0 10px;line-height:1.5">
+        Bu kodu SADECE gerçekten sizinle konuşmak istediğiniz kişiye,
+        uygulama DIŞINDAN bir kanaldan (WhatsApp, yüz yüze, vb.) gönderin.
+        15 dakika geçerlidir ve yalnızca bir kez kullanılabilir.
+      </p>
+      <textarea id="inviteOutputText" readonly rows="5" style="width:100%;font-family:monospace;font-size:11px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg,var(--panel));color:var(--text);resize:none"></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button type="button" onclick="_generateInviteForModal()" class="btn-sec" style="flex:1;padding:10px;font-size:12.5px">🔄 Yeni Davet Üret</button>
+        <button type="button" onclick="_copyInviteOutput()" class="btn-ok" style="flex:1;padding:10px;font-size:12.5px">📋 Kopyala</button>
+      </div>
+    </div>
+
+    <div id="inviteAcceptPane" style="padding:14px 24px 22px;display:none">
+      <p style="font-size:12.5px;color:var(--muted);margin:0 0 10px;line-height:1.5">
+        Karşı taraftan aldığınız davet kodunu buraya yapıştırın. Doğrulanırsa,
+        o kullanıcı adı için gelen gerçek kimlik anahtarı KALICI olarak
+        onaylanır ve pinlenir.
+      </p>
+      <textarea id="inviteInputText" rows="5" placeholder="Davet kodunu buraya yapıştırın…" style="width:100%;font-family:monospace;font-size:11px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg,var(--panel));color:var(--text);resize:none"></textarea>
+      <button type="button" onclick="_acceptInviteFromModal()" class="btn-ok" style="width:100%;padding:10px;margin-top:10px;font-size:12.5px">✅ Doğrula ve Kabul Et</button>
+      <div id="inviteAcceptResult" style="margin-top:10px;font-size:12px"></div>
     </div>
   </div>
 </div>
