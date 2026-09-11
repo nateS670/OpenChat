@@ -1823,11 +1823,11 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
     <span style="color:var(--muted);font-size:12px">→</span>
   </div>
   <div class="sp-sec">🔐 Kimlik Doğrulama</div>
-  <div class="sp-row" style="cursor:pointer" onclick="openInviteModal('create')">
+  <div class="sp-row" style="cursor:pointer" data-act="openInviteModal" data-a="create">
     <span>📤 Davet Oluştur</span>
     <span style="color:var(--muted);font-size:12px">→</span>
   </div>
-  <div class="sp-row" style="cursor:pointer" onclick="openInviteModal('accept')">
+  <div class="sp-row" style="cursor:pointer" data-act="openInviteModal" data-a="accept">
     <span>📥 Davet ile Doğrula</span>
     <span style="color:var(--muted);font-size:12px">→</span>
   </div>
@@ -2376,11 +2376,11 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
         <h3 id="inviteModalTitle" style="margin:0 0 4px;font-size:17px">🔐 Kimlik Doğrulama</h3>
         <p id="inviteModalSub" style="margin:0;font-size:12px;color:var(--muted)">Username tek başına kimlik kanıtı değildir.</p>
       </div>
-      <button onclick="closeInviteModal()" style="background:none;border:none;color:var(--muted);font-size:18px;padding:0;min-width:auto;cursor:pointer">✕</button>
+      <button data-act="closeInviteModal" style="background:none;border:none;color:var(--muted);font-size:18px;padding:0;min-width:auto;cursor:pointer">✕</button>
     </div>
     <div style="padding:16px 24px 4px;display:flex;gap:6px">
-      <button type="button" id="inviteTabCreate" onclick="_switchInviteTab('create')" class="btn-sec" style="flex:1;padding:8px;font-size:12.5px;border-radius:8px">📤 Davet Oluştur</button>
-      <button type="button" id="inviteTabAccept" onclick="_switchInviteTab('accept')" class="btn-sec" style="flex:1;padding:8px;font-size:12.5px;border-radius:8px">📥 Davet Kabul Et</button>
+      <button type="button" id="inviteTabCreate" data-act="switchInviteTab" data-a="create" class="btn-sec" style="flex:1;padding:8px;font-size:12.5px;border-radius:8px">📤 Davet Oluştur</button>
+      <button type="button" id="inviteTabAccept" data-act="switchInviteTab" data-a="accept" class="btn-sec" style="flex:1;padding:8px;font-size:12.5px;border-radius:8px">📥 Davet Kabul Et</button>
     </div>
 
     <div id="inviteCreatePane" style="padding:14px 24px 22px">
@@ -2391,8 +2391,8 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
       </p>
       <textarea id="inviteOutputText" readonly rows="5" style="width:100%;font-family:monospace;font-size:11px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg,var(--panel));color:var(--text);resize:none"></textarea>
       <div style="display:flex;gap:8px;margin-top:10px">
-        <button type="button" onclick="_generateInviteForModal()" class="btn-sec" style="flex:1;padding:10px;font-size:12.5px">🔄 Yeni Davet Üret</button>
-        <button type="button" onclick="_copyInviteOutput()" class="btn-ok" style="flex:1;padding:10px;font-size:12.5px">📋 Kopyala</button>
+        <button type="button" data-act="generateInviteForModal" class="btn-sec" style="flex:1;padding:10px;font-size:12.5px">🔄 Yeni Davet Üret</button>
+        <button type="button" data-act="copyInviteOutput" class="btn-ok" style="flex:1;padding:10px;font-size:12.5px">📋 Kopyala</button>
       </div>
     </div>
 
@@ -2403,7 +2403,7 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
         onaylanır ve pinlenir.
       </p>
       <textarea id="inviteInputText" rows="5" placeholder="Davet kodunu buraya yapıştırın…" style="width:100%;font-family:monospace;font-size:11px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg,var(--panel));color:var(--text);resize:none"></textarea>
-      <button type="button" onclick="_acceptInviteFromModal()" class="btn-ok" style="width:100%;padding:10px;margin-top:10px;font-size:12.5px">✅ Doğrula ve Kabul Et</button>
+      <button type="button" data-act="acceptInviteFromModal" class="btn-ok" style="width:100%;padding:10px;margin-top:10px;font-size:12.5px">✅ Doğrula ve Kabul Et</button>
       <div id="inviteAcceptResult" style="margin-top:10px;font-size:12px"></div>
     </div>
   </div>
