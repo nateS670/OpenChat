@@ -10153,6 +10153,14 @@ window._haptic = function(ms){
       case 'openImageViewer':   openImageViewer(a, a2); break;
       case 'openAvatarZoom':    openAvatarZoom(a, a2); break;
       case '_uiCallBack':       selChat(a,'private'); $('callBtn')?.click(); break;
+      // 🛡️ [YENİ — Denetim Raporu Bulgu #1] Davet modalı — CSP-güvenli
+      // event delegation (inline onclick DEĞİL).
+      case 'openInviteModal':      window.openInviteModal(a); break;
+      case 'closeInviteModal':     window.closeInviteModal(); break;
+      case 'switchInviteTab':      window._switchInviteTab(a); break;
+      case 'generateInviteForModal': window._generateInviteForModal(); break;
+      case 'copyInviteOutput':     window._copyInviteOutput(); break;
+      case 'acceptInviteFromModal': window._acceptInviteFromModal(); break;
       // ── Msg context menu ──
       case '_uiMsgCtxReply':   startReply(a); document.getElementById('msgCtxMenu')?.remove(); break;
       case '_uiMsgCtxReact':   openReactPicker(a, self==='2'?el:null); document.getElementById('msgCtxMenu')?.remove(); break;
