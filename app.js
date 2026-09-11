@@ -802,6 +802,215 @@ async function _exportEdPubB64(){
   return _b64(raw);
 }
 
+// ══════════════════════════════════════════════════════════════════
+// 🛡️ [YENİ — Denetim Raporu Bulgu #1, Model B] İmzalı Davet (first-contact
+// binding)
+// ══════════════════════════════════════════════════════════════════
+// AMAÇ: /api/identity?action=issue HERKESE, herhangi bir userId için,
+// sahiplik kanıtı olmadan pasaport verdiğinden (bilinçli — sunucuda kalıcı
+// hesap/registry yok), sunucu ASLA "bu userId'nin gerçek sahibi budur"
+// diyemez. Bu fonksiyonlar bu ispatı SUNUCUYA HİÇ İHTİYAÇ DUYMADAN,
+// tamamen kendi kalıcı imza anahtarınızla (bkz. _ensureIdKeyPair) İMZALI
+// bir davet üzerinden sağlar. Davetin güvenliği sunucudan DEĞİL, onu
+// paylaştığınız KANALDAN gelir (WhatsApp, yüz yüze QR, vb.) — siz daveti
+// gerçekten Bob'a/Bob'dan aldığınızı zaten biliyorsunuzdur; imza sadece
+// bu davetin İÇERİĞİNİN yolda değiştirilmediğini garanti eder.
+//
+// Davet formatı (JSON, imzalanmadan önce):
+//   { v:1, userId, username, pubKey (ham genel anahtar, base64),
+//     alg, fp (SHA-256 parmak izi, hex), nonce, createdAt, expiresAt }
+// Taşınan paket: { payload: <yukarıdaki obje>, signature: <base64> }
+// İmza, payload'ın JSON.stringify'ı üzerinden, davet sahibinin KENDİ
+// kalıcı özel anahtarıyla atılır (aynı _ensureIdKeyPair — presence
+// imzalamada kullanılanla AYNI anahtar). Böylece:
+//   • Payload'daki TEK BİR karakter değişse imza geçersiz olur (bütünlük).
+//   • Alıcı, payload içindeki pubKey ile imzayı doğrular — yani "bu
+//     daveti, payload'da yazan pubKey'in özel anahtarına sahip biri
+//     oluşturdu" ispatlanır (kendi kendine imzalı, CA gerektirmez).
+const INVITE_TTL_MS = 15 * 60 * 1000; // 15 dakika — QR/link kısa ömürlü olmalı
+
+async function generateContactInvite(){
+  if(!ME) throw new Error('[SEC] Davet için önce giriş yapılmalı');
+  const kp = await _ensureIdKeyPair();
+  const pubRaw = await crypto.subtle.exportKey('raw', kp.publicKey);
+  const fp = await _fingerprintIdentityPubKey(new Uint8Array(pubRaw));
+  const payload = {
+    v: 1,
+    userId: ME.user_id,
+    username: ME.user_id,
+    pubKey: _b64(pubRaw),
+    alg: _sigAlgName,
+    fp,
+    nonce: _b64(crypto.getRandomValues(new Uint8Array(16))),
+    createdAt: Date.now(),
+    expiresAt: Date.now() + INVITE_TTL_MS,
+  };
+  const payloadStr = JSON.stringify(payload);
+  const signAlg = _sigAlgName === 'ECDSA-P256' ? {name:'ECDSA', hash:'SHA-256'} : 'Ed25519';
+  const sigBuf = await crypto.subtle.sign(signAlg, kp.privateKey, new TextEncoder().encode(payloadStr));
+  const packet = { payload, signature: _b64(sigBuf) };
+  // URL-safe base64 — link/QR içine gömülebilsin diye
+  return btoa(JSON.stringify(packet)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+
+// Daveti çöz + kriptografik olarak doğrula. Hiçbir yerel state DEĞİŞTİRMEZ
+// — sadece "bu davet geçerli mi" sorusuna cevap verir. Onaylamak (bağlama
+// oluşturmak) için acceptContactInvite kullanılır.
+async function _verifyInviteSignature(inviteStr){
+  let packet;
+  try{
+    const b64 = inviteStr.replace(/-/g,'+').replace(/_/g,'/');
+    packet = JSON.parse(atob(b64));
+  }catch(e){ return {ok:false, reason:'Davet çözülemedi (bozuk/eksik veri).'}; }
+
+  const { payload, signature } = packet || {};
+  if(!payload || typeof payload!=='object' || !signature){
+    return {ok:false, reason:'Davet formatı geçersiz.'};
+  }
+  if(payload.v !== 1) return {ok:false, reason:'Desteklenmeyen davet sürümü.'};
+  if(!payload.userId || !payload.pubKey || !payload.fp || !payload.nonce){
+    return {ok:false, reason:'Davette eksik alan(lar) var.'};
+  }
+  // ── Replay koruması: süre + daha önce tüketilmiş nonce ──────────────
+  if(!payload.expiresAt || Date.now() > payload.expiresAt){
+    return {ok:false, reason:'Davetin süresi dolmuş — yeni bir davet isteyin.'};
+  }
+  const used = _getUsedInviteNonces();
+  if(used[payload.nonce]){
+    return {ok:false, reason:'Bu davet daha önce kullanılmış (replay engellendi).'};
+  }
+  // ── Payload bütünlüğü: pubKey'in gerçekten fp'yi ürettiğini doğrula ──
+  // (fp alanı payload içinde taşınıyor olsa da KÖRÜ KÖRÜNE güvenilmez —
+  // pubKey'den yeniden hesaplanıp karşılaştırılır.)
+  let pubRawU8;
+  try{ pubRawU8 = _u8(payload.pubKey); }catch(e){ return {ok:false, reason:'pubKey çözülemedi.'}; }
+  const recomputedFp = await _fingerprintIdentityPubKey(pubRawU8);
+  if(recomputedFp !== payload.fp){
+    return {ok:false, reason:'Davet tahrif edilmiş (fp/pubKey uyuşmuyor).'};
+  }
+  // ── İmza doğrulaması: payload'ı, İÇİNDE TAŞIDIĞI pubKey ile doğrula ──
+  const alg = payload.alg === 'ECDSA-P256'
+    ? {name:'ECDSA', namedCurve:'P-256'}
+    : {name:'Ed25519'};
+  const verifyAlg = payload.alg === 'ECDSA-P256'
+    ? {name:'ECDSA', hash:'SHA-256'}
+    : 'Ed25519';
+  let pubKey;
+  try{
+    pubKey = await crypto.subtle.importKey('raw', pubRawU8, alg, false, ['verify']);
+  }catch(e){ return {ok:false, reason:'pubKey import edilemedi (desteklenmeyen algoritma?).'}; }
+  let sigOk = false;
+  try{
+    sigOk = await crypto.subtle.verify(
+      verifyAlg, pubKey, _u8(signature), new TextEncoder().encode(JSON.stringify(payload))
+    );
+  }catch(e){ return {ok:false, reason:'İmza doğrulama sırasında hata oluştu.'}; }
+  if(!sigOk) return {ok:false, reason:'İmza geçersiz — davet tahrif edilmiş olabilir.'};
+
+  return {ok:true, userId: payload.userId, username: payload.username, fingerprint: payload.fp, nonce: payload.nonce};
+}
+
+// Daveti doğrula VE kabul et — onaylı bağlamayı (Model B) kalıcı olarak
+// yazar. Bu noktadan sonra bu userId için gelen HER anahtar bu
+// fingerprint'le eşleşmek ZORUNDADIR (bkz. _checkAndPinPeerIdentity).
+// 🛡️ Halihazırda PİNLENMİŞ, FARKLI bir kimlik varsa (ör. bu userId'yle
+// zaten önceden — belki de Model A/unverified olarak — konuşulmuş ve o
+// oturumda BAŞKA bir anahtar görülmüşse) burada SESSİZCE üzerine
+// yazılmaz; kullanıcı açıkça bilgilendirilir, çünkü bu durum ya davetin
+// yanlış kişiden geldiği ya da daha önceki oturumun zaten bir saldırgana
+// ait olduğu anlamına gelebilir.
+async function acceptContactInvite(inviteStr){
+  const result = await _verifyInviteSignature(inviteStr);
+  if(!result.ok){
+    if(typeof showToast==='function') showToast('❌ Davet Geçersiz', result.reason);
+    return {ok:false, reason: result.reason};
+  }
+  if(result.userId.toLowerCase() === (ME?.user_id||'').toLowerCase()){
+    if(typeof showToast==='function') showToast('❌ Davet Geçersiz', 'Kendi davetinizi kabul edemezsiniz.');
+    return {ok:false, reason:'self-invite'};
+  }
+  const uidKey = result.userId.toLowerCase();
+  const pinStore = _getIdPinStore();
+  if(pinStore[uidKey] && pinStore[uidKey] !== result.fingerprint){
+    if(typeof showToast==='function'){
+      showToast('⚠️ Uyuşmazlık', `"${result.userId}" için hâlihazırda farklı bir kimlik pinli. Bu davet o kimlikle eşleşmiyor — önce mevcut sohbetteki güvenlik uyarısını inceleyin.`);
+    }
+    return {ok:false, reason:'existing-pin-mismatch'};
+  }
+  _markInviteNonceUsed(result.nonce);
+  const bindings = _getApprovedBindings();
+  bindings[uidKey] = {fingerprint: result.fingerprint, boundAt: Date.now(), addedVia:'invite'};
+  _setApprovedBindings(bindings);
+  // Zaten pinliyse (eşleşen) ya da hiç pin yoksa — pin'i de hemen kur ki
+  // bir sonraki presence'ı beklemeden "trusted" görünsün.
+  if(!pinStore[uidKey]){
+    pinStore[uidKey] = result.fingerprint;
+    _setIdPinStore(pinStore);
+  }
+  Object.keys(_verifyCache).forEach(k=>{ if(k.startsWith(result.userId+'|')) delete _verifyCache[k]; });
+  delete _verifyResultCache[result.userId];
+  if(typeof showToast==='function') showToast('✅ Doğrulanmış Kişi Eklendi', `${result.userId} artık güvenli/doğrulanmış kişi olarak işaretli.`);
+  if(typeof chatId !== 'undefined' && chatId === result.userId){ if(typeof renderChat==='function') renderChat(); if(typeof _renderIdentityTrust==='function') _renderIdentityTrust(result.userId); }
+  return {ok:true, userId: result.userId};
+}
+
+// ── Davet Modalı — UI bağlantı katmanı ─────────────────────────────
+let _inviteModalTargetUserId = null; // 'accept' modu bir sohbetten açıldıysa hangi kullanıcı için
+window.openInviteModal = (mode, userId) => {
+  _inviteModalTargetUserId = userId || null;
+  $('inviteModal')?.classList.remove('hidden');
+  _switchInviteTab(mode || 'create');
+};
+window.closeInviteModal = () => {
+  $('inviteModal')?.classList.add('hidden');
+  _inviteModalTargetUserId = null;
+};
+window._switchInviteTab = (tab) => {
+  const isCreate = tab === 'create';
+  $('inviteCreatePane').style.display = isCreate ? 'block' : 'none';
+  $('inviteAcceptPane').style.display = isCreate ? 'none' : 'block';
+  $('inviteTabCreate').style.background = isCreate ? 'var(--primary)' : '';
+  $('inviteTabCreate').style.color = isCreate ? '#fff' : '';
+  $('inviteTabAccept').style.background = !isCreate ? 'var(--primary)' : '';
+  $('inviteTabAccept').style.color = !isCreate ? '#fff' : '';
+  $('inviteAcceptResult').innerHTML = '';
+  if(isCreate && !$('inviteOutputText').value) window._generateInviteForModal();
+  if(!isCreate && _inviteModalTargetUserId){
+    $('inviteModalSub').innerText = `"${_inviteModalTargetUserId}" için davet kodu yapıştırın.`;
+  } else {
+    $('inviteModalSub').innerText = 'Username tek başına kimlik kanıtı değildir.';
+  }
+};
+window._generateInviteForModal = async () => {
+  try{
+    $('inviteOutputText').value = '⏳ Üretiliyor…';
+    const invite = await generateContactInvite();
+    $('inviteOutputText').value = invite;
+  }catch(e){
+    $('inviteOutputText').value = '';
+    if(typeof showToast==='function') showToast('Hata', 'Davet üretilemedi: '+(e.message||e));
+  }
+};
+window._copyInviteOutput = async () => {
+  const v = $('inviteOutputText').value;
+  if(!v) return;
+  try{ await navigator.clipboard.writeText(v); if(typeof showToast==='function') showToast('Kopyalandı', 'Davet kodu panoya kopyalandı.'); }
+  catch(e){ $('inviteOutputText').select(); document.execCommand('copy'); }
+};
+window._acceptInviteFromModal = async () => {
+  const v = $('inviteInputText').value.trim();
+  const resEl = $('inviteAcceptResult');
+  if(!v){ resEl.innerHTML = '<span style="color:var(--muted)">Önce bir davet kodu yapıştırın.</span>'; return; }
+  const result = await acceptContactInvite(v);
+  if(result.ok){
+    resEl.innerHTML = `<span style="color:var(--ok)">✅ "${escHtml(result.userId)}" doğrulandı ve güvenilir olarak eklendi.</span>`;
+    $('inviteInputText').value='';
+    setTimeout(()=>window.closeInviteModal(), 1500);
+  } else {
+    resEl.innerHTML = `<span style="color:#ef4444">❌ ${escHtml(result.reason||'Davet doğrulanamadı.')}</span>`;
+  }
+};
+
 // Sunucudan imzalı pasaport iste — oturum başına bir kez, sonra önbellekten dön.
 // 🛡️ Başarısız olursa GÜVENSİZ bir fallback'e düşülmez: pasaportsuz presence
 // gönderilir ve karşı taraflar bu durumda bizimle WebRTC bağlantısı KURMAZ.
@@ -990,10 +1199,18 @@ function _isFreshGroupPacket(key, ts, lastSeenMap){
 
 // Bir peer'ın pasaportunu (a) sunucuda doğrula, (b) presence imzasını
 // pasaport içindeki genel anahtarla yerel olarak doğrula. İkisi de
-// geçmezse peer DOĞRULANMAMIŞ sayılır ve onunla WebRTC kurulmaz.
+// geçmezse peer REDDEDİLİR (aşağıdaki dönüş: {status:'rejected'}).
+// 🛡️ [YENİ — Denetim Raporu Bulgu #1] Bu fonksiyonun ispatladığı şey
+// SADECE "pasaport tahrif edilmemiş, sunucumuz imzalamış" — kimin
+// gerçekten bu userId'nin sahibi olduğunu İSPATLAMAZ (bkz. aşağıdaki
+// yorum ve _checkAndPinPeerIdentity). Bu yüzden dönüş değeri artık
+// boolean değil: {status:'trusted'|'unverified'|'rejected', fp}.
+// passport validity ≠ identity ownership — bu ayrım burada ve
+// _checkAndPinPeerIdentity'de KORUNUR, birbirine karıştırılmaz.
 async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, presenceSig){
   const cacheKey = fromUserId + '|' + passportSig + '|' + nonce;
   if(cacheKey in _verifyCache) return _verifyCache[cacheKey];
+  const REJECTED = {status:'rejected', fp:null};
   try{
     // 🛡️ [FIX] "passport" sunucudan (identity.js) BASE64 STRING olarak gelir
     // (Buffer.from(identityPayload).toString('base64')) — obje DEĞİLDİR.
@@ -1004,11 +1221,11 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
     try{ decoded = JSON.parse(atob(passport)); }
     catch(e){
       console.warn('[SEC][VERIFY-FAIL] pasaport decode/parse edilemedi:', fromUserId, e);
-      _verifyCache[cacheKey] = false; return false;
+      _verifyCache[cacheKey] = REJECTED; return REJECTED;
     }
     if(!decoded || (decoded.username !== fromUserId && decoded.userId !== fromUserId)){
       console.warn('[SEC][VERIFY-FAIL] pasaporttaki kimlik fromUserId ile eşleşmiyor:', fromUserId, 'decoded=', decoded);
-      _verifyCache[cacheKey] = false; return false;
+      _verifyCache[cacheKey] = REJECTED; return REJECTED;
     }
     const r = await fetch('/api/identity?action=verify', {
       method: 'POST',
@@ -1019,12 +1236,12 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
     if(!r.ok){
       let body=''; try{ body = await r.text(); }catch(_){}
       console.warn('[SEC][VERIFY-FAIL] /api/identity?action=verify HTTP', r.status, fromUserId, body);
-      _verifyCache[cacheKey] = false; return false;
+      _verifyCache[cacheKey] = REJECTED; return REJECTED;
     }
     const data = await r.json();
     if(!data || data.valid !== true || !data.identity){
       console.warn('[SEC][VERIFY-FAIL] sunucu pasaportu geçersiz/valid:false buldu:', fromUserId, data);
-      _verifyCache[cacheKey] = false; return false;
+      _verifyCache[cacheKey] = REJECTED; return REJECTED;
     }
 
     // Sunucu pasaportu onayladı → şimdi presence imzasını pasaportun
@@ -1050,52 +1267,63 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
       );
     }catch(e){
       console.warn('[SEC][VERIFY-FAIL] genel anahtar import edilemedi (alg=%s, pubKey uzunluğu=%s):', decoded.alg, data.identity.pubKey?.length, fromUserId, e);
-      _verifyCache[cacheKey] = false; return false;
+      _verifyCache[cacheKey] = REJECTED; return REJECTED;
     }
     const enc = new TextEncoder().encode(fromUserId + '|' + nonce);
     const sigOk = await crypto.subtle.verify(verifyAlg, pubKey, _u8(presenceSig), enc);
     if(!sigOk){
       console.warn('[SEC][VERIFY-FAIL] presence imzası pasaportun genel anahtarıyla eşleşmiyor:', fromUserId, 'alg=', decoded.alg);
-      _verifyCache[cacheKey] = false; return false;
+      _verifyCache[cacheKey] = REJECTED; return REJECTED;
     }
 
-    // 🛡️ [ÇOK KRİTİK FIX — Kimlik Taklidi] İmza matematiksel olarak geçerli
+    // 🛡️ [ÇOK KRİTİK — Kimlik Taklidi] İmza matematiksel olarak geçerli
     // olsa bile bu, sunucunun "bu kullanıcı adı gerçekten bu kişiye ait"
     // dediği anlamına GELMEZ — sunucuda kalıcı veri/hesap olmadığı için
     // /api/identity kim isterse ona bu kullanıcı adı için imzalı bir
     // pasaport verir (bkz. denetim raporu bulgu #1). Asıl güven kararı
-    // burada, CİHAZDA verilir: bu kullanıcı adıyla daha önce hangi kimlik
-    // anahtarını gördük? İlk temassa pinleriz (TOFU); daha önce FARKLI bir
-    // anahtar pinlenmişse (kullanıcı adı çalınmış/aynı ad başkasınca
-    // alınmış/MITM) GÜVENMEYİZ ve kullanıcıyı uyarırız.
-    const pinOk = await _checkAndPinPeerIdentity(fromUserId, _u8(data.identity.pubKey));
-    if(!pinOk) console.warn('[SEC][PIN-FAIL] kimlik anahtarı pinlenmiş değerle eşleşmiyor:', fromUserId);
-    // 🛡️ [YENİ] Pin/doğrulama geçtiyse, bu peer'ın imza doğrulama anahtarını
+    // burada DEĞİL, _checkAndPinPeerIdentity'de verilir — o fonksiyon
+    // pin/onaylı-bağlama durumuna göre trusted/unverified/rejected
+    // arasında karar verir. Burada sadece SONUCU yukarı taşıyoruz.
+    const pinResult = await _checkAndPinPeerIdentity(fromUserId, _u8(data.identity.pubKey));
+    if(pinResult.status==='rejected') console.warn('[SEC][PIN-FAIL] kimlik anahtarı reddedildi:', fromUserId);
+    // 🛡️ [YENİ] Pin/doğrulama reddedilmediyse (trusted VEYA unverified —
+    // ikisi de bağlantı kurabilir), bu peer'ın imza doğrulama anahtarını
     // (zaten import edilmiş CryptoKey — tekrar import etmeye gerek yok)
-    // mesaj bazlı imza doğrulaması için sakla.
-    if(pinOk) _peerSigningKeys[fromUserId] = {key: pubKey, alg: decoded.alg || 'Ed25519'};
-    _verifyCache[cacheKey] = pinOk;
-    return pinOk;
+    // mesaj bazlı imza doğrulaması için sakla. 'unverified' durumda da bu
+    // saklanır çünkü mesaj imzası hâlâ "bu mesaj, bağlantıyı kuran AYNI
+    // anahtarla imzalandı mı" sorusuna cevap verir — kimlik SAHİPLİĞİNE
+    // dair bir iddiada bulunmaz, sadece oturum-içi tutarlılık sağlar.
+    if(pinResult.status!=='rejected') _peerSigningKeys[fromUserId] = {key: pubKey, alg: decoded.alg || 'Ed25519'};
+    _verifyCache[cacheKey] = pinResult;
+    return pinResult;
   }catch(e){
     console.warn('[SEC][VERIFY-FAIL] Pasaport doğrulama istisnası:', fromUserId, e);
-    _verifyCache[cacheKey] = false;
-    return false;
+    _verifyCache[cacheKey] = REJECTED;
+    return REJECTED;
   }
 }
 
 // Bir peer için doğrulama durumunu garanti et — önbellekte varsa onu kullan,
 // yoksa son alınan presence kimlik bilgileriyle (varsa) doğrulamayı dener.
+// 🛡️ [YENİ — Bulgu #1] Dönüş artık {status, fp} — çağıranlar
+// status==='rejected' ise bağlanmamalı, aksi hâlde (trusted/unverified)
+// bağlanabilir ama UI'da unverified durumunu göstermelidir (bkz. çağıran
+// taraflardaki _isPeerTrusted kontrolleri).
 async function _ensurePeerVerified(userId){
-  if(_verifiedPeers.has(userId)) return true;
+  if(_verifyResultCache[userId]) return _verifyResultCache[userId];
   const idf = _lastPresenceIdentity[userId];
   if(!idf){
     console.warn('[SEC][VERIFY-FAIL] bu peer için kimlikli presence hiç alınmadı (henüz gelmedi ya da kimliksiz geldi):', userId);
-    return false;
+    return {status:'rejected', fp:null};
   }
-  const ok = await _verifyPeerPassport(userId, idf.passport, idf.passportSig, idf.nonce, idf.presenceSig);
-  if(ok) _verifiedPeers.add(userId); else _verifiedPeers.delete(userId);
-  return ok;
+  const result = await _verifyPeerPassport(userId, idf.passport, idf.passportSig, idf.nonce, idf.presenceSig);
+  if(result.status!=='rejected'){ _verifiedPeers.add(userId); _verifyResultCache[userId] = result; }
+  else { _verifiedPeers.delete(userId); delete _verifyResultCache[userId]; }
+  if(typeof chatId !== 'undefined' && chatId === userId && typeof _renderIdentityTrust==='function') _renderIdentityTrust(userId);
+  return result;
 }
+// userId → en son hesaplanan {status,fp} sonucu (hızlı, senkron bakış için)
+const _verifyResultCache = {};
 
 async function getMyECDHPubKeyJwk(){
   if(!_sessionKeyPair) return null;
@@ -1160,6 +1388,41 @@ function _getIdPinStore(){
 }
 function _setIdPinStore(s){ try{ localStorage.setItem(PEER_ID_PIN_KEY, JSON.stringify(s)); }catch(e){} }
 
+// 🛡️ [YENİ — Denetim Raporu Bulgu #1, Model B] "Onaylı bağlama" deposu.
+// PEER_ID_PIN_KEY ("pinned") ile KARIŞTIRILMAMALI — ayrı, daha güçlü bir
+// kavram: buraya bir userId SADECE imzalı bir davet/QR ile (bkz.
+// acceptContactInvite) yazılır, hiçbir zaman ilk-temas TOFU'suyla
+// otomatik yazılmaz. Bir userId burada varsa, o userId için gelen HER
+// anahtar bu fingerprint'le eşleşmek ZORUNDADIR — eşleşmezse durum ne
+// olursa olsun (ilk temas dahil) REDDEDİLİR, asla pinlenmez (bkz.
+// _checkAndPinPeerIdentity). Bu, sunucunun asla cevaplayamayacağı "bu
+// username'in GERÇEK sahibi kim" sorusuna, uygulama DIŞINDAN (davet
+// linkini paylaştığınız kanal — WhatsApp, yüz yüze, QR) gelen bir kanıtla
+// cevap verir; sunucuda hiçbir yeni state gerektirmez.
+const APPROVED_BINDING_KEY = 'sv_approved_binding_v1';
+function _getApprovedBindings(){
+  try{ return JSON.parse(localStorage.getItem(APPROVED_BINDING_KEY) || '{}'); }catch(e){ return {}; }
+}
+function _setApprovedBindings(s){ try{ localStorage.setItem(APPROVED_BINDING_KEY, JSON.stringify(s)); }catch(e){} }
+
+// Kullanılmış davet nonce'ları — aynı davetin tekrar tekrar "kabul
+// edilerek" işlenmesini (replay) engeller. Kalıcı: bir davet sadece BİR
+// KEZ tüketilebilir, oturum kapansa bile.
+const USED_INVITE_NONCE_KEY = 'sv_used_invite_nonces_v1';
+function _getUsedInviteNonces(){
+  try{ return JSON.parse(localStorage.getItem(USED_INVITE_NONCE_KEY) || '{}'); }catch(e){ return {}; }
+}
+function _markInviteNonceUsed(nonce){
+  try{
+    const s = _getUsedInviteNonces();
+    s[nonce] = Date.now();
+    // Depoyu şişirmemek için 30 günden eski girişleri temizle
+    const cutoff = Date.now() - 30*24*60*60*1000;
+    Object.keys(s).forEach(k=>{ if(s[k] < cutoff) delete s[k]; });
+    localStorage.setItem(USED_INVITE_NONCE_KEY, JSON.stringify(s));
+  }catch(e){}
+}
+
 async function _fingerprintIdentityPubKey(rawPubKeyU8){
   const raw = await crypto.subtle.digest('SHA-256', rawPubKeyU8);
   return [...new Uint8Array(raw)].map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -1168,46 +1431,139 @@ async function _fingerprintIdentityPubKey(rawPubKeyU8){
 const _peerPendingIdentity = {}; // userId → onay bekleyen YENİ kimlik parmak izi
 
 // pubKeyRawU8: peer pasaportundaki genel anahtarın HAM (raw) baytları.
-// Dönüş: true → güvenilir (pin eşleşti ya da ilk temas), false → pin uyuşmazlığı.
+// 🛡️ [YENİ — Denetim Raporu Bulgu #1, gerçek fix] Dönüş artık boolean
+// DEĞİL — üç durumlu bir sonuç: {status:'trusted'|'unverified'|'rejected', fp}
+//
+//   'trusted'    → ya daha önce pinlenmiş kimlikle eşleşti (devam eden
+//                  ilişki, Model A'nın sonraki temasları), ya da imzalı
+//                  bir davetle (Model B) ONAYLANMIŞ fingerprint'le
+//                  eşleşti ve ŞİMDİ pinlendi. Bağlantı kurulur, kimlik
+//                  güvenilir sayılır.
+//   'unverified' → hiç pin YOK ve hiç onaylı davet YOK (saf username
+//                  arama/friend-request yoluyla ilk temas — Model A).
+//                  Bağlantı kurulmasına İZİN VERİLİR (kullanıcının
+//                  isteği: username akışı bozulmasın) AMA BURADA PİN
+//                  ASLA YAZILMAZ. Yani bu peer, uygulamanın hiçbir
+//                  yerinde "doğrulanmış/pinlenmiş kimlik" olarak
+//                  görünmez; her yeni bağlantıda yeniden 'unverified'
+//                  olarak değerlendirilir, sessizce 'trusted'a terfi
+//                  ETMEZ. Tek çıkış yolu: kullanıcı güvenlik kodunu
+//                  başka bir kanaldan doğrulayıp elle onaylar (Model A
+//                  → Model B geçişi, bkz. window._manuallyVerifyPeer)
+//                  YA DA karşı taraf bir davet/QR ile onaylı hâle gelir.
+//   'rejected'   → ya pinlenmiş kimlikle UYUŞMUYOR (anahtar değişti —
+//                  cihaz değişikliği ya da MITM, Test 8), ya da onaylı
+//                  bir davet VAR ama gelen anahtar o davetteki
+//                  fingerprint'le UYUŞMUYOR (Test 4 — saldırgan gerçek
+//                  bob'un onaylı fingerprint'ini taklit edemiyor).
+//                  Bağlantı KURULMAZ.
 async function _checkAndPinPeerIdentity(userId, pubKeyRawU8){
   const uidKey = userId.toLowerCase();
   const fp = await _fingerprintIdentityPubKey(pubKeyRawU8);
   const store = _getIdPinStore();
   const existing = store[uidKey];
 
-  if(!existing){
-    // İlk temas — pinle ve kabul et, kullanıcıyı bilgilendir.
-    store[uidKey] = fp;
-    _setIdPinStore(store);
-    // 🐞 [MITM-FIX] Burada _peerKeyFingerprints YAZILMAZ: bu değişken
-    // ekranda gösterilen, her iki tarafta AYNI olması gereken simetrik
-    // güvenlik koduna karşılık gelir (bkz. storePeerPublicKey — sort(myKey,
-    // peerKey) hash'i). Buradaki fp ise sadece KARŞI TARAFIN kimlik
-    // anahtarının tek taraflı hash'i — her iki cihazda FARKLI çıkar ve
-    // önceden yazılmışsa doğru simetrik kodun üzerine yazıp onu bozardı.
-    if(typeof showToast==='function'){
-      showToast('🔐 Yeni Güvenli Bağlantı', `${userId} ile ilk kez konuşuyorsunuz. Güvenlik kodunu mümkünse başka bir kanaldan doğrulayın.`);
-    }
-    return true;
-  }
-  if(existing === fp){
-    return true; // beklenen kimlik — güvenilir (gösterilen kod storePeerPublicKey'den gelir)
+  // ── 1) Zaten pinlenmiş bir kimlik var mı? (mevcut ilişkinin devamı) ──
+  if(existing){
+    if(existing === fp) return {status:'trusted', fp};
+    // Pin UYUŞMAZLIĞI — Model A/B fark etmeksizin sessizce kabul ETME.
+    console.warn('[SEC][PIN-MISMATCH]', userId, 'için pinlenen kimlik anahtarıyla eşleşmiyor.');
+    _peerPendingIdentity[userId] = fp;
+    if(typeof _showKeyChangeWarning==='function') _showKeyChangeWarning(userId);
+    return {status:'rejected', fp};
   }
 
-  // Pin UYUŞMAZLIĞI — sessizce kabul ETME.
-  console.warn('[SEC][PIN-MISMATCH]', userId, 'için pinlenen kimlik anahtarıyla eşleşmiyor.');
-  _peerPendingIdentity[userId] = fp;
-  if(typeof _showKeyChangeWarning==='function') _showKeyChangeWarning(userId);
-  return false;
+  // ── 2) Pin yok — imzalı bir davetle ONAYLANMIŞ bir bağlama var mı? ──
+  // (Model B: first-contact'ı GERÇEKTEN kriptografik olarak kapatan yol)
+  const bindings = _getApprovedBindings();
+  const approved = bindings[uidKey];
+  if(approved){
+    if(approved.fingerprint === fp){
+      // Onaylı fingerprint'le eşleşti → ŞİMDİ pinle. Bu, "server passport
+      // + ilk temas" değil, "kullanıcının uygulama DIŞINDAN kanıtladığı
+      // bağlama" ile kazanılan güven — bkz. acceptContactInvite.
+      store[uidKey] = fp;
+      _setIdPinStore(store);
+      if(typeof showToast==='function') showToast('✅ Doğrulanmış Kişi', `${userId} davetle doğrulandı ve güvenilir olarak eklendi.`);
+      return {status:'trusted', fp};
+    }
+    // Onaylı bir bağlama VAR ama gelen anahtar başka — saldırgan gerçek
+    // sahibinin fingerprint'ini bilse bile taklit EDEMEZ (private key yok).
+    console.warn('[SEC][BINDING-MISMATCH]', userId, 'onaylı davet fingerprint\'iyle eşleşmiyor — reddedildi.');
+    if(typeof showToast==='function') showToast('⛔ Kimlik Uyuşmazlığı', `"${userId}" için gelen kimlik, daha önce davetle doğruladığınız güvenlik koduyla eşleşmiyor. Bağlantı reddedildi.`);
+    return {status:'rejected', fp};
+  }
+
+  // ── 3) Ne pin ne onaylı bağlama — saf username/friend-request ile ilk
+  // temas (Model A). BURASI, güvenlik araştırmacısının bulduğu senaryonun
+  // TAM OLARAK gerçekleştiği yer: server-signed passport, HERHANGİ bir
+  // userId için, sahiplik kanıtı olmadan alınabildiğinden (bkz. identity.js
+  // yorumları), bu andaki "fp" saldırganın kendi anahtarı olabilir — bunun
+  // gerçekten userId'nin sahibine ait olduğuna dair HİÇBİR kriptografik
+  // kanıt yok. Kullanıcının isteği üzerine bağlantı burada ENGELLENMİYOR
+  // (username akışı korunuyor) ama — ve bu kritik — PİN BURADA ASLA
+  // YAZILMIYOR. 'unverified' döndürüp pin yazmamak, "saldırganın anahtarını
+  // sessizce 'victim' olarak güvenilir/kalıcı hâle getirme" saldırısını
+  // yapısal olarak imkânsız kılar: ne şimdi ne sonra store[uidKey] bu
+  // anahtarla doldurulmaz; ileride gerçek kişiyle bir davet/QR değişimi
+  // yapılırsa (Model B) o bağlama bu sahte anahtarla ASLA çakışmaz ve onu
+  // otomatik REDDEDER (yukarıdaki 2. adım).
+  console.warn('[SEC][UNVERIFIED-FIRST-CONTACT]', userId, '— pin YAZILMADI, açık doğrulama bekleniyor.');
+  return {status:'unverified', fp};
 }
+
+// Kullanıcı, 'unverified' bir peer'in güvenlik kodunu BAŞKA BİR KANALDAN
+// (telefon, yüz yüze) bizzat karşılaştırıp doğruladığında çağrılır — bu,
+// Model A'dan Model B'ye elle geçiştir: kullanıcının kendi doğrulaması,
+// artık bir davete eşdeğer onaylı bağlama olarak kaydedilir VE hemen
+// pinlenir.
+window._manuallyVerifyPeer = async (userId) => {
+  const uidKey = userId.toLowerCase();
+  const idf = _lastPresenceIdentity[userId];
+  if(!idf){
+    if(typeof showToast==='function') showToast('Doğrulanamadı', `${userId} için kimlik bilgisi henüz alınmadı.`);
+    return false;
+  }
+  let decoded;
+  try{ decoded = JSON.parse(atob(idf.passport)); }catch(e){ return false; }
+  const fp = _verifyCache[userId+'|'+idf.passportSig+'|'+idf.nonce]?.fp;
+  // fp önbellekte yoksa (ör. reddedilmiş bir sonuçtan sonra) presence'taki
+  // ham anahtardan tekrar hesapla.
+  const rawFp = fp || (decoded?.pubKey ? await _fingerprintIdentityPubKey(_u8(decoded.pubKey)) : null);
+  if(!rawFp){
+    if(typeof showToast==='function') showToast('Doğrulanamadı', 'Güvenlik kodu hesaplanamadı.');
+    return false;
+  }
+  const bindings = _getApprovedBindings();
+  bindings[uidKey] = {fingerprint: rawFp, boundAt: Date.now(), addedVia:'manual'};
+  _setApprovedBindings(bindings);
+  const store = _getIdPinStore();
+  store[uidKey] = rawFp;
+  _setIdPinStore(store);
+  Object.keys(_verifyCache).forEach(k=>{ if(k.startsWith(userId+'|')) delete _verifyCache[k]; });
+  _verifiedPeers.delete(userId); // yeniden hesaplansın, artık 'trusted'
+  if(typeof showToast==='function') showToast('✅ Doğrulandı', `${userId} güvenilir kişi olarak işaretlendi.`);
+  if(typeof chatId !== 'undefined' && chatId === userId){ if(typeof renderChat==='function') renderChat(); if(typeof _renderIdentityTrust==='function') _renderIdentityTrust(userId); }
+  return true;
+};
 
 // Kullanıcı uyarıyı görüp bilerek yeni kimliği kabul ederse çağrılır.
 window._acceptNewPeerIdentity = (userId) => {
   const fp = _peerPendingIdentity[userId];
   if(!fp) return;
+  const uidKey = userId.toLowerCase();
   const store = _getIdPinStore();
-  store[userId.toLowerCase()] = fp;
+  store[uidKey] = fp;
   _setIdPinStore(store);
+  // 🛡️ [YENİ — Bulgu #1] Onaylı bir davet (Model B) varsa onu da
+  // güncelle — aksi halde iki depo tutarsızlaşır (pin yeni, onaylı
+  // bağlama eski/yanlış kalır). Bu, "explicit re-verification" olarak
+  // sayılır: kullanıcı uyarıyı GÖRÜP bilerek kabul etti, sessiz değil.
+  const bindings = _getApprovedBindings();
+  if(bindings[uidKey]){
+    bindings[uidKey] = {fingerprint: fp, boundAt: Date.now(), addedVia:'manual-override'};
+    _setApprovedBindings(bindings);
+  }
   delete _peerPendingIdentity[userId];
   // Bu kullanıcı için önbelleklenmiş doğrulama sonuçlarını temizle ki
   // bir sonraki presence yeni pinle karşı doğru sonucu üretsin.
@@ -1324,6 +1680,50 @@ function _renderChatFpEl(userId){
 }
 function _updateChatFpDisplay(userId){
   _renderChatFpEl(userId);
+}
+
+// 🛡️ [YENİ — Denetim Raporu Bulgu #1] Kalıcı kimlik güven durumu banner'ı.
+// _renderChatFpEl'den (session ECDH kodu) KASITLI OLARAK AYRI: o, BU
+// OTURUMUN e2e şifreleme anahtarını doğrular ve oturum kapanınca sıfırlanır
+// ("Oturum-içi... kalıcı pinleme yok" — bkz. storePeerPublicKey). Burası
+// ise UZUN VADELİ kimlik anahtarının (identity.js pasaportundaki) pinli/
+// onaylı olup olmadığını gösterir — kalıcıdır, TOFU/Model A/B kararının
+// doğrudan yansımasıdır. İkisi karıştırılmamalı: biri "bu oturum MITM'siz
+// mi", diğeri "bu, geçmişte konuştuğum/davetle doğruladığım AYNI kişi mi".
+function _getIdentityTrustStatus(userId){
+  if(!userId) return null;
+  const uidKey = userId.toLowerCase();
+  if(_getIdPinStore()[uidKey]) return 'trusted';
+  const cached = _verifyResultCache[userId];
+  if(cached && cached.status==='unverified') return 'unverified';
+  return null; // henüz bağlantı/karar yok (ör. peer offline)
+}
+function _renderIdentityTrust(userId){
+  const el = $('chatIdentityTrust');
+  if(!el) return;
+  const status = _getIdentityTrustStatus(userId);
+  if(status === 'trusted'){
+    el.style.display='block';
+    el.style.background='rgba(16,185,129,.08)';
+    el.style.color='var(--ok)';
+    el.innerHTML = `🔐 Kimlik doğrulandı — bu, daha önce pinlenmiş ya da davetle doğrulanmış aynı kişi.`;
+  } else if(status === 'unverified'){
+    const cached = _verifyResultCache[userId];
+    const idFp = cached && cached.fp ? cached.fp.match(/.{4}/g).join(' ').toUpperCase() : null;
+    el.style.display='block';
+    el.style.background='#fef3c7';
+    el.style.color='#92400e';
+    el.innerHTML = `⚠️ <strong>Kimlik doğrulanmadı.</strong> "${escHtml(userId)}" adını kullanan biriyle konuşuyorsunuz ama bunun iddia ettiği kişi olduğuna dair kriptografik bir kanıt yok (username herkesçe seçilebilir).`
+      + (idFp ? `<div style="margin:4px 0;font-family:monospace;font-size:11px">🔑 ${escHtml(idFp)}</div>` : '')
+      + `<div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="idtrust-manualverify-btn" style="font-size:11px;padding:5px 10px;border-radius:8px;background:#92400e;color:#fff;border:none;cursor:pointer">Kodu başka kanaldan doğruladım</button>
+          <button type="button" class="idtrust-invite-btn" style="font-size:11px;padding:5px 10px;border-radius:8px;background:transparent;color:#92400e;border:1px solid #92400e;cursor:pointer">Davetle Doğrula</button>
+        </div>`;
+    el.querySelector('.idtrust-manualverify-btn')?.addEventListener('click', ()=> window._manuallyVerifyPeer(userId));
+    el.querySelector('.idtrust-invite-btn')?.addEventListener('click', ()=> window.openInviteModal?.('accept', userId));
+  } else {
+    el.style.display='none';
+  }
 }
 // Tek seferlik: koda tıklanınca aç/kapat (CSP-güvenli — inline onclick değil)
 (function _initFpToggle(){
@@ -1880,15 +2280,23 @@ async function _dcHandleOffer(d){
   }
   const userId = d.from;
 
-  // 🛡️ [HIGH-03]/[YENİ-H2]/[HIGH-04] Teklifi (offer) kabul etmeden ÖNCE
-  // gönderenin sunucu onaylı kimlik pasaportunu doğrula (son presence'ından
-  // önbelleğe alınan bilgiyle). Doğrulanamazsa — tahrif edilmiş/sahte
-  // kimlik, olası MITM — bağlantı kurulmaz, RTCPeerConnection açılmaz.
-  const verified = await _ensurePeerVerified(userId);
-  if(!verified){
-    console.warn('[SEC] Doğrulanamayan kimlikten gelen dc_offer reddedildi:', userId);
+  // 🛡️ [HIGH-03]/[YENİ-H2]/[HIGH-04]/[Bulgu #1] Teklifi (offer) kabul
+  // etmeden ÖNCE gönderenin sunucu onaylı kimlik pasaportunu doğrula (son
+  // presence'ından önbelleğe alınan bilgiyle). SADECE 'rejected' (tahrif
+  // edilmiş pasaport, ya da pinlenmiş/onaylı kimlikle UYUŞMAYAN bir
+  // anahtar) bağlantıyı engeller. 'unverified' (username-arama ile ilk
+  // temas, hiç pin/onaylı davet yok) bağlantı KURULMASINA izin verilir —
+  // kullanıcının isteği: username akışı bozulmasın — ama kimlik ASLA
+  // burada pinlenmez (bkz. _checkAndPinPeerIdentity) ve arayüz bu durumu
+  // kalıcı olarak "doğrulanmadı" diye göstermek ZORUNDADIR.
+  const verifyResult = await _ensurePeerVerified(userId);
+  if(verifyResult.status==='rejected'){
+    console.warn('[SEC] Doğrulanamayan/reddedilen kimlikten gelen dc_offer reddedildi:', userId);
     if(typeof showToast==='function') showToast('⚠️ Güvenlik Uyarısı', '"'+userId+'" için kimlik doğrulanamadı, bağlantı reddedildi.');
     return;
+  }
+  if(verifyResult.status==='unverified'){
+    console.warn('[SEC][UNVERIFIED] dc_offer doğrulanmamış kimlikten kabul ediliyor (Model A):', userId);
   }
 
   console.log('[DC] Offer alındı ←', userId);
@@ -2655,14 +3063,16 @@ async function handleSig(d){
         const needsConnect = !peer || peer.state==='closed';
         if(needsConnect && ME.user_id < d.from){
           // Biz initiator'ız — ama ÖNCE kimlik pasaportunu doğrula.
-          // Doğrulama başarısız/eksikse (sahte/tahrif edilmiş kimlik,
-          // olası MITM) WebRTC bağlantısı ASLA kurulmaz.
-          _ensurePeerVerified(d.from).then(ok=>{
-            if(ok){
+          // 🛡️ [Bulgu #1] Sadece 'rejected' bağlantıyı engeller;
+          // 'unverified' (Model A, ilk temas) bağlanmaya izin verir ama
+          // pin YAZILMAZ — bkz. _checkAndPinPeerIdentity.
+          _ensurePeerVerified(d.from).then(res=>{
+            if(res.status!=='rejected'){
+              if(res.status==='unverified') console.warn('[SEC][UNVERIFIED] Doğrulanmamış kimlikle bağlantı kuruluyor (Model A):', d.from);
               const p2 = _dcPeers[d.from];
               if(!p2 || p2.state==='closed') _dcConnect(d.from);
             } else {
-              console.warn('[SEC] Kimlik doğrulanamadı — WebRTC bağlantısı reddedildi:', d.from);
+              console.warn('[SEC] Kimlik reddedildi — WebRTC bağlantısı kurulmadı:', d.from);
               if(typeof showToast==='function') showToast('⚠️ Güvenlik Uyarısı', '"'+d.from+'" için kimlik doğrulanamadı, bağlantı kurulmadı.');
             }
           });
@@ -2977,10 +3387,15 @@ async function handleSig(d){
     // presence'ı henüz alınmamış biri) sahte bir arama teklifi göndererek
     // arama modalını açtırabilir, SDP/ICE alışverişini tetikleyebilir ve
     // olası bir IP-sızıntısı/rahatsız etme (harassment) vektörü oluşturabilirdi.
+    // 🛡️ [Bulgu #1] rejected → engelle; unverified → izin ver (Model A,
+    // diğer bağlantı noktalarıyla tutarlı) ama loglanır.
     const _rtcVerified = await _ensurePeerVerified(d.from);
-    if(!_rtcVerified){
-      console.warn('[SEC] Doğrulanamayan kimlikten gelen rtc_offer reddedildi:', d.from);
+    if(_rtcVerified.status==='rejected'){
+      console.warn('[SEC] Doğrulanamayan/reddedilen kimlikten gelen rtc_offer reddedildi:', d.from);
       return;
+    }
+    if(_rtcVerified.status==='unverified'){
+      console.warn('[SEC][UNVERIFIED] rtc_offer doğrulanmamış kimlikten kabul ediliyor (Model A):', d.from);
     }
     // ICE restart offer — aktif arama varken geliyorsa yeniden müzakere et
     if(d.iceRestart && pc && pc.signalingState !== 'closed'){
@@ -4024,6 +4439,8 @@ window.selChat=(id,type)=>{
 
   if(type==='private'){
     $('chatName').innerText=id;$('chatSub').dataset.t='0';
+    // 🛡️ [YENİ — Denetim Raporu Bulgu #1] Kalıcı kimlik güven durumu
+    _renderIdentityTrust(id);
     const _st=isOn(id)?(peerStatuses[id]||'available'):'offline';
     const _stColor={available:'var(--ok)',busy:'#ef4444',dnd:'#7c3aed',away:'#f59e0b',offline:'#6b7280'};
     const _stLabel={available:'Çevrimiçi',busy:'Meşgul',dnd:'Rahatsız Etme',away:'Uzakta'};
@@ -4060,6 +4477,7 @@ window.selChat=(id,type)=>{
     _renderChatFpEl(id);
   }else{
     const g=getDB().groups[id];
+    if($('chatIdentityTrust')) $('chatIdentityTrust').style.display='none';
     $('chatName').innerText=g.name;$('chatSub').innerText=`${g.members.length} Üye`;
     if(g.avatar){ setAvatarEl($('chatAv'), g.avatar, 'G'); }
     else{ $('chatAv').innerText='G'; }
@@ -6193,10 +6611,16 @@ const _patchedGroupCallSignals=async(d)=>{
   if(d.type==='grp_offer'&&d.to===ME.user_id){
     // 🛡️ [YENİ-SEC] rtc_offer ile aynı gerekçeyle — grup arama teklifleri de
     // kimlik doğrulamasından geçmeden işlenmiyor.
+    // 🛡️ [Bulgu #1] rtc_offer ile aynı gerekçeyle — grup arama teklifleri
+    // de kimlik doğrulamasından geçmeden işlenmiyor. rejected → engelle,
+    // unverified → izin ver (Model A, diğer noktalarla tutarlı).
     const _grpVerified = await _ensurePeerVerified(d.from);
-    if(!_grpVerified){
-      console.warn('[SEC] Doğrulanamayan kimlikten gelen grp_offer reddedildi:', d.from);
+    if(_grpVerified.status==='rejected'){
+      console.warn('[SEC] Doğrulanamayan/reddedilen kimlikten gelen grp_offer reddedildi:', d.from);
       return;
+    }
+    if(_grpVerified.status==='unverified'){
+      console.warn('[SEC][UNVERIFIED] grp_offer doğrulanmamış kimlikten kabul ediliyor (Model A):', d.from);
     }
     // Duplikat grp_offer koruma — aynı from'dan 3 saniye içinde tekrar gelirse ignore
     const _grpKey='grpOfferDedup_'+d.from+'_'+d.groupId;
