@@ -1715,7 +1715,13 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
       <p style="color:var(--muted);font-size:14px;margin:0 0 28px">Hesabınla giriş yap veya yeni hesap oluştur</p>
 
       <!-- Kayıtlı hesaplar -->
-      <div id="savedAccountsList" class="hidden" style="margin-bottom:20px;text-align:left;max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--panel)"></div>
+      <!-- 🐛 [FIX] Eskiden overflow-y:auto hemen ardından gelen overflow:hidden
+           tarafından eziliyordu (aynı elemanda iki kez overflow set edilince
+           sonraki kazanır), bu yüzden liste scroll OLMUYOR, sadece 3+ hesapta
+           konteyner büyüyüp sayfayı aşağı itiyordu. overflow-x:hidden + 
+           overflow-y:auto ayrı ayrı verilerek hem köşe yuvarlama korunuyor
+           hem de gerçek dikey kaydırma çalışıyor. -->
+      <div id="savedAccountsList" class="hidden" style="margin-bottom:20px;text-align:left;max-height:220px;overflow-x:hidden;overflow-y:auto;border:1px solid var(--border);border-radius:14px;background:var(--panel)"></div>
       <div id="orDivider" class="hidden" style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
         <div style="flex:1;height:1px;background:var(--border)"></div>
         <span style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">veya</span>
@@ -1747,7 +1753,7 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
       </div>
 
       <button id="authBtn" style="width:100%;padding:13px;font-size:15px;font-weight:700;border-radius:10px;margin-bottom:12px">
-        Giriş Yap/Kaydol
+        Giriş Yap
       </button>
       <div id="authStatus" style="font-size:13px;color:var(--danger);min-height:18px;text-align:center;margin-bottom:8px"></div>
       <p style="margin:0;font-size:11px;color:var(--muted);text-align:center;line-height:1.5">
