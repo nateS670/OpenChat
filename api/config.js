@@ -44,6 +44,14 @@ function isAllowedRequest(req) {
             if (ALLOWED_ORIGINS.includes(refererOrigin)) return true;
         } catch (e) { /* bozuk/eksik referer — reddedilmiş sayılır */ }
     }
+    // 🛡️ [FIX — iOS Safari false-positive] iOS Safari'de (ITP / standalone
+    // PWA modunda) meşru aynı-origin isteklerde Origin VE Referer'ın ikisi
+    // de gelmeyebiliyor — bkz. ice-servers.js'teki aynı notun uzun açıklaması.
+    // Sec-Fetch-Site, Referrer-Policy'den etkilenmeyen ve JS ile taklit
+    // edilemeyen bir tarayıcı başlığıdır; 'same-origin' isteğin gerçekten
+    // kendi sayfamızdan geldiğini kanıtlar.
+    const secFetchSite = req.headers['sec-fetch-site'];
+    if (!origin && !referer && secFetchSite === 'same-origin') return true;
     return false;
 }
 
