@@ -61,7 +61,12 @@
     "Şifreyi göster/gizle": "Show/hide password",
     "en az 6 karakter": "at least 6 characters",
     "Şifren cihazında saklanır, ağa gitmez": "Your password is stored on your device, never sent over the network",
-    "Giriş Yap": "Log In",
+    // 🐛 [FIX] Varsayılan/boş formda "Log In" kafa karıştırıyordu (yeni hesap
+    // açılabildiği için "Sign In" daha doğru). Kayıtlı bir hesaba tıklanınca
+    // app.js artık bilerek AYRI bir Türkçe metin ("Hesaba Giriş Yap")
+    // kullanıyor, böylece o durum hâlâ "Log In" olarak çevrilebiliyor.
+    "Giriş Yap": "Sign In",
+    "Hesaba Giriş Yap": "Log In",
     "veya": "or",
     "Şifre Belirle ve Giriş Yap": "Set Password and Log In",
     "🔒 İlk şifreni belirle": "🔒 Set your first password",
