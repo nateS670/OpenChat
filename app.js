@@ -3598,18 +3598,30 @@ function renderLoginAccounts(){
   });
 })();
 
+// 🐛 [FIX] "Giriş Yap" butonu her durumda AYNI metni kullanıyordu (EN modda
+// hep "Log In" çıkıyordu), oysa istenen davranış: varsayılan/boş form →
+// "Sign In" (yeni hesap açılabilir), kayıtlı bir hesaba tıklanınca → "Log In".
+// Türkçe tarafta görünen metin bilerek "Hesaba Giriş Yap" yapıldı ki i18n
+// sözlüğü bunu düz "Giriş Yap"tan AYRI bir anahtar olarak "Log In" diye
+// çevirebilsin (bkz. i18n.js). _selectedSavedAccountKey, kullanıcı adı alanı
+// hâlâ seçilen kayıtlı hesapla eşleşiyor mu diye takip eder; eşleşmeyi
+// kaybedince (elle değiştirilince veya hesap silinince) buton varsayılana
+// ("Giriş Yap" → "Sign In") döner.
+let _selectedSavedAccountKey = null;
+
 window.loginAs=async(key)=>{
   const db=getDB();
   if(!db.users[key])return;
   const user=db.users[key];
   const k=_sanitizeUsername(key).toLowerCase()||key;
+  _selectedSavedAccountKey = k;
 
   if(pwExists(k)){
     $('authUsername').value=user.user_id;
     $('authPassword').value='';
     $('authStatus').innerText='Şifrenizi girin.';
     $('firstLoginBanner').style.display='none';
-    $('authBtn').innerText='Giriş Yap';
+    $('authBtn').innerText='Hesaba Giriş Yap';
     setTimeout(()=>$('authPassword').focus(),80);
   } else {
     $('authUsername').value=user.user_id;
@@ -3620,6 +3632,29 @@ window.loginAs=async(key)=>{
     setTimeout(()=>$('authPassword').focus(),80);
   }
 };
+
+// 🐛 [FIX] Kullanıcı, kayıtlı bir hesabı seçtikten SONRA kullanıcı adını
+// elle değiştirirse (yani aslında farklı/yeni bir hesap açmak istiyorsa),
+// buton "Hesaba Giriş Yap" (Log In) yazmaya devam etmemeli — varsayılan
+// "Giriş Yap" (Sign In) durumuna dönmeli. Sadece butonun o an gerçekten
+// "seçili hesap" metinlerinden birini gösterdiği durumda müdahale ediyoruz
+// ki brute-force kilidi / "Kontrol ediliyor..." gibi başka geçici durumları
+// ezmeyelim.
+(()=>{
+  const input=$('authUsername');
+  if(!input) return;
+  input.addEventListener('input',()=>{
+    if(!_selectedSavedAccountKey) return;
+    const cur=_sanitizeUsername(input.value.trim()).toLowerCase();
+    if(cur===_selectedSavedAccountKey) return; // hâlâ aynı hesap
+    _selectedSavedAccountKey=null;
+    const btn=$('authBtn');
+    if(btn && (btn.innerText==='Hesaba Giriş Yap' || btn.innerText==='Şifre Belirle ve Giriş Yap')){
+      btn.innerText='Giriş Yap';
+      $('firstLoginBanner').style.display='none';
+    }
+  });
+})();
 
 // ── HESAP SİLME ───────────────────────────────────────────────────
 window.confirmDeleteAccount=(key)=>{
@@ -3667,6 +3702,18 @@ window.confirmDeleteAccount=(key)=>{
       const list=getAccounts().filter(a=>a!==key);
       localStorage.setItem(ACC_KEY,JSON.stringify(list));
     }catch(e){}
+    // 🐛 [FIX] Silinen hesap o an formda seçiliyse (kullanıcı ona tıklamış,
+    // buton "Hesaba Giriş Yap" durumundaysa) formu ve butonu varsayılana
+    // ("Giriş Yap" → Sign In) döndür — aksi halde silinmiş bir hesap için
+    // hâlâ "Log In" yazan, kafa karıştırıcı bir buton kalırdı.
+    if(_selectedSavedAccountKey===key){
+      _selectedSavedAccountKey=null;
+      $('authUsername').value='';
+      $('authPassword').value='';
+      $('authStatus').innerText='';
+      $('firstLoginBanner').style.display='none';
+      $('authBtn').innerText='Giriş Yap';
+    }
     overlay.remove();
     renderLoginAccounts();
     showDeletedToast(u.user_id);
