@@ -42,6 +42,18 @@ function isAllowedRequest(req) {
       if (ALLOWED_ORIGINS.includes(refererOrigin)) return true;
     } catch (e) { /* bozuk/eksik referer — reddedilmiş sayılır */ }
   }
+  // 🛡️ [FIX — iOS Safari false-positive] iOS Safari'de (özellikle ITP /
+  // "Prevent Cross-Site Tracking" açıkken ya da ana ekrana eklenmiş
+  // standalone PWA modunda) meşru, aynı-origin fetch isteklerinde bile
+  // Origin VE Referer başlıklarının ikisi de gönderilmeyebiliyor — bu da
+  // gerçek kullanıcıları 403'e düşürüp TURN/config alımını kırıyordu.
+  // Sec-Fetch-Site, tarayıcı ağ katmanının eklediği ve Referrer-Policy'den
+  // etkilenmeyen, JS ile taklit edilemeyen bir "fetch metadata" başlığıdır
+  // (Safari 15.4+ dahil tüm modern tarayıcılarda desteklenir). 'same-origin'
+  // değeri isteğin gerçekten kendi sayfamızdan geldiğini kanıtlar; Origin/
+  // Referer yokken bunu ek bir kabul sinyali olarak kullanıyoruz.
+  const secFetchSite = req.headers['sec-fetch-site'];
+  if (!origin && !referer && secFetchSite === 'same-origin') return true;
   return false;
 }
 
