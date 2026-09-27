@@ -21,6 +21,12 @@ function isAllowedRequest(req) {
             if (ALLOWED_ORIGINS.includes(refererOrigin)) return true;
         } catch (e) { /* bozuk/eksik referer — reddedilmiş sayılır */ }
     }
+    // 🛡️ [FIX — iOS Safari false-positive] bkz. ice-servers.js'teki aynı
+    // notun uzun açıklaması: Origin/Referer iOS Safari'de meşru isteklerde
+    // de boş gelebiliyor; Sec-Fetch-Site bunun için taklit edilemeyen bir
+    // ek sinyal sağlıyor.
+    const secFetchSite = req.headers['sec-fetch-site'];
+    if (!origin && !referer && secFetchSite === 'same-origin') return true;
     return false;
 }
 
