@@ -402,6 +402,21 @@
     "Ağa bağlanılıyor...": "Connecting to network...",
     "● Ağa Bağlı": "● Connected to Network",
     "● Bağlantı Kesildi": "● Disconnected",
+    // 🐛 [FIX] Nav-rail "Connection" hover tooltip (_updateNetTooltip in
+    // app.js) builds its text at runtime from these exact plain-word
+    // fragments (no bullet, no punctuation prefix) — they were missing
+    // from the dictionary entirely, so the tooltip never translated even
+    // though the app itself switches to English.
+    "Bağlı": "Connected",
+    "Bağlantı Kesildi": "Disconnected",
+    "Bilinmiyor": "Unknown",
+    "Sinyal sunucusu (MQTT):": "Signaling server (MQTT):",
+    "P2P bağlantı:": "P2P connection:",
+    // Not: başında boşluk var — çünkü " kişi"/" kişi aktif" gibi mevcut
+    // (daha kısa) sözlük girdileri de boşlukla başlıyor ve regex en soldaki
+    // eşleşmeyi bulduğu an durduğundan, aynı başlangıç konumunda olmayan
+    // (boşluksuz) bir ifade "uzun ifade önce" sıralamasını asla yakalayamaz.
+    " kişi ile aktif": " people active",
     "Bağlantı Hatası": "Connection Error",
     "Bağlantı kurulamadı.": "Couldn't establish connection.",
     "⚠️ Bağlantı Hatası": "⚠️ Connection Error",
@@ -548,17 +563,39 @@
   const TR_WORD = "A-Za-zÇçĞğİıÖöŞşÜü0-9_";
   const isWordChar = ch => new RegExp('['+TR_WORD+']').test(ch);
   const keys = Object.keys(DICT).sort((a,b)=>b.length-a.length);
-  const parts = keys.map(k=>{
-    const esc = k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  // 🐛 [FIX] Multi-line HTML source (e.g. the invite-modal <p> descriptions
+  // in index.html) puts real newlines + indentation where the dictionary
+  // key only has single spaces, so a literal-escape match against those
+  // paragraphs used to fail silently and the text stayed in Turkish.
+  // Fix: turn every run of literal spaces in a key into a "\s+" pattern,
+  // so any whitespace/newline/indentation variant still matches. Named
+  // capture groups (one per key) let us map a match back to its exact
+  // DICT translation even though the matched text itself now differs
+  // (extra whitespace) from the DICT key used to look it up.
+  const parts = keys.map((k,i)=>{
+    const esc = k.split(/ +/)
+      .map(seg=>seg.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'))
+      .join('\\s+');
     const pre = isWordChar(k[0]) ? '(?<!['+TR_WORD+'])' : '';
     const post = isWordChar(k[k.length-1]) ? '(?!['+TR_WORD+'])' : '';
-    return pre+esc+post;
+    return pre+'(?<g'+i+'>'+esc+')'+post;
   });
   const RE = new RegExp(parts.join('|'), 'g');
 
   function translateStr(s){
     if(!s) return s;
-    return s.replace(RE, m => DICT[m] !== undefined ? DICT[m] : m);
+    return s.replace(RE, function(m){
+      const groups = arguments[arguments.length-1];
+      if(groups && typeof groups==='object'){
+        for(const gname in groups){
+          if(groups[gname]!==undefined){
+            const key = keys[parseInt(gname.slice(1),10)];
+            return DICT[key] !== undefined ? DICT[key] : m;
+          }
+        }
+      }
+      return m;
+    });
   }
   window._t = translateStr; // exposed in case app.js-side code wants it later
 
