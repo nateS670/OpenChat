@@ -35,16 +35,27 @@ const _hits = new Map();
 function isAllowed(ip) {
   const now = Date.now();
   const arr = (_hits.get(ip) || []).filter((t) => now - t < WINDOW_MS);
-  arr.push(now);
-  _hits.set(ip, arr);
   // Map'in sınırsız büyümesini önlemek için basit bir temizlik:
+  // (limite takılan isteklerde de çalışsın ki benzersiz IP selinde Map
+  // şişemesin)
   if (_hits.size > 5000) {
     const cutoff = now - WINDOW_MS;
     for (const [key, times] of _hits) {
       if (!times.some((t) => t > cutoff)) _hits.delete(key);
     }
   }
-  return arr.length <= MAX_REQUESTS;
+  // 🛡️ [SEC FIX] Sayaç, limit aşıldıktan sonra da her isteği kaydediyordu;
+  // tek bir IP dakikada yüz binlerce istekle diziyi şişirebiliyordu.
+  // Artık pencere doluysa push yapılmaz — dizi uzunluğu en fazla
+  // MAX_REQUESTS kalır (davranış aynı: pencere içinde MAX_REQUESTS'ten
+  // fazlası 429 döner).
+  if (arr.length >= MAX_REQUESTS) {
+    _hits.set(ip, arr);
+    return false;
+  }
+  arr.push(now);
+  _hits.set(ip, arr);
+  return true;
 }
 
 export default function middleware(request) {
