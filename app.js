@@ -2369,8 +2369,10 @@ async function _dcHandleIce(d){
     try{ await peer.pc.addIceCandidate(new RTCIceCandidate(d.cand)); }catch(e){}
   } else {
     // Remote description henüz gelmedi — kuyruğa al
+    // 🛡️ [SEC] Kuyruk sınırsız büyütülemez (bellek DoS): trickle ICE'de
+    // meşru bağlantı başına aday sayısı birkaç düzinedir; fazlası atılır.
     if(!peer.iceQueue) peer.iceQueue=[];
-    peer.iceQueue.push(d.cand);
+    if(peer.iceQueue.length<200) peer.iceQueue.push(d.cand);
   }
 }
 
@@ -2991,7 +2993,91 @@ function _isValidSelfLeave(oldMembers, newMembers, from){
   return true;
 }
 
+// 🛡️ [SEC — Gelen mesaj alan doğrulaması] Gelen `d.msg` objesi önceden
+// yalnızca text/fileData uzunluğu kontrol edilerek HAM HALİYLE saklanıyordu;
+// id/time/expiresAt/reactions/readBy/poll gibi alanlar saldırgan-kontrollü
+// olduğundan render sırasında attribute-injection ve DoS yüzeyi oluşturuyordu.
+// Meşru istemcilerin ürettiği değerler aşağıdaki biçimlerle BİREBİR uyumludur
+// (id: uid() → [a-z0-9]{9}, time: gt() → "ss:dd"), dolayısıyla bu
+// doğrulama meşru trafiği asla etkilemez. Sadece bozuk/kötü niyetli paketler
+// normalize edilir ya da tamamen reddedilir. İmza doğrulamasından SONRA
+// çağrılır (metin kırpma ile aynı nokta — imza orijinal içerik üzerinedir).
+function _sanitizeIncomingMsg(msg, fromId){
+  if(!msg || typeof msg!=='object' || Array.isArray(msg)) return false;
+  // id — dedup ve tüm DOM data-a referanslarında kullanılır; güvenli karakter seti zorunlu
+  if(typeof msg.id!=='string' || !/^[A-Za-z0-9_-]{1,64}$/.test(msg.id)) return false;
+  // from — mesaj sahibi kontrolleri (msg_edit/delete) bu alana bakar; gönderen kimliğiyle tutarsızsa normalize et
+  if(typeof msg.from!=='string' || !isWhitelisted(msg.from)) msg.from = fromId;
+  // time — yalnızca gt() ürettiği biçimdeki kısa saat damgaları kabul edilir
+  if(typeof msg.time!=='string' || msg.time.length>24) msg.time = gt();
+  else msg.time = msg.time.replace(/[&<>"']/g,'');
+  // expiresAt — sayısal zaman damgası olmalı (msg-timer data-exp özniteliğine yazılıyor)
+  if(msg.expiresAt!==undefined && msg.expiresAt!==null &&
+     (typeof msg.expiresAt!=='number' || !isFinite(msg.expiresAt))) delete msg.expiresAt;
+  // fileName/fileSize/voiceDur — tip + uzunluk normalizasyonu
+  if(msg.fileName!==undefined && (typeof msg.fileName!=='string' || msg.fileName.length>255)) msg.fileName='Dosya';
+  if(msg.fileSize!==undefined && (typeof msg.fileSize!=='number' || !isFinite(msg.fileSize))) msg.fileSize=0;
+  if(msg.voiceDur!==undefined && (typeof msg.voiceDur!=='number' || !isFinite(msg.voiceDur))) msg.voiceDur=0;
+  // reactions — {userId: emojiString} haritası; emoji en fazla 32 karakter
+  if(msg.reactions!==undefined){
+    if(typeof msg.reactions!=='object' || msg.reactions===null || Array.isArray(msg.reactions)){ delete msg.reactions; }
+    else{
+      for(const rk of Object.keys(msg.reactions)){
+        if(!isWhitelisted(rk) || typeof msg.reactions[rk]!=='string' || msg.reactions[rk].length>32) delete msg.reactions[rk];
+      }
+    }
+  }
+  // replyTo — yalnızca düz obje; from/text kısa string'e normalize
+  if(msg.replyTo!==undefined){
+    if(typeof msg.replyTo!=='object' || msg.replyTo===null || Array.isArray(msg.replyTo)){ delete msg.replyTo; }
+    else{
+      const rt=msg.replyTo;
+      if(typeof rt.from!=='string' || rt.from.length>32) rt.from='';
+      if(typeof rt.text!=='string' || rt.text.length>200) rt.text=typeof rt.text==='string'?rt.text.slice(0,200):'';
+    }
+  }
+  // readBy / deliveredTo — whitelist'li kullanıcı adlarından oluşan diziler
+  const _cleanIdArr=(v)=>{
+    if(!Array.isArray(v)) return undefined;
+    return v.filter(u=>typeof u==='string'&&isWhitelisted(u)).slice(0,500);
+  };
+  if(msg.readBy!==undefined){ const c=_cleanIdArr(msg.readBy); if(c) msg.readBy=c; else delete msg.readBy; }
+  if(msg.deliveredTo!==undefined){ const c=_cleanIdArr(msg.deliveredTo); if(c) msg.deliveredTo=c; else delete msg.deliveredTo; }
+  // poll — {question, options:[{text, voters:[]}]} şekli zorunlu
+  if(msg.poll!==undefined){
+    const p=msg.poll;
+    if(typeof p!=='object' || p===null || !Array.isArray(p.options) || !p.options.length || p.options.length>50){ delete msg.poll; }
+    else{
+      msg.poll={
+        question: typeof p.question==='string' ? p.question.slice(0,1000) : '',
+        options: p.options.map(o=>({
+          text:   (o && typeof o==='object' && typeof o.text==='string') ? o.text.slice(0,500) : '',
+          voters: (o && typeof o==='object' && Array.isArray(o.voters)) ? o.voters.filter(v=>typeof v==='string'&&isWhitelisted(v)).slice(0,500) : []
+        }))
+      };
+    }
+  }
+  return true;
+}
+
 async function handleSig(d){
+  // 🛡️ [SEC] Tek giriş noktasında şekil doğrulaması. `from` meşru
+  // istemcilerde daima whitelist biçiminde bir kullanıcı adıdır; `groupId`
+  // daima 'GRP_' önekli kısa bir kimliktir. Bu Guard, tüm alt işleyiciler
+  // için tek seferde: spoofed/anlamsız `from` ile localStorage'a veri
+  // yazılmasını, `groupId` üzerinden objeye tuhaf anahtar bulaşmasını ve
+  // grup araması gibi `try/catch`siz akışların tip hatasıyla kırılmasını
+  // engeller (ME yokken gelen sinyaller zaten aşağıda reddediliyor).
+  if(d && d.from!==undefined && d.from!==null &&
+     (typeof d.from!=='string' || !isWhitelisted(d.from))){
+    console.warn('[SEC] Geçersiz `from` alanlı sinyal reddedildi.');
+    return;
+  }
+  if(d && d.groupId!==undefined && d.groupId!==null &&
+     (typeof d.groupId!=='string' || !/^[A-Za-z0-9_-]{1,64}$/.test(d.groupId))){
+    console.warn('[SEC] Geçersiz `groupId` alanlı sinyal reddedildi.');
+    return;
+  }
   // ── WebRTC DataChannel sinyalleri — DC kurulumu için MQTT üzerinden gelir ──
   if(d.type==='dc_offer'||d.type==='dc_answer'||d.type==='dc_ice'){
     if(!_isDcSignalForMe(d)){
@@ -3195,6 +3281,11 @@ async function handleSig(d){
       console.warn('[SEC] Aşırı uzun mesaj metni kırpıldı:', d.from, d.msg.text.length);
       d.msg.text = d.msg.text.slice(0, MAX_INCOMING_TEXT_CHARS) + '…';
     }
+    // 🛡️ [SEC] Gelen mesaj objesinin TÜM alanları (id/from/time/reactions/
+    // readBy/poll vb.) saklanmadan önce doğrulanır/normalize edilir —
+    // saldırgan-kontrollü meta alanların render sırasında attribute
+    // injection'ına ve tip karmaşasından doğan çökmelere kapanır.
+    if(!_sanitizeIncomingMsg(d.msg, d.from)) return;
     // Gelen dosya/gif verisini oturum belleğine kaydet
     if(d.msg.fileData&&d.msg.fileData&&!d.msg.fileData.startsWith('__')){
       // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
@@ -3283,6 +3374,13 @@ async function handleSig(d){
     }
     // 🛡️ [SAST-5 FIX — korunuyor] Şekil doğrulaması ve groupId çakışma/ele
     // geçirme koruması (mevcut bir gruba enjeksiyon YAPILAMAZ).
+    // 🛡️ [SEC] members/admins DİZİ ELEMANLARI da doğrulanıyor — önceden
+    // yalnızca dizi boyutu kontrol ediliyordu, elemanlar whitelist'siz
+    // geçiyordu; saldırgan (arkadaş) üye adı olarak HTML içerebilen string
+    // gönderip grup üye listesi render'ında stored-XSS yüzeyi
+    // oluşturabiliyordu. Meşru üye adları daima whitelist biçimindedir.
+    if(Array.isArray(g.members)) g.members=g.members.filter(u=>typeof u==='string'&&isWhitelisted(u));
+    if(Array.isArray(g.admins))  g.admins =g.admins.filter(u=>typeof u==='string'&&isWhitelisted(u));
     if(g && typeof g==='object' && typeof g.id==='string' && g.id.length<128 && g.id.startsWith('GRP_')
        && typeof g.name==='string' && g.name.length>0 && g.name.length<=64
        && Array.isArray(g.members) && g.members.length>0 && g.members.length<=500
@@ -3333,6 +3431,8 @@ async function handleSig(d){
       console.warn('[SEC] Aşırı uzun mesaj metni kırpıldı (grup):', d.from, d.msg.text.length);
       d.msg.text = d.msg.text.slice(0, MAX_INCOMING_TEXT_CHARS) + '…';
     }
+    // 🛡️ [SEC] bkz. private_msg tarafındaki aynı not — alan doğrulaması.
+    if(!_sanitizeIncomingMsg(d.msg, d.from)) return;
     // Gelen dosya/gif verisini oturum belleğine kaydet
     if(d.msg.fileData&&!d.msg.fileData.startsWith('__')){
       // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
@@ -4133,8 +4233,8 @@ function updateUI(){
   $('lstR').innerHTML=me.requests.length?me.requests.map(r=>`
     <div class="li" style="cursor:default">
       <div style="display:flex;align-items:center;flex:1;min-width:0">
-        <div class="av2">${r.charAt(0).toUpperCase()}</div>
-        <span style="margin-left:10px;font-weight:600;font-size:13px">${r}</span>
+        <div class="av2">${escHtml(r.charAt(0).toUpperCase())}</div>
+        <span style="margin-left:10px;font-weight:600;font-size:13px">${escHtml(r)}</span>
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0">
         <button class="btn-ok req-acc-btn" data-req-user="${escHtml(r)}" style="padding:5px 10px;font-size:12px;border-radius:8px">✓ Kabul</button>
@@ -4182,7 +4282,7 @@ function updateFriends(){
         <div class="li ${chatId===f?'on':''}" data-act="selChat" data-a="${escHtml(f)}" data-a2="private" data-ctx-act="showCtx" data-ctx-a="${escHtml(f)}">
           <div style="display:flex;align-items:center;flex:1;min-width:0">
             <div class="av2" style="position:relative">${av}<span class="sdot status-dot" style="background:${stColor[st]}"></span></div>
-            <div class="fi"><strong>${f}</strong>${verBadge(f)}<span class="sub">${sub}${typingBubble}</span></div>
+            <div class="fi"><strong>${escHtml(f)}</strong>${verBadge(f)}<span class="sub">${sub}${typingBubble}</span></div>
           </div>
           <button data-act="showCtx" data-a="${escHtml(f)}" data-stop="1" data-pass-event="1" style="background:none;border:none;color:var(--muted);padding:4px 6px;font-size:16px;min-width:auto;cursor:pointer;flex-shrink:0">⋮</button>
         </div>
@@ -4208,7 +4308,7 @@ function updateFriends(){
         <div class="li ${chatId===g.id?'on':''}" data-act="selChat" data-a="${escHtml(g.id)}" data-a2="group">
           <div style="display:flex;align-items:center;flex:1;min-width:0">
             <div class="av2" style="background:${callInfo?'#22c55e':'var(--ok)'};overflow:hidden;${callInfo?'box-shadow:0 0 0 2px #22c55e':''}">${avHTML}</div>
-            <div class="fi"><strong>${g.name}</strong>${callBadge}<span class="sub">${subText}</span></div>
+            <div class="fi"><strong>${escHtml(g.name)}</strong>${callBadge}<span class="sub">${subText}</span></div>
           </div>
           <button data-act="openGroupDetail" data-a="${escHtml(g.id)}" data-stop="1" style="background:none;border:none;color:var(--muted);padding:4px 6px;font-size:16px;min-width:auto;cursor:pointer;flex-shrink:0">⋮</button>
         </div>
@@ -4270,7 +4370,7 @@ function svUpdateProfilePanel(){
   const profAv=$('svProfAv');
   if(profAv){
     profAv.innerHTML = av&&av.startsWith('data:')
-      ? `<img src="${av}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
+      ? `<img src="${escHtml(av)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
       : ME.user_id.charAt(0).toUpperCase();
   }
   // İsim + token
@@ -4316,7 +4416,7 @@ function updateBlockedList(){
   if(!bl.length){$('blockedList').innerHTML='<div style="padding:12px 20px;font-size:13px;color:var(--muted)">Engellenmiş kullanıcı yok.</div>';return;}
   $('blockedList').innerHTML=bl.map(u=>`
     <div class="sp-bl-item">
-      <span>🚫 ${u}</span>
+      <span>🚫 ${escHtml(u)}</span>
       <button data-act="unblock" data-a="${escHtml(u)}" style="background:none;border:none;color:var(--ok);font-size:12px;font-weight:600;cursor:pointer;padding:0">Engeli Kaldır</button>
     </div>`).join('');
 }
@@ -4573,7 +4673,7 @@ function renderChat(){
             <span class="mcc-icon">📵</span>
             <div class="mcc-body">
               <div class="mcc-title">Cevapsız Arama</div>
-              <div class="mcc-sub">${escHtml(m.from||'')} · ${m.time||''}</div>
+              <div class="mcc-sub">${escHtml(m.from||'')} · ${escHtml(m.time||'')}</div>
             </div>
             ${canCall?`<button class="mcc-btn" data-act="_uiCallBack" data-a="${escHtml(m.from||'')}">Geri Ara</button>`:''}
           </div>
@@ -4628,12 +4728,15 @@ function renderChat(){
         const audio=new Audio(safeVoice);
         _vmAudios[m.id]=audio;
       }
-      contentHTML=`<div class="voice-msg" id="${sid}">
-        <button class="vm-play" data-act="playVoiceMsg" data-a="${m.id}" data-self="2" data-playing="0">▶</button>
-        <div class="vm-wave" data-act="_uiPlayVoiceFromWave" data-a="${m.id}" data-a2="${sid}">
+      // 🛡️ [SEC] m.id/sid attribute'lara escape'siz yazılmıyordu — ingest
+      // doğrulaması olsa bile savunma derinliği olarak escape ediliyor.
+      const esid=escHtml(sid), emid=escHtml(m.id);
+      contentHTML=`<div class="voice-msg" id="${esid}">
+        <button class="vm-play" data-act="playVoiceMsg" data-a="${emid}" data-self="2" data-playing="0">▶</button>
+        <div class="vm-wave" data-act="_uiPlayVoiceFromWave" data-a="${emid}" data-a2="${esid}">
           <svg viewBox="0 0 181 40" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;color:${me?'rgba(255,255,255,.8)':'var(--primary)'}">${barsSVG}</svg>
         </div>
-        <span class="vm-time" id="${sid}_t">${durStr}</span>
+        <span class="vm-time" id="${esid}_t">${durStr}</span>
       </div>`;
     } else if(m.fileType==='image'){
       // 🛡️ [ÇOK KRİTİK FIX] fileData artık src'ye yazılmadan önce şema
@@ -4672,7 +4775,7 @@ function renderChat(){
     }
     // Kaybolucak mesaj — geri sayım rozeti
     const vanishBadge = m.expiresAt
-      ? `<span class="vanish-badge">⏱️ <span class="msg-timer" data-exp="${m.expiresAt}">...</span></span>`
+      ? `<span class="vanish-badge">⏱️ <span class="msg-timer" data-exp="${escHtml(m.expiresAt)}">...</span></span>`
       : '';
 
     // Reply önizleme
@@ -4691,7 +4794,7 @@ function renderChat(){
         grouped[emoji].push(user);
       });
       reactHTML=`<div class="reactions">${Object.entries(grouped).map(([emoji,users])=>
-        `<div class="reaction-chip ${users.includes(ME.user_id)?'mine':''}" data-act="toggleReaction" data-a="${m.id}" data-a2="${escHtml(emoji)}">${emoji}<span>${users.length}</span></div>`
+        `<div class="reaction-chip ${users.includes(ME.user_id)?'mine':''}" data-act="toggleReaction" data-a="${escHtml(m.id)}" data-a2="${escHtml(emoji)}">${escHtml(emoji)}<span>${users.length}</span></div>`
       ).join('')}</div>`;
     }
 
@@ -4715,7 +4818,7 @@ function renderChat(){
       } else if(chatType==='group'){
         const readers=(m.readBy||[]).filter(u=>u!==ME.user_id);
         const delivered=(m.deliveredTo||[]).filter(u=>u!==ME.user_id);
-        if(readers.length>0) ticksHTML=`<span class="ticks read" title="${readers.join(', ')} okudu">✓✓ ${readers.length}</span>`;
+        if(readers.length>0) ticksHTML=`<span class="ticks read" title="${escHtml(readers.join(', '))} okudu">✓✓ ${readers.length}</span>`;
         else if(delivered.length>0) ticksHTML=`<span class="ticks delivered" title="${delivered.length} kişiye iletildi">✓✓ ${delivered.length}</span>`;
         else ticksHTML=`<span class="ticks" title="Gönderildi">✓</span>`;
       }
@@ -4723,10 +4826,10 @@ function renderChat(){
 
     // Action butonları
     const actionsHTML=`<div class="msg-actions">
-      <button class="ma-btn" data-act="startReply" data-a="${m.id}" title="Yanıtla">↩</button>
-      <button class="ma-btn" data-act="openReactPicker" data-a="${m.id}" data-self="2" title="Reaksiyon">😊</button>
-      ${me?`<button class="ma-btn" data-act="editMsg" data-a="${m.id}" title="Düzenle">✏️</button>
-      <button class="ma-btn" data-act="deleteMsg" data-a="${m.id}" title="Sil" style="color:var(--danger)">🗑️</button>`:''}
+      <button class="ma-btn" data-act="startReply" data-a="${escHtml(m.id)}" title="Yanıtla">↩</button>
+      <button class="ma-btn" data-act="openReactPicker" data-a="${escHtml(m.id)}" data-self="2" title="Reaksiyon">😊</button>
+      ${me?`<button class="ma-btn" data-act="editMsg" data-a="${escHtml(m.id)}" title="Düzenle">✏️</button>
+      <button class="ma-btn" data-act="deleteMsg" data-a="${escHtml(m.id)}" title="Sil" style="color:var(--danger)">🗑️</button>`:''}
     </div>`;
 
     // 🛡️ [YENİ] İmza VAR ama doğrulanamadıysa (m._sigVerified===false) —
@@ -4737,7 +4840,7 @@ function renderChat(){
     const sigWarnHTML = (!me && m._sigVerified===false)
       ? `<span class="mi" style="color:var(--danger);font-weight:700" title="Bu mesajın imzası, ${escHtml(m.from||'gönderenin')} için bilinen kimlik anahtarıyla eşleşmiyor. İçerik yolda değiştirilmiş olabilir.">⚠️ İmza doğrulanamadı</span>`
       : '';
-    return`<div class="msg-wrap ${me?'me-wrap':''}" data-id="${m.id}" data-ctx-act="showMsgCtx" data-ctx-a="${escHtml(m.id)}" data-ctx-a2="${escHtml(m.from||'')}">
+    return`<div class="msg-wrap ${me?'me-wrap':''}" data-id="${escHtml(m.id)}" data-ctx-act="showMsgCtx" data-ctx-a="${escHtml(m.id)}" data-ctx-a2="${escHtml(m.from||'')}">
       <div class="msg-col">
         ${actionsHTML}
         <div class="msg ${me?'me':'ot'}">
@@ -4746,7 +4849,7 @@ function renderChat(){
           ${sigWarnHTML}
           ${contentHTML}
           ${reactHTML}
-          <span class="mi">${m.time||''}${vanishBadge}${ticksHTML}</span>
+          <span class="mi">${escHtml(m.time||'')}${vanishBadge}${ticksHTML}</span>
         </div>
       </div>
     </div>`;
@@ -4773,6 +4876,11 @@ function escHtml(t){
   // &, <, >, " kaçırılıyordu. Şu an tüm öznitelikler çift tırnakla
   // yazıldığı için doğrudan istismar edilebilir değildi, ama savunma
   // derinliği (defense-in-depth) için eklendi.
+  // 🛡️ [SEC FIX] String coercion — escHtml artık sayı/undefined/null gibi
+  // string olmayan değerlerle çağrıldığında TypeError fırlatıp tüm render
+  // zincirini kırmak yerine güvenle kaçırıyor (mesaj meta alanları artık
+  // doğrulanmış olsa da, eski kayıtlı verilerle uyumluluk için zorunlu).
+  t = String(t ?? '');
   return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
@@ -4927,7 +5035,7 @@ window.openGroupModal=function(){
       :`<span style="width:8px;height:8px;border-radius:50%;background:#6b7280;display:inline-block;flex-shrink:0"></span>`;
     const offlineNote=online?'':` <span style="font-size:10px;color:#6b7280">(Çevrimdışı)</span>`;
     return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text)">
-      <input type="checkbox" value="${f}" class="gcb"> ${statusDot} ${f}${offlineNote}</label>`;
+      <input type="checkbox" value="${escHtml(f)}" class="gcb"> ${statusDot} ${escHtml(f)}${offlineNote}</label>`;
   }).join('');
   $('groupModal').classList.remove('hidden');
 };
@@ -5561,7 +5669,7 @@ window.openPeerVolMenu=function(e, user_id){
   menu.innerHTML=`
     <div class="pvm-title">
       <span id="pvm-icon">${volIcon}</span>
-      <span>${user_id}</span>
+      <span>${escHtml(user_id)}</span>
     </div>
     <div class="pvm-row">
       <button class="pvm-stepper" data-act="_uiPvmStepDown" data-a="${escHtml(user_id)}">−</button>
@@ -6480,10 +6588,10 @@ function updateParticipantsGrid(){
     // toggleVideo() kendi kamera önizlemesini hiçbir yere ekleyemiyordu
     // (document.getElementById('myCallAv') null dönüyordu, sessizce atlanıyordu).
     const avIdAttr=isSelf?' id="myCallAv"':'';
-    return `<div class="part-card${isSmall?' part-card-sm':''}" id="pcard_${u}"${ctxAttr}>
+    return `<div class="part-card${isSmall?' part-card-sm':''}" id="pcard_${escHtml(u)}"${ctxAttr}>
       <div class="part-av"${avIdAttr} style="width:${avSize}px;height:${avSize}px;font-size:${fontSize}px">${avHTML}</div>
-      <span class="part-name">${isSelf?'Sen':u}<span class="part-speak-icon">🎙️</span></span>
-      <div class="part-vol-bar"><div class="part-vol-fill" id="pvf_${u}"></div></div>
+      <span class="part-name">${isSelf?'Sen':escHtml(u)}<span class="part-speak-icon">🎙️</span></span>
+      <div class="part-vol-bar"><div class="part-vol-fill" id="pvf_${escHtml(u)}"></div></div>
       ${muteBadge}${deafBadge}${volTxt}${volBtn}
     </div>`;
   }).join('');
@@ -6789,6 +6897,43 @@ const _patchedGroupCallSignals=async(d)=>{
         console.warn('[SEC] Eski/replay group_update reddedildi:', d.from, 'groupId=', d.groupId, 'ts=', d.ts);
         return;
       }
+      // 🛡️ [SEC] Uygulanacak alanların şekil doğrulaması. Önceden name/
+      // members/admins/avatar HIÇ doğrulanmadan g.name/g.members'e
+      // yazılıyordu; üye adı yerine HTML içeren string gönderip üye
+      // listesi render'ında stored-XSS yapılabiliyordu (ayrıca devasa
+      // dizi/objeler localStorage'ı şişirip DoS oluşturuyordu). Meşru
+      // admin istemcileri her zaman whitelist biçimli kullanıcı adları
+      // gönderdiği için bu kontrol meşru trafiği etkilemez.
+      if(d.name!==undefined && d.name!==null &&
+         (typeof d.name!=='string' || !d.name.trim() || d.name.length>64)){
+        console.warn('[SEC] group_update: geçersiz grup adı reddedildi:', d.from);
+        return;
+      }
+      if(d.members!==undefined && d.members!==null){
+        if(!Array.isArray(d.members) || d.members.length>500){
+          console.warn('[SEC] group_update: geçersiz members alanı reddedildi:', d.from);
+          return;
+        }
+        d.members=d.members.filter(u=>typeof u==='string'&&isWhitelisted(u));
+        if(!d.members.length){ console.warn('[SEC] group_update: boş members reddedildi:', d.from); return; }
+      }
+      if(d.admins!==undefined && d.admins!==null){
+        if(!Array.isArray(d.admins) || d.admins.length>100){
+          console.warn('[SEC] group_update: geçersiz admins alanı reddedildi:', d.from);
+          return;
+        }
+        d.admins=d.admins.filter(u=>typeof u==='string'&&isWhitelisted(u));
+      }
+      if(d.newAdmin!==undefined && d.newAdmin!==null &&
+         (typeof d.newAdmin!=='string' || !isWhitelisted(d.newAdmin))){
+        console.warn('[SEC] group_update: geçersiz newAdmin reddedildi:', d.from);
+        return;
+      }
+      if(d.avatar!==undefined && d.avatar!==null &&
+         (typeof d.avatar!=='string' || d.avatar.length>2_000_000)){
+        console.warn('[SEC] group_update: geçersiz avatar reddedildi:', d.from);
+        return;
+      }
       // 🛡️ [SAST-1 FIX] Yetki kontrolü: önceden hiç yoktu — herhangi bir
       // üye (veya groupId'yi bilen biri) sahte group_update göndererek
       // kendini admin yapabiliyor, başkalarını üyelikten/yöneticilikten
@@ -6916,7 +7061,12 @@ handleSig=async(d)=>{
   }
   // ── Aktif grup araması — Discord tarzı sidebar göstergesi ──
   if(d.type==='grp_call_active'&&d.groupId){
-    activeGroupCalls[d.groupId]={members:d.members||[d.from],ts:Date.now()};
+    // 🛡️ [SEC] members dizi değilse (string/obje) banner çizimi
+    // .filter()'ta TypeError ile kırılıyordu — diziye normalize edilir.
+    const _cm=Array.isArray(d.members)
+      ? d.members.filter(u=>typeof u==='string'&&isWhitelisted(u))
+      : (d.from?[d.from]:[]);
+    activeGroupCalls[d.groupId]={members:_cm,ts:Date.now()};
     if(chatId===d.groupId) updateChatCallBanner(d.groupId);
     updateFriends(); // sidebar'ı güncelle
     return;
@@ -7489,7 +7639,7 @@ window.openGroupDetail=(gid)=>{
     <div class="gdp-section">Üye Ekle</div>
     <div style="display:flex;gap:8px;margin-bottom:8px">
       <select id="gdpAddSelect" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);font-size:13px;background:var(--panel);color:var(--text)">
-        ${notInGroup.map(f=>`<option value="${f}">${f}</option>`).join('')}
+        ${notInGroup.map(f=>`<option value="${escHtml(f)}">${escHtml(f)}</option>`).join('')}
       </select>
       <button data-act="addMemberToGroup" style="padding:8px 14px;font-size:13px">Ekle</button>
     </div>`:'';
@@ -7517,7 +7667,7 @@ window.openGroupDetail=(gid)=>{
         ${avHTML}<span class="sdot status-dot" style="position:absolute;bottom:0;right:0;width:10px;height:10px;border:2px solid var(--panel);background:${on?(({available:'#10b981',busy:'#ef4444',dnd:'#7c3aed',away:'#f59e0b'})[peerStatuses[m]||'available']||'#10b981'):'#6b7280'}"></span>
       </div>
       <div style="flex:1">
-        <span style="font-size:13px;font-weight:600">${m}</span>${badge}${selfBadge}
+        <span style="font-size:13px;font-weight:600">${escHtml(m)}</span>${badge}${selfBadge}
         <div style="font-size:11px;color:var(--muted)">${on?'Çevrimiçi':'Çevrimdışı'}</div>
       </div>
       <div style="display:flex;gap:2px;flex-wrap:wrap;justify-content:flex-end">${promoteBtn}${demoteBtn}${kickBtn}</div>
@@ -8032,7 +8182,7 @@ function _renderCurrentCustomStatus(){
   if(!el) return;
   const {emoji,text}=myCustomStatus;
   if(!emoji&&!text){ el.innerHTML='<span style="opacity:.4;font-size:11px">Özel durum yok — yukarıdan ekle</span>'; return; }
-  el.innerHTML=`${emoji?`<span>${emoji}</span>`:''}${text?`<span style="color:var(--text)">${escHtml(text)}</span>`:''}
+  el.innerHTML=`${emoji?`<span>${escHtml(emoji)}</span>`:''}${text?`<span style="color:var(--text)">${escHtml(text)}</span>`:''}
     <span style="font-size:10px;opacity:.5;margin-left:4px" data-act="clearCustomStatus" data-stop="1">✕</span>`;
 }
 window.clearCustomStatus=function(e){
@@ -8344,8 +8494,8 @@ window.showMsgCtx=(e,msgId,fromUser)=>{
       <div style="padding:8px 16px 4px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
         👁️ Görüldü (${readers.length}/${g.members.length-1})
       </div>
-      ${readers.length?readers.map(u=>`<div class="cxi" style="cursor:default;font-size:12px">✅ ${u}</div>`).join(''):'<div style="padding:4px 16px;font-size:12px;color:var(--muted)">Henüz kimse görmedi</div>'}
-      ${notRead.length?`<div style="padding:2px 16px 4px;font-size:11px;color:var(--muted)">⏳ ${notRead.join(', ')}</div>`:''}
+      ${readers.length?readers.map(u=>`<div class="cxi" style="cursor:default;font-size:12px">✅ ${escHtml(u)}</div>`).join(''):'<div style="padding:4px 16px;font-size:12px;color:var(--muted)">Henüz kimse görmedi</div>'}
+      ${notRead.length?`<div style="padding:2px 16px 4px;font-size:11px;color:var(--muted)">⏳ ${escHtml(notRead.join(', '))}</div>`:''}
       <div style="height:1px;background:var(--border);margin:4px 0"></div>`;
   }
 
@@ -8409,7 +8559,7 @@ window.openReactPicker=(msgId,btn)=>{
   const r=btn.getBoundingClientRect();
   p.style.top=(r.top-52)+'px';
   p.style.left=Math.min(r.left-20,window.innerWidth-230)+'px';
-  p.innerHTML=emojis.map(e=>`<button class="react-pick-btn" data-act="_uiPickReact" data-a="${msgId}" data-a2="${e}">${e}</button>`).join('');
+  p.innerHTML=emojis.map(e=>`<button class="react-pick-btn" data-act="_uiPickReact" data-a="${escHtml(msgId)}" data-a2="${e}">${e}</button>`).join('');
   document.body.appendChild(p);
   setTimeout(()=>document.addEventListener('click',()=>p.remove(),{once:true}),50);
 };
@@ -8626,6 +8776,13 @@ handleSig=async(d)=>{
     // map anahtarı — burada msgId ile de genel amaçlı çalışıyor.)
     else if(msg && !_isFreshGroupPacket(d.msgId+'|'+d.from, d.ts, _lastMsgEditTs)) console.warn('[SEC] Eski/replay msg_edit reddedildi:', d.from, 'msgId=', d.msgId);
     else if(msg && msg.from===d.from){
+      // 🛡️ [SEC] newText string değilse reddet; string ise private_msg ile
+      // aynı uzunluk sınırına kırp — aksi halde kısa mesaj + büyük msg_edit
+      // ile MAX_INCOMING_TEXT_CHARS sınırı bypass edilip localStorage
+      // şişirilebiliyordu. (String olmayan newText eskiden render'da
+      // escHtml'i patlatıp sohbet görünümünü kırıyordu.)
+      if(typeof d.newText!=='string'){ console.warn('[SEC] msg_edit: geçersiz newText reddedildi:', d.from); return; }
+      if(d.newText.length>MAX_INCOMING_TEXT_CHARS) d.newText=d.newText.slice(0,MAX_INCOMING_TEXT_CHARS)+'…';
       msg.text=d.newText;msg.edited=true;saveDB(db);
       _lastMsgEditTs[d.msgId+'|'+d.from] = d.ts;
       if(chatId===(d.groupId||d.from))renderChat();
@@ -8655,7 +8812,17 @@ handleSig=async(d)=>{
     // güvenilir değilse biri BAŞKASI adına sahte reaksiyon bırakabilir —
     // bu yüzden burada da e2e kimliklendirme şartı aranıyor.
     const _reactGroupOk = !d.groupId || _isGroupMember(d.groupId, d.from);
-    if(msg && d._isE2E && _reactGroupOk){if(!msg.reactions)msg.reactions={};if(d.emoji)msg.reactions[d.from]=d.emoji;else delete msg.reactions[d.from];saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
+    if(msg && d._isE2E && _reactGroupOk){
+      // 🛡️ [SEC] Emoji whitelist'siz saklanıyordu — saldırgan `emoji` alanına
+      // HTML koyup reaksiyon çipi render'ında stored-XSS yapılabiliyordu.
+      // Meşru emojiler (teknik olarak ZWJ/varyant seçicili çoklu kod
+      // noktası olsa bile) 32 karakteri asla aşmaz; daha uzun veya string
+      // olmayan değerler reddedilir.
+      if(d.emoji && (typeof d.emoji!=='string' || d.emoji.length>32)){ console.warn('[SEC] msg_react: geçersiz emoji reddedildi:', d.from); return; }
+      if(!msg.reactions)msg.reactions={};
+      if(d.emoji)msg.reactions[d.from]=d.emoji;else delete msg.reactions[d.from];
+      saveDB(db);if(chatId===(d.groupId||d.from))renderChat();
+    }
     else if(msg) console.warn('[SEC] e2e-doğrulanmamış veya grup üyesi olmayan msg_react reddedildi:', d.from);
     return;
   }
@@ -9169,7 +9336,7 @@ window.runGlobalSearch=q=>{
     <div class="gs-group">${g.chatType==='group'?'👥':''} ${escHtml(g.chatName)} (${g.items.length})</div>
     ${g.items.slice(0,5).map(m=>`
       <div class="gs-item" data-act="_uiGsSelChat" data-a="${escHtml(g.chatId)}" data-a2="${escHtml(g.chatType)}">
-        <div class="gs-item-name">${escHtml(m.from||'')} · ${m.time||''}</div>
+        <div class="gs-item-name">${escHtml(m.from||'')} · ${escHtml(m.time||'')}</div>
         <div class="gs-item-text">${highlight((m.text||'').substring(0,120))}</div>
       </div>`).join('')}
     ${g.items.length>5?`<div style="padding:6px 16px;font-size:11px;color:var(--muted)">+${g.items.length-5} sonuç daha...</div>`:''}
