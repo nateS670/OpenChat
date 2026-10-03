@@ -68,6 +68,13 @@ async function handleIdentity(req, res) {
         if (typeof userId !== 'string' || typeof signingPublicKey !== 'string' || typeof username !== 'string') {
             return res.status(400).json({ error: 'Geçersiz parametre türü.' });
         }
+        // 🛡️ [SEC FIX] Uzunluk sınırları — meşru istemci: username 3-24,
+        // Ed25519/ECDSA JWK public key birkaç yüz bayt, userId kısa bir
+        // kimliktir. Aşırı büyük gövdelerle HMAC imzalama maliyetinin
+        // kötüye kullanılmasını ve devasa pasaport üretimini engeller.
+        if (username.length > 32 || userId.length > 64 || signingPublicKey.length > 4000) {
+            return res.status(400).json({ error: 'Parametre uzunlukları izin verilen sınırı aşıyor.' });
+        }
         const safeAlg = (alg === 'ECDSA-P256') ? 'ECDSA-P256' : 'Ed25519';
 
         const identityPayload = JSON.stringify({
@@ -94,6 +101,11 @@ async function handleIdentity(req, res) {
         const { passport, signature } = req.body;
         if (!passport || !signature) {
             return res.status(400).json({ error: 'Doğrulama için pasaport ve imza gereklidir.' });
+        }
+        // 🛡️ [SEC FIX] Boyut sınırları — pasaport base64 gövdesi meşru olarak
+        // birkaç yüz bayttır; imza sabit 64 baytlık HMAC'in hex'idir.
+        if (typeof passport !== 'string' || passport.length > 8192 || typeof signature !== 'string' || signature.length > 128) {
+            return res.status(400).json({ valid: false, error: 'Pasaport/imza boyutu izin verilen sınırı aşıyor.' });
         }
         let decodedPayload, data;
         try {
