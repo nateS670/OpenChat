@@ -64,25 +64,49 @@ function resampleLinear(input, inRate, outRate){
   return out;
 }
 
+// 🔧 [FIX] Whisper modeli yalnızca KULLANICI AÇIKÇA İSTEDİĞİNDE yüklenir.
+// Eski hata: her ses karesinde flushAsr → ensureAsr modeli otomatik indiriyordu;
+// HF erişimi olmayan ağlarda "Failed to fetch" konsolu basıyor ve altyazı
+// çalışmıyordu. Artık: (1) audio mesajları model yokken sadece biriktirilir,
+// indirme başlamaz; (2) tek deneme + kalıcı hata kilidi (asrFailed) ile sonsuz
+// retry döngüsü kesilir.
+let asrWanted = false;
+let asrFailed = false;
+let asrLoading = null;
+
 async function ensureAsr(){
   if(asr) return asr;
-  const device = await pickDevice(gpuEnabled);
-  const dtype = device === 'webgpu' ? 'fp32' : 'q8';
-  self.postMessage({ type:'status', kind:'asr', msg:'Whisper Tiny yükleniyor ('+device+')…' });
+  if(!asrWanted || asrFailed) return null;
+  if(asrLoading) return asrLoading;
+  asrLoading = (async ()=>{
+    const device = await pickDevice(gpuEnabled);
+    const dtype = device === 'webgpu' ? 'fp32' : 'q8';
+    self.postMessage({ type:'status', kind:'asr', msg:'Whisper Tiny yükleniyor ('+device+')…' });
+    const load = async (dev, dt)=> pipeline('automatic-speech-recognition', ASR_ID, {
+      device: dev, dtype: dt, progress_callback: progressCb('asr')
+    });
+    try{
+      asr = await load(device, dtype);
+    }catch(e){
+      if(device !== 'wasm'){
+        self.postMessage({ type:'status', kind:'asr', msg:'WebGPU açılamadı, WASM (CPU) deneniyor…' });
+        try{ asr = await load('wasm', 'q8'); }
+        catch(e2){ throw e2; }
+      } else { throw e; }
+    }
+    self.postMessage({ type:'status', kind:'asr', msg:'Whisper Tiny hazır · tarayıcı içi' });
+    return asr;
+  })();
   try{
-    asr = await pipeline('automatic-speech-recognition', ASR_ID, {
-      device, dtype, progress_callback: progressCb('asr')
-    });
-  }catch(e){
-    // 🔧 WebGPU yüklemesi başarısız olursa (dtype/bellek hatası) sessizce
-    // WASM'a düş — kullanıcıya da bilgi ver.
-    self.postMessage({ type:'status', kind:'asr', msg:'WebGPU açılamadı, WASM (CPU) deneniyor…' });
-    asr = await pipeline('automatic-speech-recognition', ASR_ID, {
-      device: 'wasm', dtype: 'q8', progress_callback: progressCb('asr')
-    });
+    const r = await asrLoading;
+    return r;
+  }catch(err){
+    asrFailed = true;
+    self.postMessage({ type:'error', kind:'asr', fatal:true, msg: String(err?.message||err) });
+    return null;
+  }finally{
+    asrLoading = null;
   }
-  self.postMessage({ type:'status', kind:'asr', msg:'Whisper Tiny hazır · tarayıcı içi' });
-  return asr;
 }
 
 async function ensureLlm(which){
@@ -145,6 +169,7 @@ async function flushAsr(){
   }
   try{
     const pipe = await ensureAsr();
+    if(!pipe) return; // model istenmedi veya indirme başarısız — sessiz çık, retry yok
     const opts = {
       language: translateMode === 'en' ? null : null,
       task: translateMode === 'en' ? 'translate' : 'transcribe',
@@ -166,7 +191,9 @@ async function flushAsr(){
       self.postMessage({ type:'caption', speaker, text, translated: translateMode !== 'off' });
     }
   }catch(err){
-    self.postMessage({ type:'error', kind:'asr', msg: String(err?.message||err) });
+    // 🔧 [FIX] ensureAsr içindeki fatal hata zaten asrFailed kilidini koydu;
+    // burada ayrıca mesaj gönderip döngüsel retry/consol gürültüsü üretme.
+    if(!asrFailed) self.postMessage({ type:'error', kind:'asr', msg: String(err?.message||err) });
   } finally {
     busyAsr = false;
     if(pcmQueue.length) setTimeout(flushAsr, 10);
@@ -205,10 +232,21 @@ self.onmessage = async (ev)=>{
       return;
     }
     if(d.type === 'warmup-asr'){
-      // 🔧 [FIX] Eskiden burada Whisper Tiny modeli otomatik indiriliyordu —
-      // HF erişimi olmayan kullanıcılarda "Yerel model yüklenemedi" hatasının
-      // kaynağı buydu. Artık warmup YAPILMAZ; asr yalnızca altyazı fiilen
-      // açıldığında, ilerleme göstergesiyle ve sessiz hata yönetimiyle yüklenir.
+      // 🔧 [FIX] Kullanıcı altyazıyı fiilen açtığında model indirmesini başlat.
+      // Eskiden bu mesaj hiç işlenmiyordu; flushAsr her ses karesinde modeli
+      // otomatik indirip HF erişimi olmayan ağlarda "Failed to fetch" döngüsü
+      // yaratıyordu. Artık indirme YALNIZCA burada (kullanıcı onayıyla) istenir.
+      asrWanted = true;
+      if(!asr && !asrLoading){
+        await ensureAsr(); // hata olursa asrFailed kilidi + fatal error mesajı üretir
+      } else if(asr){
+        self.postMessage({ type:'status', kind:'asr', msg:'Whisper Tiny hazır · tarayıcı içi' });
+      }
+      return;
+    }
+    if(d.type === 'captions-off'){
+      // Altyazı kapatıldı: biriken sesi at, yeni açılışta temiz başla.
+      pcmQueue = [];
       return;
     }
     if(d.type === 'chat'){
