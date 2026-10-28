@@ -17,6 +17,8 @@ let asr = null;
 let llm = null;
 let llmId = null;
 let translateMode = 'off'; // off | en | tr
+// ✨ [3.7] Ayarlar'dan gelen GPU tercihi (varsayılan: kapalı — daha az RAM).
+let gpuEnabled = false;
 let busyAsr = false;
 let pcmQueue = [];
 let pcmRate = 16000;
@@ -64,7 +66,7 @@ function resampleLinear(input, inRate, outRate){
 
 async function ensureAsr(){
   if(asr) return asr;
-  const device = await pickDevice(true);
+  const device = await pickDevice(gpuEnabled);
   const dtype = device === 'webgpu' ? 'fp32' : 'q8';
   self.postMessage({ type:'status', kind:'asr', msg:'Whisper Tiny yükleniyor ('+device+')…' });
   try{
@@ -85,7 +87,7 @@ async function ensureLlm(which){
   if(llm && llmId === want) return llm;
   llm = null;
   llmId = null;
-  const device = await pickDevice(true);
+  const device = await pickDevice(gpuEnabled);
   const dtype = device === 'webgpu' ? 'q4' : 'q8';
   const label = want === LLM_PHI ? 'Phi-3 Mini' : 'Qwen2.5 0.5B';
   self.postMessage({ type:'status', kind:'llm', msg: label+' yükleniyor ('+device+')… İlk indirme birkaç yüz MB olabilir, sonra önbellekte kalır.' });
@@ -185,6 +187,10 @@ function stripGenerated(raw, fallbackHint){
 self.onmessage = async (ev)=>{
   const d = ev.data || {};
   try{
+    if(d.type === 'set-gpu'){
+      gpuEnabled = !!d.on;
+      return;
+    }
     if(d.type === 'warmup-asr'){
       await ensureAsr();
       return;
