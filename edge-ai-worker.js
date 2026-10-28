@@ -232,6 +232,9 @@ self.onmessage = async (ev)=>{
       return;
     }
     if(d.type === 'warmup-asr'){
+      // 🔧 [FIX] Kullanıcı butona her bastığında (retry:true) hata kilidini
+      // sıfırla — ağ düzelmişse model artık indirilebilir.
+      if(d.retry){ asrFailed = false; asrLoading = null; }
       // 🔧 [FIX] Kullanıcı altyazıyı fiilen açtığında model indirmesini başlat.
       // Eskiden bu mesaj hiç işlenmiyordu; flushAsr her ses karesinde modeli
       // otomatik indirip HF erişimi olmayan ağlarda "Failed to fetch" döngüsü
@@ -267,10 +270,13 @@ self.onmessage = async (ev)=>{
       return;
     }
     if(d.type === 'set-translate'){
+      const prev = translateMode;
       translateMode = d.mode === 'en' || d.mode === 'tr' ? d.mode : 'off';
-      if(translateMode === 'tr'){
-        try{ await ensureLlm('fast'); }catch(_){}
-      }
+      // 🔧 [FIX] Eskiden 'tr' seçiliyken LLM indirmesi otomatik başlıyordu
+      // (devasa dosya transferleri + "Failed to fetch" gürültüsü). Artık
+      // çeviri/derin özet için LLM YALNIZCA kullanıcı açıkça isterse yüklenir;
+      // LLM yokken Whisper'ın kendi görevi zaten Türkçe'ye çeviriyor.
+      void prev;
       return;
     }
     if(d.type === 'audio'){
