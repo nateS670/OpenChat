@@ -536,11 +536,11 @@
       }
       return;
     }
-    if(d.kind === 'summarize' || d.kind === 'llm' || d.kind === 'worker'){
-      // 🔌 [İSTEK] Artık kullanıcıya "model yüklenemedi" hatası GÖSTERMEYİZ:
-      // cihaz içi Butler motoru sonucu çoktan üretti; LLM yalnızca bonus.
+    if(d.kind === 'summarize' || d.kind === 'llm' || d.kind === 'worker' || d.kind === 'chat'){
+      // Gerçek hata artık görünür (eskiden yutuluyordu → "neden indirilmiyor" bilinmiyordu).
       const but = $('aiButlerStatus');
-      if(but) but.textContent = 'Cihaz içi moddayım · mesajlar dışarı çıkmadı';
+      if(but) but.textContent = 'Model yüklenemedi: '+String(msg).slice(0,140)+' · cihaz içi moddayım';
+      console.warn('[EdgeAI] LLM hatası:', msg);
       updateModelAvailability();
     } else {
       const cap = $('liveCaptionStatus');
@@ -683,8 +683,13 @@
       if(botCtx.length > 40) botCtx.splice(0, botCtx.length-40);
       botCount++; // vary() çeşitlendirmesi her AI yanıtında ilerlesin
       // LLM zaten yüklüyse (kullanıcı indirmeyi kabul etmiş) derin cevap da ekle.
-      if(inlineAnswered && worker && llmLoaded){
-        try{ worker.postMessage({ type:'chat', text, model: ($('aiButlerModel')||{}).value || 'fast' }); }catch(_){}
+      if(inlineAnswered){
+        try{
+          const ctx = msgs.slice(-30).map(m=>(m.from||'?')+': '+String(m.text).slice(0,300)).join('\n');
+          ensureWorker().postMessage({ type:'chat', text, context: ctx, model: ($('aiButlerModel')||{}).value || 'fast' });
+          const st = $('aiButlerStatus');
+          if(st && !llmLoaded) st.textContent = 'Yerel model hazırlanıyor (ilk seferde indirilir)…';
+        }catch(_){}
       }
     }, 30);
   }
