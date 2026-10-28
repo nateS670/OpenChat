@@ -189,6 +189,14 @@
       return hit ? hit.who+' şöyle demiş: "'+hit.t.slice(0,160)+'"' : 'Kimin söylediğini bulamadım — kelimeyi tam yazmayı dener misin?';
     }
     if(has('tesekkur','sagol','eyvallah')) return 'Rica ederim! Hepsi bu cihazda kaldı, hiçbir mesaj dışarı gitmedi. 😊';
+    // 🔌 [İSTEK] Butler'a yazılanı gerçek sohbete gönderme:
+    // "şunu mesaja at / sohbetle paylaş" gibi komutlar veya paneldeki 📤
+    // butonu ile kullanıcı AI cevabını doğrudan karşı tarafa yollayabilir.
+    if(has('mesaja at','sohete at','sohbete at','paylas gonder','gonder at','mesaj olarak gonder')){
+      const m = recent[recent.length-1];
+      queueSendToChat(m ? m.t : text);
+      return '📤 Mesaj sohbete gönderiliyor: "'+String(m?m.t:text).slice(0,80)+'"';
+    }
     if(has('neden calismiyor','hata','bozuk')) return 'Ben yerel (cihaz içi) asistanım; mesajların sunucuya gitmez. Bir sorun varsa kapatıp açmayı veya sayfayı yenilemeyi deneyebilirsin.';
     const stopRe = /[.,!?;:]|\b(bu|su|icin|hakkinda|hakkinda|ve|ile|de|da|mi|bir)\b/g;
     const terms = q.replace(stopRe,' ').split(/\s+/).filter(w=>w.length>=4 && !TR_STOPWORDS.has(w)).slice(0,4);
@@ -210,6 +218,10 @@
   let worker = null;
   let captionsOn = false;
   let captionLines = [];
+  // 🔧 [FIX] Whisper indirmesi bir kez başarısız olursa kilitlenir; kullanıcı
+  // altyazı butonuna tekrar basana kadar sessiz kalınır (konsol "Failed to
+  // fetch" döngüsünün kökü buydu).
+  let asrFailedOnce = false;
   // 🔌 LLM yalnızca kullanıcı fiilen model indirmeyi başlattıysa (altyazı/derin
   // özet) ve tamamlanınca kullanılır; asla otomatik indirilmez.
   let llmLoaded = false;
@@ -420,6 +432,9 @@
     if(d.kind === 'asr' && cap) cap.textContent = d.msg || '';
     if(d.kind === 'llm' && but) but.textContent = d.msg || '';
     if(d.kind === 'asr') setCapLoading(true, d.msg);
+    // 🔧 LLM gerçekten yüklendiyse bayrağı set et — böylece Butler sohbetinde
+    // derin (model) cevap da arka planda istenebilir.
+    if(d.kind === 'llm' && d.msg && /hazır/.test(d.msg)) llmLoaded = true;
     if(d.msg && /hazır/.test(d.msg)) setCapLoading(false);
   }
 
@@ -437,6 +452,19 @@
 
   function onError(d){
     const msg = d.msg || 'Bilinmeyen hata';
+    if(d.kind === 'asr'){
+      // 🔧 [FIX] Artık sonsuz retry yok: worker fatal:true ile kilitlendiyse
+      // bunu not al ve kullanıcıya tek, anlaşılır bir mesaj göster.
+      if(d.fatal) asrFailedOnce = true;
+      setCapLoading(false);
+      const cap = $('liveCaptionStatus');
+      if(cap){
+        cap.textContent = asrFailedOnce
+          ? 'Altyazı modeli indirilemedi (internet/HF erişimi yok) · AI özet ve sohbet yine de cihazda çalışır'
+          : 'Altyazı hatası: '+msg;
+      }
+      return;
+    }
     if(d.kind === 'summarize' || d.kind === 'llm' || d.kind === 'worker'){
       // 🔌 [İSTEK] Artık kullanıcıya "model yüklenemedi" hatası GÖSTERMEYİZ:
       // cihaz içi Butler motoru sonucu çoktan üretti; LLM yalnızca bonus.
@@ -515,6 +543,35 @@
     if(text) appendChat('bot', text);
   }
 
+  // 🔌 [İSTEK] AI cevabını gerçek sohbete gönderme (app.js'in kendi
+  // msgInput→sendBtn akışını kullanır; mobilde de çalışır).
+  function queueSendToChat(text){
+    const t = String(text||'').trim();
+    if(!t) return;
+    const inp = $('msgInput');
+    if(inp){
+      inp.value = t;
+      try{ inp.dispatchEvent(new Event('input', { bubbles:true })); }catch(_){}
+    }
+    const mInp = $('msgInputMobile');
+    if(mInp){ mInp.value = t; try{ mInp.dispatchEvent(new Event('input', { bubbles:true })); }catch(_){} }
+  }
+  function sendLastAiToChat(){
+    const out = $('aiButlerOut');
+    if(!out || !out.textContent.trim()){
+      if(typeof showToast==='function') showToast('AI Butler','Önce bir şey yaz ya da özet üret.');
+      return;
+    }
+    const blocks = out.textContent.split('\n\n').filter(Boolean);
+    const lastBot = [...blocks].reverse().find(b=>b.startsWith('🤖 Butler:'));
+    const text = (lastBot ? lastBot.replace('🤖 Butler: ','') : blocks[blocks.length-1]).trim();
+    if(!text) return;
+    queueSendToChat(text);
+    const btn = $('sendBtn');
+    if(btn){ setTimeout(()=>{ try{ btn.click(); }catch(_){} }, 30); }
+    if(typeof showToast==='function') showToast('📤 AI mesajı', 'Cevap sohbete gönderildi · verilerin cihazda kaldı');
+  }
+
   // 🔌 [İSTEK] Cihaz içi sohbet: kullanıcı butlere yazıp cevap alabilir —
   // 0 MB indirme, her tarayıcıda çalışır.
   function appendChat(role, text){
@@ -524,6 +581,8 @@
     const who = role==='user' ? '🙋 Sen' : '🤖 Butler';
     out.textContent += (out.textContent.trim() ? '\n\n' : '') + who+': '+text;
     out.scrollTop = out.scrollHeight;
+    const sb = $('aiButlerSendChat');
+    if(sb) sb.style.display = role==='user' ? '' : 'none';
   }
   function sendButlerChat(){
     const inp = $('aiButlerInp');
@@ -596,11 +655,20 @@
       captionLines = [];
       const tx = $('liveCaptionText');
       if(tx){ tx.textContent='Karşı taraf konuşunca altyazı burada akar.'; tx.classList.remove('has-text'); }
+      if(worker) worker.postMessage({ type:'captions-off' });
       if(worker) worker.postMessage({ type:'reset-audio' });
+      setCapLoading(false);
       return;
     }
     ensureWorker();
-    worker.postMessage({ type:'warmup-asr' });
+    if(asrFailedOnce){
+      // Daha önce indirme başarısız oldu — kullanıcı tekrar denemeden sessiz kal.
+      const cap = $('liveCaptionStatus');
+      if(cap) cap.textContent = 'Altyazı modeli indirilemedi · internet erişimini kontrol edip butona tekrar bas';
+      setCapLoading(false);
+    } else {
+      worker.postMessage({ type:'warmup-asr' });
+    }
     worker.postMessage({ type:'set-translate', mode: ($('liveCaptionMode')||{}).value || 'off' });
     for(const [uid, stream] of pending){
       await startTap(uid, stream);
@@ -647,6 +715,9 @@
     }
     const sendBtn = $('aiButlerSend');
     if(sendBtn) sendBtn.addEventListener('click', sendButlerChat);
+    // 🔌 [İSTEK] AI cevabını gerçek sohbete gönderme butonu.
+    const aiToChatBtn = $('aiButlerSendChat');
+    if(aiToChatBtn) aiToChatBtn.addEventListener('click', sendLastAiToChat);
     const overlay = $('aiButlerPanel');
     if(overlay) overlay.addEventListener('click', (e)=>{
       if(e.target === overlay) overlay.classList.add('hidden');
