@@ -1188,109 +1188,153 @@ html:not(.dark) .toast{background:#334155}
 .chat-area.drag-over #dropOverlay{display:flex!important}
 @keyframes modalIn{from{opacity:0;transform:scale(.85) translateY(20px)}to{opacity:1;transform:scale(1) translateY(0)}}
 
-/* ✨ [3.7] GİRİŞ / KAYIT SONRASI GEÇİŞ ANİMASYONU
-   authScreen kapanırken önce hafifçe büyür (push-in), sonra mainApp
-   aşağıdan yukarı kayarak + hafif scale ile oturur. Tamamen CSS —
-   app.js sadece sınıf ekleyip çıkarıyor (inline onclick yok, CSP temiz). */
-@keyframes authExit{from{opacity:1;transform:scale(1)}to{opacity:0;transform:scale(1.06)}}
-@keyframes appEnter{from{opacity:0;transform:translateY(26px) scale(.965)}to{opacity:1;transform:none}}
-@keyframes welcomePop{
-  0%{opacity:0;transform:translate(-50%,-50%) scale(.72)}
-  55%{opacity:1;transform:translate(-50%,-50%) scale(1.05)}
-  100%{opacity:1;transform:translate(-50%,-50%) scale(1)}
-}
-@keyframes welcomeOut{to{opacity:0;transform:translate(-50%,-50%) scale(1.18)}}
-@keyframes welcomeRing{from{transform:scale(.4);opacity:.55}to{transform:scale(2.1);opacity:0}}
-/* ✨ [3.7] Zenginleştirilmiş karşılama: iki halka, parıltı, dönen ışın,
-   sıralı harf animasyonu ve etraftan yukarı süzülen parçacıklar. */
-@keyframes welcomeRing2{0%{transform:scale(.3);opacity:.45}70%{opacity:.18}100%{transform:scale(3);opacity:0}}
-@keyframes welcomeGlow{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:.9;transform:scale(1.12)}}
-@keyframes welcomeSpin{to{transform:rotate(360deg)}}
-@keyframes welcomeLetter{
-  0%{opacity:0;transform:translateY(10px) scale(.8)}
-  100%{opacity:1;transform:none}
-}
-@keyframes welcomeSpark{
-  0%{opacity:0;transform:translate(0,0) scale(.4)}
-  35%{opacity:1}
-  100%{opacity:0;transform:translate(var(--dx),var(--dy)) scale(1.15)}
-}
-@keyframes welcomeFloat{
-  0%{opacity:0;transform:translateY(40px) scale(.6)}
-  15%{opacity:.85}
-  100%{opacity:0;transform:translateY(-140px) scale(1)}
+/* ✨ GİRİŞ / KAYIT SONRASI KARŞILAMA ANİMASYONU (v2) — kaynak: welcome-anim.css
+   Sadece transform+opacity. app.js sınıf ekleyip çıkarır / overlay'i üretir. */
+#welcomeBurst{
+  position:fixed; inset:0; z-index:9600;
+  display:flex; align-items:center; justify-content:center;
+  pointer-events:none; overflow:hidden;
+  /* Alttaki uygulama metni rozetin içinden geçmesin diye zemin koyu + blur */
+  background:radial-gradient(circle at 50% 50%, rgba(255,123,123,.18), rgba(0,0,0,.88) 30%, rgba(0,0,0,.93));
+  -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+  animation:wbIn .25s ease-out both, wbOut .45s ease-in 1.35s forwards;
 }
 
-#authScreen.sv-auth-out{animation:authExit .32s ease-in forwards;pointer-events:none}
-#mainApp.sv-app-enter{animation:appEnter .55s cubic-bezier(.22,1,.36,1) both}
-#welcomeBurst{
-  position:fixed;inset:0;z-index:9600;display:flex;align-items:center;justify-content:center;
-  pointer-events:none;
-  /* Arka planı hafifçe karart ki alttaki uygulama metni rozetin içinden geçmesin */
-  background:radial-gradient(circle at 50% 50%,rgba(255,123,123,.18),rgba(0,0,0,.88) 30%,rgba(0,0,0,.93));
-  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
-  animation:welcomeOut .45s ease-in .95s forwards;
-}
+/* Kart: artık absolute/translate yok, flex ile ortalanıyor */
 #welcomeBurst .wb-card{
-  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-  display:flex;flex-direction:column;align-items:center;gap:10px;
-  animation:welcomeCardIn .5s cubic-bezier(.34,1.56,.64,1) both;
+  position:relative; left:auto; top:auto; transform:none;
+  display:flex; flex-direction:column; align-items:center; gap:24px;
+  animation:wbCardOut .45s ease-in 1.35s forwards;
 }
-@keyframes welcomeCardIn{
-  0%{opacity:0;transform:translate(-50%,-50%) scale(.72)}
-  55%{opacity:1;transform:translate(-50%,-50%) scale(1.05)}
-  100%{opacity:1;transform:translate(-50%,-50%) scale(1)}
-}
-/* .wb-av ve .wb-hi, .wb-card'ın flex çocukları — KENDİ animasyonları olmamalı:
-   aksi hâlde transform animasyonu onları kendi (0,0) köşesinden ölçekleyip
-   kartın dışına kaydırıyordu (screenshot'ta avatar sol üstte kalmıştı).
-   Ölçek/pop efekti artık kart üzerinde. */
-#welcomeBurst .wb-ring{
-  position:absolute;left:50%;top:50%;width:150px;height:150px;margin:-75px 0 0 -75px;
-  border-radius:50%;border:2px solid var(--primary);animation:welcomeRing .9s ease-out both;
-}
+
+/* Efektlerin hepsi avatara ortalı 96×96 sahne içinde */
+#welcomeBurst .wb-stage{ position:relative; width:96px; height:96px; }
+
+#welcomeBurst .wb-glow,
+#welcomeBurst .wb-beam,
+#welcomeBurst .wb-ring,
 #welcomeBurst .wb-ring2{
-  position:absolute;left:50%;top:50%;width:150px;height:150px;margin:-75px 0 0 -75px;
-  border-radius:50%;border:1px solid rgba(255,123,123,.7);animation:welcomeRing2 1.15s ease-out .18s both;
+  position:absolute; left:50%; top:50%; border-radius:50%;
+  pointer-events:none; will-change:transform,opacity;
 }
 #welcomeBurst .wb-glow{
-  position:absolute;left:50%;top:50%;width:190px;height:190px;margin:-95px 0 0 -95px;
-  border-radius:50%;background:radial-gradient(circle,rgba(255,123,123,.42),transparent 68%);
-  animation:welcomeGlow 1.3s ease-in-out both;
+  width:230px; height:230px; margin:-115px 0 0 -115px;
+  background:radial-gradient(circle, rgba(255,123,123,.42), transparent 68%);
+  animation:wbGlow 1.5s ease-in-out both;
 }
 #welcomeBurst .wb-beam{
-  position:absolute;left:50%;top:50%;width:260px;height:260px;margin:-130px 0 0 -130px;
-  border-radius:50%;
-  background:conic-gradient(from 0deg,transparent 0deg,rgba(255,123,123,.35) 30deg,transparent 70deg,transparent 180deg,rgba(255,123,123,.25) 210deg,transparent 250deg);
-  mask:radial-gradient(circle,transparent 42%,#000 46%,#000 62%,transparent 70%);
-  -webkit-mask:radial-gradient(circle,transparent 42%,#000 46%,#000 62%,transparent 70%);
-  animation:welcomeSpin 2.2s linear both;
+  width:250px; height:250px; margin:-125px 0 0 -125px;
+  background:conic-gradient(from 0deg, transparent 0deg, rgba(255,123,123,.38) 30deg, transparent 70deg, transparent 180deg, rgba(255,123,123,.26) 210deg, transparent 250deg);
+  -webkit-mask:radial-gradient(circle, transparent 40%, #000 45%, #000 62%, transparent 70%);
+          mask:radial-gradient(circle, transparent 40%, #000 45%, #000 62%, transparent 70%);
+  animation:wbSpin 1.7s cubic-bezier(.25,.1,.25,1) both;
 }
-#welcomeBurst .wb-av{animation:none}
-#welcomeBurst .wb-letter{display:inline-block;animation:welcomeLetter .34s cubic-bezier(.34,1.56,.64,1) both}
+#welcomeBurst .wb-ring{
+  width:96px; height:96px; margin:-48px 0 0 -48px;
+  border:2px solid var(--primary);
+  animation:wbRing .95s cubic-bezier(.2,.7,.3,1) .08s both;
+}
+#welcomeBurst .wb-ring2{
+  width:96px; height:96px; margin:-48px 0 0 -48px;
+  border:1px solid rgba(255,123,123,.7);
+  animation:wbRing 1.15s cubic-bezier(.2,.7,.3,1) .28s both;
+}
+
+#welcomeBurst .wb-av{
+  position:relative; z-index:1;
+  width:96px; height:96px; margin:0; border-radius:50%;
+  background:var(--primary); color:#fff;
+  display:flex; align-items:center; justify-content:center;
+  font-size:40px; font-weight:900; overflow:hidden;
+  box-shadow:0 14px 40px rgba(255,60,60,.45);
+  animation:wbAv .6s cubic-bezier(.34,1.56,.64,1) both;
+}
+#welcomeBurst .wb-av img{ width:100%; height:100%; object-fit:cover; display:block; }
+
+#welcomeBurst .wb-hi{
+  font-size:15px; font-weight:700; color:var(--text);
+  background:var(--panel); padding:7px 18px; border-radius:20px;
+  box-shadow:var(--sh); white-space:nowrap;
+  animation:wbHi .5s cubic-bezier(.22,1,.36,1) .3s both;
+}
+#welcomeBurst .wb-letter{
+  display:inline-block;
+  animation:wbLetter .32s cubic-bezier(.34,1.56,.64,1) both;
+}
+#welcomeBurst .wb-who{ margin-left:6px; opacity:.75; font-weight:600; }
+
 #welcomeBurst .wb-spark{
-  position:absolute;left:50%;top:50%;width:6px;height:6px;border-radius:50%;
-  background:var(--primary);box-shadow:0 0 10px rgba(255,123,123,.9);
-  margin:-3px 0 0 -3px; /* merkezden saçılsın — sol üst köşeden değil */
-  animation:welcomeSpark .85s cubic-bezier(.22,1,.36,1) both;
+  position:absolute; left:50%; top:50%; margin:-3px 0 0 -3px;
+  border-radius:50%; background:var(--primary);
+  box-shadow:0 0 10px rgba(255,123,123,.9);
+  animation:wbSpark .9s cubic-bezier(.22,1,.36,1) both;
 }
 #welcomeBurst .wb-float{
-  position:absolute;bottom:0;width:5px;height:5px;border-radius:50%;
-  background:rgba(255,123,123,.75);box-shadow:0 0 8px rgba(255,123,123,.6);
-  animation:welcomeFloat 1.5s ease-out both;
+  position:absolute; bottom:-10px; border-radius:50%;
+  background:rgba(255,123,123,.75);
+  box-shadow:0 0 8px rgba(255,123,123,.6);
+  animation:wbFloat 1.7s ease-out both;
 }
-#welcomeBurst .wb-av{
-  width:96px;height:96px;border-radius:50%;background:var(--primary);color:#fff;
-  display:flex;align-items:center;justify-content:center;font-size:40px;font-weight:900;
-  box-shadow:0 14px 40px rgba(255,60,60,.45);overflow:hidden;
+
+/* ── Ana uygulama girişi: overlay'in altında hafifçe gecikmeli oturur ── */
+#authScreen.sv-auth-out{ animation:wbAuthExit .3s ease-in forwards; pointer-events:none; }
+#mainApp.sv-app-enter{ animation:wbAppEnter .65s cubic-bezier(.22,1,.36,1) .15s both; }
+
+/* ── Keyframes ───────────────────────────────────────────────── */
+/* NOT: eski welcomeOut, overlay'in kendisine translate(-50%,-50%) uyguluyordu →
+   çıkışta tüm ekran yarım ekran kayıyordu. Artık sadece opacity. */
+@keyframes wbIn      { from{opacity:0} to{opacity:1} }
+@keyframes wbOut     { from{opacity:1} to{opacity:0} }
+@keyframes wbCardOut { to{ opacity:0; transform:scale(1.08) translateY(-6px) } }
+@keyframes wbAv {
+  0%  { opacity:0; transform:scale(.5) rotate(-10deg) }
+  60% { opacity:1; transform:scale(1.07) rotate(1.5deg) }
+  100%{ opacity:1; transform:none }
 }
-#welcomeBurst .wb-av img{width:100%;height:100%;object-fit:cover}
-#welcomeBurst .wb-hi{font-size:15px;font-weight:700;color:var(--text);background:var(--panel);padding:6px 16px;border-radius:20px;box-shadow:var(--sh);white-space:nowrap;min-width:150px;text-align:center;box-sizing:border-box}
-@media(prefers-reduced-motion:reduce){
-  #authScreen.sv-auth-out,#mainApp.sv-app-enter,#welcomeBurst,#welcomeBurst .wb-card,
-  #welcomeBurst .wb-ring,#welcomeBurst .wb-ring2,#welcomeBurst .wb-glow,
-  #welcomeBurst .wb-beam,#welcomeBurst .wb-av,#welcomeBurst .wb-letter,
-  #welcomeBurst .wb-spark,#welcomeBurst .wb-float{animation:none!important}
+@keyframes wbHi {
+  from{ opacity:0; transform:translateY(12px) scale(.96) }
+  to  { opacity:1; transform:none }
+}
+@keyframes wbLetter {
+  from{ opacity:0; transform:translateY(8px) scale(.85) }
+  to  { opacity:1; transform:none }
+}
+@keyframes wbRing {
+  from{ transform:scale(1);   opacity:.6 }
+  to  { transform:scale(2.7); opacity:0 }
+}
+@keyframes wbGlow {
+  0%  { opacity:0;  transform:scale(.7) }
+  40% { opacity:.95; transform:scale(1.1) }
+  100%{ opacity:.35; transform:scale(1) }
+}
+@keyframes wbSpin {
+  0%  { opacity:0;  transform:rotate(-60deg) scale(.8) }
+  25% { opacity:1 }
+  100%{ opacity:0;  transform:rotate(200deg) scale(1.1) }
+}
+@keyframes wbSpark {
+  0%  { opacity:0; transform:translate(0,0) scale(.4) }
+  30% { opacity:1 }
+  100%{ opacity:0; transform:translate(var(--dx),var(--dy)) scale(1.1) }
+}
+@keyframes wbFloat {
+  0%  { opacity:0; transform:translateY(0) scale(.6) }
+  15% { opacity:.85 }
+  100%{ opacity:0; transform:translateY(-45vh) scale(1) }
+}
+@keyframes wbAuthExit {
+  from{ opacity:1; transform:scale(1) }
+  to  { opacity:0; transform:scale(1.04) }
+}
+@keyframes wbAppEnter {
+  from{ opacity:0; transform:translateY(20px) scale(.97) }
+  to  { opacity:1; transform:none }
+}
+
+@media (prefers-reduced-motion: reduce){
+  #welcomeBurst{ display:none !important }
+  #authScreen.sv-auth-out, #mainApp.sv-app-enter{ animation:none !important }
 }
 
 /* Dosya mesajı */
