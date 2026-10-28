@@ -84,75 +84,85 @@ function _playWelcomeTransition(){
   const card = document.createElement('div');
   card.className = 'wb-card';
 
-  // Halkalar + parıltı + dönen ışın (hepsi CSS animasyonu, JS sadece iskelet)
-  const glow = document.createElement('div'); glow.className = 'wb-glow';
-  const beam = document.createElement('div'); beam.className = 'wb-beam';
-  const ring = document.createElement('div'); ring.className = 'wb-ring';
-  const ring2 = document.createElement('div'); ring2.className = 'wb-ring2';
+  // 🎬 [v2] Efektler artık AVATARA ortalı bir "stage" içinde (96×96). Eskiden
+  // halkalar/parıltı kartın (avatar + yazı) ortasına göre konumlanıyordu ve
+  // avatardan ~20px aşağıda kalıyordu.
+  const stage = document.createElement('div');
+  stage.className = 'wb-stage';
+  const mk = (cls)=>{ const d = document.createElement('div'); d.className = cls; return d; };
+  stage.appendChild(mk('wb-glow'));
+  stage.appendChild(mk('wb-beam'));
+  stage.appendChild(mk('wb-ring'));
+  stage.appendChild(mk('wb-ring2'));
+
+  // Avatardan dışarı saçılan parıltılar (eşit aralıklı + hafif rastgele)
+  const sparks = 12;
+  for(let i = 0; i < sparks; i++){
+    const sp = document.createElement('span');
+    sp.className = 'wb-spark';
+    const ang = (i / sparks) * Math.PI * 2 + (Math.random() - .5) * 0.35;
+    const dist = 78 + Math.random() * 52;
+    sp.style.setProperty('--dx', (Math.cos(ang) * dist).toFixed(1) + 'px');
+    sp.style.setProperty('--dy', (Math.sin(ang) * dist).toFixed(1) + 'px');
+    sp.style.animationDelay = (0.14 + Math.random() * 0.14).toFixed(3) + 's';
+    sp.style.width = sp.style.height = (4 + Math.round(Math.random() * 3)) + 'px';
+    stage.appendChild(sp);
+  }
 
   const av = document.createElement('div');
   av.className = 'wb-av';
   const name = String((ME && ME.user_id) || '').trim();
-  const avUrl = sanitizeAvatarUrl ? sanitizeAvatarUrl(ME && ME.avatar) : '';
+  const avUrl = (typeof sanitizeAvatarUrl === 'function') ? sanitizeAvatarUrl(ME && ME.avatar) : '';
   if(avUrl){
     const img = document.createElement('img');
     img.src = avUrl; img.alt = '';
     av.appendChild(img);
   } else {
-    av.textContent = (name[0] || '?').toUpperCase();
+    av.textContent = ([...name][0] || '?').toUpperCase();
   }
+  stage.appendChild(av);
 
-  // Karşılama yazısı: her harf sırayla gelir ("H" → "Ho" → "Hoş" …).
-  // Parçalara bölündüğü için i18n sözlüğüne bağımlı değil; sadece görsel.
+  // Karşılama yazısı: harf harf gelir. Hepsi avatar belirdikten sonra başlar.
   const hi = document.createElement('div');
   hi.className = 'wb-hi';
   const label = 'Hoş geldin';
+  const L0 = 0.38, STEP = 0.035;
   [...label].forEach((ch, i)=>{
     const sp = document.createElement('span');
     sp.className = 'wb-letter';
     sp.textContent = ch === ' ' ? '\u00A0' : ch;
-    sp.style.animationDelay = (0.42 + i * 0.045).toFixed(3) + 's';
+    sp.style.animationDelay = (L0 + i * STEP).toFixed(3) + 's';
     hi.appendChild(sp);
   });
   if(name){
     const who = document.createElement('span');
-    who.className = 'wb-letter';
-    who.style.cssText = 'margin-left:6px;opacity:.75;font-weight:600';
+    who.className = 'wb-letter wb-who';
     who.textContent = '· ' + name;
-    who.style.animationDelay = (0.42 + label.length * 0.045).toFixed(3) + 's';
+    who.style.animationDelay = (L0 + label.length * STEP).toFixed(3) + 's';
     hi.appendChild(who);
   }
 
-  // Avatardan dışarı doğru saçılan parıltılar
-  const sparks = 10;
-  for(let i = 0; i < sparks; i++){
-    const sp = document.createElement('span');
-    sp.className = 'wb-spark';
-    const ang = (i / sparks) * Math.PI * 2 + Math.random() * 0.4;
-    const dist = 70 + Math.random() * 55;
-    sp.style.setProperty('--dx', (Math.cos(ang) * dist).toFixed(1) + 'px');
-    sp.style.setProperty('--dy', (Math.sin(ang) * dist).toFixed(1) + 'px');
-    sp.style.animationDelay = (0.18 + Math.random() * 0.16).toFixed(3) + 's';
-    sp.style.width = sp.style.height = (4 + Math.round(Math.random() * 4)) + 'px';
-    card.appendChild(sp);
-  }
-
   // Ekranın altından yukarı süzülen tozlar
-  for(let i = 0; i < 12; i++){
+  for(let i = 0; i < 14; i++){
     const fl = document.createElement('span');
     fl.className = 'wb-float';
-    fl.style.left = (8 + Math.random() * 84).toFixed(1) + '%';
-    fl.style.animationDelay = (0.15 + Math.random() * 0.7).toFixed(2) + 's';
-    fl.style.width = fl.style.height = (3 + Math.round(Math.random() * 4)) + 'px';
+    fl.style.left = (6 + Math.random() * 88).toFixed(1) + '%';
+    fl.style.animationDelay = (0.1 + Math.random() * 0.7).toFixed(2) + 's';
+    fl.style.width = fl.style.height = (3 + Math.round(Math.random() * 3)) + 'px';
     burst.appendChild(fl);
   }
 
-  card.appendChild(glow); card.appendChild(beam);
-  card.appendChild(ring); card.appendChild(ring2);
-  card.appendChild(av); card.appendChild(hi);
+  card.appendChild(stage);
+  card.appendChild(hi);
   burst.appendChild(card);
   document.body.appendChild(burst);
-  setTimeout(()=>{ try{ burst.remove(); }catch(e){} }, 1650);
+
+  // Çıkış animasyonu (wbOut) bitince kaldır; olmazsa güvenlik zamanlayıcısı.
+  const kill = ()=>{ try{ burst.remove(); }catch(e){} };
+  burst.addEventListener('animationend', (e)=>{
+    if(e.target === burst && e.animationName === 'wbOut') kill();
+  });
+  setTimeout(kill, 2600);
 }
 
 // authScreen→mainApp geçişi yapan HER yer bunu kullanır.
@@ -180,7 +190,7 @@ async function revealApp(){
       app.classList.remove('sv-app-enter');
       void app.offsetWidth; // reflow — animasyon her girişte yeniden oynasın
       app.classList.add('sv-app-enter');
-      setTimeout(()=>app.classList.remove('sv-app-enter'), 700);
+      setTimeout(()=>app.classList.remove('sv-app-enter'), 950);
     }
   }
   document.body.classList.add('sv-logged-in');
@@ -1504,11 +1514,18 @@ async function aesDecrypt(pkt, fromUserId=null){
 // DEĞİL. MQTT bağlantısı kurulmadan hemen önce (connectNetwork içinde)
 // GET /api/config çağrılır; Vercel Environment Variables'tan
 // (örn. TOPIC_ROTATE_SECRET) okunan aşağıdaki gövde döner:
-//   { mqttBroker, mqttUsername, mqttPassword, topicSecret }
+//   { mqttBroker, mqttUsername, mqttPassword, todayTopic }
+// 🛡️ topicSecret artık sunucudan GELMİYOR: günlük MQTT topic'i (HMAC) sunucuda
+// hesaplanıp hazır olarak (todayTopic) döner — bkz. api/config.js.
 let _serverConfig = null;
+let _serverConfigDay = '';      // config'in alındığı UTC günü (YYYY-MM-DD)
 let _serverConfigPromise = null;
+const _utcDay = () => new Date().toISOString().slice(0,10);
 async function loadServerConfig(){
-  if(_serverConfig) return _serverConfig;
+  // todayTopic GÜNLÜK döner: UTC gün değiştiyse önbellek geçersiz sayılır,
+  // aksi halde gece yarısından sonra yeniden bağlanan kullanıcı dünkü
+  // topic'te kalıp diğerlerinden ayrışırdı.
+  if(_serverConfig && _serverConfigDay === _utcDay()) return _serverConfig;
   if(_serverConfigPromise) return _serverConfigPromise;
   _serverConfigPromise = (async () => {
     const r = await fetch('/api/config', { signal: AbortSignal.timeout(6000) });
@@ -1517,10 +1534,11 @@ async function loadServerConfig(){
     if(!cfg || typeof cfg.mqttBroker !== 'string' || !cfg.mqttBroker){
       throw new Error('[SEC] /api/config: mqttBroker alanı eksik/hatalı');
     }
-    if(typeof cfg.topicSecret !== 'string' || !cfg.topicSecret){
-      throw new Error('[SEC] /api/config: topicSecret alanı eksik/hatalı');
+    if(typeof cfg.todayTopic !== 'string' || !/^sv\/[0-9a-f]{32}$/.test(cfg.todayTopic)){
+      throw new Error('[SEC] /api/config: todayTopic alanı eksik/hatalı');
     }
     _serverConfig = cfg;
+    _serverConfigDay = _utcDay();
     return cfg;
   })();
   try{
@@ -1546,21 +1564,14 @@ function sanitizeLinkUrl(url){
   return escHtml(url.trim()); // Attribute injection'ı önle
 }
 
-// Gerçek ROOM topic'i sabit değil; günlük dönen, SUNUCUDAN ALINAN
-// topicSecret ile HMAC-SHA256 türetilir. Aynı gün + aynı sır = aynı hash
-// → birlikte çalışır. 🛡️ [MED-01] Sunucuya erişilemezse artık GÜVENSİZ
-// sabit ROOM topic'ine SESSİZCE düşülmez — bağlantı kurulmaz (fail-closed),
-// böylece topic kaynak kodundan tahmin edilemez kalır.
+// Gerçek ROOM topic'i sabit değil; günlük döner ve SUNUCUDA hesaplanır
+// (HMAC-SHA256(TOPIC_ROTATE_SECRET, ROOM + UTC-gün) → 'sv/<32 hex>').
+// Ham sır istemciye hiç gönderilmez; /api/config sadece bugünün topic'ini
+// verir. 🛡️ [MED-01] Sunucuya erişilemezse GÜVENSİZ sabit ROOM topic'ine
+// SESSİZCE düşülmez — bağlantı kurulmaz (fail-closed).
 async function deriveObfuscatedTopic(){
   const cfg = await loadServerConfig();
-  const enc = new TextEncoder();
-  const dateSeed = new Date().toISOString().slice(0,10);
-  const keyMat = await crypto.subtle.importKey(
-    'raw', enc.encode(cfg.topicSecret), {name:'HMAC', hash:'SHA-256'}, false, ['sign']
-  );
-  const sig = await crypto.subtle.sign('HMAC', keyMat, enc.encode(ROOM + dateSeed));
-  const hex = [...new Uint8Array(sig)].map(b=>b.toString(16).padStart(2,'0')).join('');
-  return 'sv/' + hex.slice(0, 32);   // "sv/a3f8…" — 35 karakter topic
+  return cfg.todayTopic;   // "sv/a3f8…" — 35 karakter topic
 }
 
 let _obfTopic = null; // başlangıçta null, connectNetwork'te doldurulur
@@ -2225,7 +2236,7 @@ async function connectNetwork(){
     return;
   }
 
-  // Obfuscated topic'i hesapla (async, topicSecret /api/config'ten gelir)
+  // Günün obfuscated topic'ini al (sunucuda hesaplanır, /api/config'ten gelir)
   try{
     _obfTopic = await deriveObfuscatedTopic();
   }catch(e){
