@@ -61,12 +61,7 @@
     "Şifreyi göster/gizle": "Show/hide password",
     "en az 6 karakter": "at least 6 characters",
     "Şifren cihazında saklanır, ağa gitmez": "Your password is stored on your device, never sent over the network",
-    // 🐛 [FIX] Varsayılan/boş formda "Log In" kafa karıştırıyordu (yeni hesap
-    // açılabildiği için "Sign In" daha doğru). Kayıtlı bir hesaba tıklanınca
-    // app.js artık bilerek AYRI bir Türkçe metin ("Hesaba Giriş Yap")
-    // kullanıyor, böylece o durum hâlâ "Log In" olarak çevrilebiliyor.
-    "Giriş Yap": "Sign In",
-    "Hesaba Giriş Yap": "Log In",
+    "Giriş Yap": "Log In",
     "veya": "or",
     "Şifre Belirle ve Giriş Yap": "Set Password and Log In",
     "🔒 İlk şifreni belirle": "🔒 Set your first password",
@@ -261,7 +256,6 @@
     "Görüntülü": "Video",
     "Görüntülü Ara": "Video Call",
     "Sesli Ara": "Voice Call",
-    "Sesli & görüntülü arama": "Voice & video calls",
     "Sesli arama geliyor...": "Incoming voice call...",
     "Çağrılıyor": "Calling",
     "Aramayı Kapat": "Close Call",
@@ -331,13 +325,6 @@
     " ile ilk kez konuşuyorsunuz. Güvenlik kodunu mümkünse başka bir kanaldan doğrulayın.": " — this is your first conversation. Verify the security code through another channel if possible.",
     " izni daha önce reddedildi — tarayıcı ayarlarından açman gerekebilir.": " permission was previously denied — you may need to enable it in your browser settings.",
     " için anahtar değişti.": " — security key changed.",
-    "için güvenlik anahtarı değişti. Bu bir cihaz değişikliği olabilir": "— security key changed. This could be a device change",
-    "bir MITM saldırısı işareti olabilir — emin olmadan mesajlaşmaya devam etmeyin.": "or a sign of a MITM attack — don't continue messaging unless you're sure.",
-    "Yine de Kabul Et": "Accept Anyway",
-    "Anahtar Güncellendi": "Key Updated",
-    "Güvenlik kodu doğrulandı": "Security code verified",
-    "Karşılaştırdım, doğrula": "I compared it, verify",
-    "Doğrulandı": "Verified",
     " kişisini engellemek istiyor musun?": " — do you want to block this person?",
     " kişisini gruptan çıkarmak istiyor musun?": " — do you want to remove this person from the group?",
     " kişisini çıkarmak istiyor musun?": " — do you want to remove this person?",
@@ -407,21 +394,6 @@
     "Ağa bağlanılıyor...": "Connecting to network...",
     "● Ağa Bağlı": "● Connected to Network",
     "● Bağlantı Kesildi": "● Disconnected",
-    // 🐛 [FIX] Nav-rail "Connection" hover tooltip (_updateNetTooltip in
-    // app.js) builds its text at runtime from these exact plain-word
-    // fragments (no bullet, no punctuation prefix) — they were missing
-    // from the dictionary entirely, so the tooltip never translated even
-    // though the app itself switches to English.
-    "Bağlı": "Connected",
-    "Bağlantı Kesildi": "Disconnected",
-    "Bilinmiyor": "Unknown",
-    "Sinyal sunucusu (MQTT):": "Signaling server (MQTT):",
-    "P2P bağlantı:": "P2P connection:",
-    // Not: başında boşluk var — çünkü " kişi"/" kişi aktif" gibi mevcut
-    // (daha kısa) sözlük girdileri de boşlukla başlıyor ve regex en soldaki
-    // eşleşmeyi bulduğu an durduğundan, aynı başlangıç konumunda olmayan
-    // (boşluksuz) bir ifade "uzun ifade önce" sıralamasını asla yakalayamaz.
-    " kişi ile aktif": " people active",
     "Bağlantı Hatası": "Connection Error",
     "Bağlantı kurulamadı.": "Couldn't establish connection.",
     "⚠️ Bağlantı Hatası": "⚠️ Connection Error",
@@ -453,6 +425,58 @@
     "\" için kimlik doğrulanamadı, bağlantı reddedildi.": "\" could not be verified, connection rejected.",
     "— atlandı": "— skipped",
 
+    // ── Edge AI (in-browser Whisper + local LLM) ──────────────────
+    "Canlı Altyazı (Whisper Tiny, tarayıcı içi)": "Live Captions (Whisper Tiny, in-browser)",
+    "Karşı taraf konuşunca altyazı burada akar.": "Captions from the other person appear here.",
+    "Whisper Tiny · tarayıcı içi · sunucusuz": "Whisper Tiny · in-browser · serverless",
+    "Konuşulan dil (transkripsiyon)": "Spoken language (transcription)",
+    "İngilizceye çevir (Whisper)": "Translate to English (Whisper)",
+    "Türkçeye çevir (yerel LLM)": "Translate to Turkish (local LLM)",
+    "Altyazı / çeviri": "Captions / translation",
+    "AI Chat Butler — sohbeti cihazda özetle": "AI Chat Butler — summarize this chat on-device",
+    "Mesajlar tarayıcı RAM'inde kalır": "Messages stay in browser RAM",
+    "Uçtan uca şifre kırılmaz: özet buluta gitmez. Transformers.js + WebGPU ile Qwen2.5-0.5B (hızlı) veya Phi-3 Mini (daha güçlü, büyük indirme) bu cihazda çalışır.": "E2E encryption stays intact: the summary never goes to the cloud. Transformers.js + WebGPU run Qwen2.5-0.5B (fast) or Phi-3 Mini (stronger, large download) on this device.",
+    "Hızlı · Qwen2.5 0.5B": "Fast · Qwen2.5 0.5B",
+    "Güçlü · Phi-3 Mini (WebGPU)": "Strong · Phi-3 Mini (WebGPU)",
+    "Özetle": "Summarize",
+    "Önce bir sohbet aç.": "Open a chat first.",
+    "Bu sohbette özetlenecek metin mesajı yok.": "No text messages to summarize in this chat.",
+    "Hızlı taslak (cihaz içi, model öncesi):": "Quick draft (on-device, before the model):",
+    "Özetlenecek metin yok.": "Nothing to summarize.",
+    "mesaj cihazda hazır · model henüz çalışmadı": "messages ready on-device · model has not run yet",
+    "Yerel model yükleniyor… mesajlar RAM’de kalır, sunucuya gitmez.": "Loading the local model… messages stay in RAM and never hit a server.",
+    "Edge LLM çalışıyor…": "Edge LLM is running…",
+    "Özet bu cihazda üretildi · mesajlar dışarı çıkmadı": "Summary produced on this device · messages never left",
+    "Özetlenecek metin mesajı yok.": "No text messages to summarize.",
+    "Özet üretilemedi.": "Couldn't produce a summary.",
+    "Whisper Tiny yükleniyor": "Loading Whisper Tiny",
+    "Whisper Tiny hazır · tarayıcı içi": "Whisper Tiny ready · in-browser",
+
+    // ── Changelog / What's New modal ─────────────────────────────
+    "Yenilikler": "What's New",
+    "Sürüm 3.7": "Version 3.7",
+    "Sürüm 3.6": "Version 3.6",
+    "Eski sürüm": "Old version",
+    "✨ Giriş/kayıt sonrası karşılama animasyonu — ekran yumuşakça oturur, avatarın ortada büyüyerek kısa bir \"Hoş geldin\" gösterir (hareket azaltma ayarına saygılı)": "✨ Welcome animation after sign-in/sign-up — the screen settles in smoothly and your avatar pops up with a short \"Welcome\" (respects reduced-motion)",
+    "🎙️ Yeni: Canlı altyazı — aramalarda konuşulanlar Whisper Tiny ile tarayıcının içinde yazıya dökülür (WebGPU varsa hızlandırılır, yoksa WASM)": "🎙️ New: Live captions — speech in calls is transcribed inside the browser with Whisper Tiny (accelerated by WebGPU when available, otherwise WASM)",
+    "🌍 Yeni: Altyazı çeviri modları — konuşulan dil, İngilizceye çeviri (Whisper) veya yerel LLM ile Türkçeye çeviri; arama sırasında canlı değiştirilebilir": "🌍 New: Caption translation modes — spoken language, translate to English (Whisper) or to Turkish with a local LLM; switchable during the call",
+    "🔊 Altyazı için karşı tarafın sesi ayrı bir AudioWorklet ile yakalanır — hoparlöre hiç yönlendirilmez, çift ses/echo oluşmaz": "🔊 For captions the remote audio is tapped through a separate AudioWorklet — never routed to the speakers, so no double audio or echo",
+    "✨ Yeni: AI Chat Butler — sohbeti cihazda özetler (Qwen2.5 0.5B hızlı, Phi-3 Mini güçlü); model henüz yüklenmemişse anında kural tabanlı özet gösterilir": "✨ New: AI Chat Butler — summarizes the chat on-device (Qwen2.5 0.5B for speed, Phi-3 Mini for quality); a rule-based draft appears instantly while the model loads",
+    "🔒 Yapay zeka tamamen cihaz içi: mesajlar ve ses hiçbir sunucuya gitmez, sadece model dosyaları indirilir ve önbelleğe alınır (Transformers.js)": "🔒 The AI runs fully on-device: messages and audio never reach a server, only the model files are downloaded and cached (Transformers.js)",
+    "⚙️ Otomatik geri düşme: WebGPU açılamazsa otomatik WASM'a, Phi-3 yüklenemezse Qwen2.5'e geçilir; model indirme yüzdesi canlı gösterilir": "⚙️ Automatic fallback: switches to WASM if WebGPU fails and to Qwen2.5 if Phi-3 can't load; model download progress is shown live",
+    "🧹 Arama bitince altyazı otomatik kapanır, ses tamponları ve model işçisi temizlenir": "🧹 Captions stop automatically when a call ends; audio buffers and the model worker are cleaned up",
+    "🔒 Kapsamlı güvenlik sıkılaştırması: mesaj bazlı imzalama, DataChannel/e2e kimlik sahteciliği koruması, grup yönetici yetki kontrolleri": "🔒 Extensive security hardening: per-message signing, DataChannel/e2e identity spoofing protection, group admin permission checks",
+    "🛡️ CSP (Content Security Policy) sıkılaştırıldı; eksik güvenlik başlıkları ve SRI eklendi": "🛡️ Tightened the Content Security Policy; added missing security headers and SRI",
+    "📋 Yeni: Kayıt/giriş sırasında kullanım şartları ve sistem bilgilendirme onayı": "📋 New: Terms of use and system notice acceptance during sign-up/sign-in",
+    "🖥️ Nav rail: gruplar arası boşluk ve ince ayırıcılar eklendi, ayarlar ikonu hizalaması düzeltildi": "🖥️ Nav rail: added spacing and thin dividers between groups, fixed settings icon alignment",
+    "📶 Bağlantı göstergesine üzerine gelince detaylı P2P/sinyal durumu gösteren tooltip eklendi": "📶 Added a tooltip on the connection indicator showing detailed P2P/signal status",
+    "📞 Grup aramalarında bazı katılımcılara yeni gelen kişinin görünmemesi/duyulmaması sorunu giderildi": "📞 Fixed new joiners sometimes not being seen/heard by some participants in group calls",
+
+    // ── Status strings produced by the Edge AI worker ─────────────
+    "Model indiriliyor ·": "Downloading model ·",
+    "Bilinmeyen hata": "Unknown error",
+    "Edge AI worker hatası": "Edge AI worker error",
+
     // ── Misc labels seen in HTML frame ────────────────────────────
     "İptal": "Cancel",
     "Ekle": "Add",
@@ -461,103 +485,6 @@
     "Geri": "Back",
     "Sil 🗑️": "Delete 🗑️",
     "openchat": "openchat",
-
-    // ── [3.6] Nav rail tooltips (data-tip) ──────────────────────────
-    "Tema": "Theme",
-    "Yenilikler": "What's New",
-
-    // ── [3.6] Changelog panel ────────────────────────────────────────
-    "Sürüm 3.6": "Version 3.6",
-    "🔒 Kapsamlı güvenlik sıkılaştırması: mesaj bazlı imzalama, DataChannel/e2e kimlik sahteciliği koruması, grup yönetici yetki kontrolleri": "🔒 Comprehensive security hardening: per-message signing, DataChannel/e2e identity-spoofing protection, group admin authorization checks",
-    "🛡️ CSP (Content Security Policy) sıkılaştırıldı; eksik güvenlik başlıkları ve SRI eklendi": "🛡️ Content Security Policy (CSP) hardened; missing security headers and SRI added",
-    "📋 Yeni: Kayıt/giriş sırasında kullanım şartları ve sistem bilgilendirme onayı": "📋 New: terms-of-use and system-information consent during sign-up/login",
-    "🖥️ Nav rail: gruplar arası boşluk ve ince ayırıcılar eklendi, ayarlar ikonu hizalaması düzeltildi": "🖥️ Nav rail: spacing and thin dividers added between groups, settings icon alignment fixed",
-    "📶 Bağlantı göstergesine üzerine gelince detaylı P2P/sinyal durumu gösteren tooltip eklendi": "📶 The connection indicator now shows a detailed P2P/signal-status tooltip on hover",
-    "📞 Grup aramalarında bazı katılımcılara yeni gelen kişinin görünmemesi/duyulmaması sorunu giderildi": "📞 Fixed an issue where a newly joined participant wasn't visible or audible to some people in group calls",
-
-    // ── [3.6] Kullanım Şartları / Terms modal ────────────────────────
-    "Kullanım Şartları ve Sistem Bilgilendirmesi": "Terms of Use & System Information",
-    "Devam etmeden önce lütfen okuyun.": "Please read before continuing.",
-    "merkezi sunucusu, veritabanı ve log kaydı olmayan, tamamen kullanıcılar arası doğrudan iletişim (P2P) teknolojisiyle çalışan gizlilik odaklı bir platformdur. Platformu kullanabilmek için sistemin doğası gereği sahip olduğu şu teknik koşulları kabul etmeniz gerekmektedir:": "is a privacy-focused platform that works entirely through direct peer-to-peer (P2P) communication technology, with no central server, database, or logging. To use the platform, you must accept the following technical conditions inherent to how the system works:",
-    "Gizlilik ve Kayıtsız Yapı:": "Privacy & No-Record Architecture:",
-    "Mesajlarınız, sesli/görüntülü görüşmeleriniz veya dosyalarınız hiçbir merkezi sunucuda saklanmaz. Sekmeyi kapattığınızda veya oturumu sonlandırdığınızda cihazınızdaki anlık veriler tamamen silinir ve geri getirilemez.": "Your messages, voice/video calls, and files are never stored on any central server. When you close the tab or end your session, the temporary data on your device is completely erased and cannot be recovered.",
-    "Çevrimdışı Mesajlaşma Sınırı:": "Offline Messaging Limitation:",
-    "İletişim doğrudan iki cihaz arasında kurulur. Karşı taraf çevrimdışıysa veya internet bağlantısı koptuysa, gönderdiğiniz mesajlar iletilemeyebilir ya da kaybolabilir.": "Communication is established directly between two devices. If the other party is offline or their internet connection drops, messages you send may fail to deliver or may be lost.",
-    "Arka Plan Bildirimleri ve Bağlantı:": "Background Notifications & Connection:",
-    "Mobil cihazlarda tarayıcının arka plana atılması veya ekranın kilitlenmesi durumunda P2P bağlantısı kesilebilir, anlık arama veya mesaj bildirimleri düşmeyebilir.": "On mobile devices, if the browser is sent to the background or the screen locks, the P2P connection may drop, and instant call or message notifications may not come through.",
-    "Performans ve Sistem Yükü:": "Performance & System Load:",
-    "Çoklu grup görüşmelerinde veya yüksek kalitede yayınlarda şifreleme ve veri işleme yükü doğrudan cihazınızın işlemcisi (CPU/GPU) ve internet bant genişliği tarafından karşılanır.": "In multi-party group calls or high-quality streams, the encryption and data-processing load is handled directly by your device's processor (CPU/GPU) and your internet bandwidth.",
-    "Bağlantı Kopmaları:": "Connection Drops:",
-    "IP değişikliği (Wi-Fi'dan mobil veriye geçiş vb.) veya katı ağ güvenlik duvarları (NAT) durumunda bağlantı kopabilir. Bu gibi durumlarda oturumun yenilenmesi gerekebilir.": "An IP change (e.g., switching from Wi-Fi to mobile data) or strict network firewalls (NAT) can cause the connection to drop. In such cases, the session may need to be refreshed.",
-    "Kimlik Doğrulama Sınırı — Yeni Kişilerle İlk Temas:": "Identity Verification Limit — First Contact With New People:",
-    "OpenChat, her kullanıcı için benzersiz bir kimlik anahtarı üretir ve bu anahtarları birbirine bağlı olduğunuz kişilerle karşılaştırarak (parmak izi doğrulama) sonraki görüşmelerinizin güvenliğini sağlar. Ancak": "OpenChat generates a unique identity key for every user and secures your future conversations by comparing these keys with people you're already connected to (fingerprint verification). However,",
-    "hiç tanımadığınız biriyle ilk kez": "the very first time you contact someone you've never met",
-    "iletişime geçtiğinizde, karşı tarafın gerçekten iddia ettiği kişi olduğunu platform kendi başına garanti edemez — bu, merkezi bir kimlik doğrulama otoritesi bulunmayan, uçtan uca şifreli tüm P2P sistemlerin ortak, bilinen bir sınırıdır.": ", the platform cannot on its own guarantee that the other party truly is who they claim to be — this is a well-known, shared limitation of all end-to-end encrypted P2P systems with no central identity authority.",
-    "→ Önemli/hassas bir konuşmaya başlamadan önce, sohbet ekranındaki kimlik parmak izini karşı tarafla sesli veya yüz yüze bir kanaldan karşılaştırın. Eşleşmiyorsa konuşmayı sonlandırıp bize bildirin.": "→ Before starting an important or sensitive conversation, compare the identity fingerprint shown on the chat screen with the other party over a voice call or in person. If it doesn't match, end the conversation and let us know.",
-    "Sorumluluk Reddi:": "Disclaimer:",
-    "Yukarıdaki teknik çalışma prensipleri, P2P mimarisinin doğal sonucudur ve merkezi olmayan bir sistem tercih etmenin getirdiği bilinen ödünleşimlerdir. Platform \"olduğu gibi\" sunulmaktadır; kesintisiz iletişim veya mesaj teslimatı garanti edilmez.": "The technical principles above are natural consequences of the P2P architecture and known trade-offs of choosing a decentralized system. The platform is provided \"as is\"; uninterrupted communication or message delivery is not guaranteed.",
-    "Yukarıdaki teknik çalışma prensiplerini, platformun kısıtlamalarını ve sorumluluk reddini okudum, anladım ve kabul ediyorum.": "I have read, understood, and accept the technical principles, platform limitations, and disclaimer above.",
-    "Kayıt Ol / Devam Et": "Sign Up / Continue",
-
-    // ── [3.6] Hesap silme onay modalı / Account-deletion confirmation ──
-    "Hesabı Kalıcı Sil": "Permanently Delete Account",
-    "hesabını kalıcı olarak silmek istediğinden emin misin?": ", are you sure you want to permanently delete this account?",
-    "⚠️ Bu işlem geri alınamaz!": "⚠️ This action cannot be undone!",
-    "Tüm mesajlar silinir": "All messages will be deleted",
-    "Tüm arkadaş listesi silinir": "Your entire friend list will be deleted",
-    "Hesap bilgileri kalıcı olarak kaldırılır": "Account information will be permanently removed",
-    "Onaylamak için": "To confirm, type",
-    "yazın:": "below:",
-    "Vazgeç": "Cancel",
-    "Hesabı Sil": "Delete Account",
-
-    // ── Kimlik Doğrulama / Davet (Model B — Denetim Bulgu #1) ────────
-    "🔐 Kimlik Doğrulama": "🔐 Identity Verification",
-    "📤 Davet Oluştur": "📤 Create Invite",
-    "📥 Davet ile Doğrula": "📥 Verify with Invite",
-    "📥 Davet Kabul Et": "📥 Accept Invite",
-    "Username tek başına kimlik kanıtı değildir.": "A username alone is not proof of identity.",
-    "için davet kodu yapıştırın.": "— paste their invite code below.",
-    "Bu kodu SADECE gerçekten sizinle konuşmak istediğiniz kişiye, uygulama DIŞINDAN bir kanaldan (WhatsApp, yüz yüze, vb.) gönderin. 15 dakika geçerlidir ve yalnızca bir kez kullanılabilir.":
-      "Share this code ONLY with the person you actually intend to talk to, through a channel OUTSIDE the app (WhatsApp, in person, etc). Valid for 15 minutes and can be used only once.",
-    "🔄 Yeni Davet Üret": "🔄 Generate New Invite",
-    "📋 Kopyala": "📋 Copy",
-    "Karşı taraftan aldığınız davet kodunu buraya yapıştırın. Doğrulanırsa, o kullanıcı adı için gelen gerçek kimlik anahtarı KALICI olarak onaylanır ve pinlenir.":
-      "Paste the invite code you received from the other person. If it verifies, the real identity key for that username is PERMANENTLY approved and pinned.",
-    "Davet kodunu buraya yapıştırın…": "Paste the invite code here…",
-    "✅ Doğrula ve Kabul Et": "✅ Verify & Accept",
-    "Önce bir davet kodu yapıştırın.": "Paste an invite code first.",
-    "doğrulandı ve güvenilir olarak eklendi.": "verified and added as trusted.",
-    "Davet doğrulanamadı.": "Invite could not be verified.",
-    "Kimlik doğrulanmadı.": "Identity not verified.",
-    "adını kullanan biriyle konuşuyorsunuz ama bunun iddia ettiği kişi olduğuna dair kriptografik bir kanıt yok (username herkesçe seçilebilir).":
-      "you're talking to someone using this name, but there is no cryptographic proof they are who they claim — anyone can choose any username.",
-    "Kodu başka kanaldan doğruladım": "I verified the code another way",
-    "Davetle Doğrula": "Verify with Invite",
-    "Kimlik doğrulandı — bu, daha önce pinlenmiş ya da davetle doğrulanmış aynı kişi.": "Identity verified — this is the same person previously pinned or confirmed via invite.",
-    "✅ Doğrulanmış Kişi": "✅ Verified Contact",
-    "güvenlik kodu davetle doğrulandı.": "security code verified via invite.",
-    "⛔ Kimlik Uyuşmazlığı": "⛔ Identity Mismatch",
-    "için gelen kimlik, daha önce davetle doğruladığınız güvenlik koduyla eşleşmiyor. Bağlantı reddedildi.": "the incoming identity does not match the security code you previously verified via invite. Connection rejected.",
-    "✅ Doğrulandı": "✅ Verified",
-    "güvenilir kişi olarak işaretlendi.": "marked as a trusted contact.",
-    "❌ Davet Geçersiz": "❌ Invalid Invite",
-    "Kendi davetinizi kabul edemezsiniz.": "You cannot accept your own invite.",
-    "⚠️ Uyuşmazlık": "⚠️ Mismatch",
-    "için hâlihazırda farklı bir kimlik pinli. Bu davet o kimlikle eşleşmiyor — önce mevcut sohbetteki güvenlik uyarısını inceleyin.": "already has a different identity pinned. This invite does not match it — check the security warning in the existing chat first.",
-    "✅ Doğrulanmış Kişi Eklendi": "✅ Verified Contact Added",
-    "artık güvenli/doğrulanmış kişi olarak işaretli.": "is now marked as a secure/verified contact.",
-    "Kopyalandı": "Copied",
-    "Davet kodu panoya kopyalandı.": "Invite code copied to clipboard.",
-    "Davet üretilemedi:": "Could not generate invite:",
-    "Davet çözülemedi (bozuk/eksik veri).": "Could not decode invite (corrupt/incomplete data).",
-    "Davet formatı geçersiz.": "Invalid invite format.",
-    "Desteklenmeyen davet sürümü.": "Unsupported invite version.",
-    "Davette eksik alan(lar) var.": "Invite is missing required field(s).",
-    "Davetin süresi dolmuş — yeni bir davet isteyin.": "This invite has expired — ask for a new one.",
-    "Bu davet daha önce kullanılmış (replay engellendi).": "This invite has already been used (replay blocked).",
-    "Davet tahrif edilmiş (fp/pubKey uyuşmuyor).": "Invite has been tampered with (fingerprint/key mismatch).",
-    "İmza geçersiz — davet tahrif edilmiş olabilir.": "Signature invalid — the invite may have been tampered with.",
   };
 
   // Build a single regex from all keys, longest-first so full
@@ -568,43 +495,21 @@
   const TR_WORD = "A-Za-zÇçĞğİıÖöŞşÜü0-9_";
   const isWordChar = ch => new RegExp('['+TR_WORD+']').test(ch);
   const keys = Object.keys(DICT).sort((a,b)=>b.length-a.length);
-  // 🐛 [FIX] Multi-line HTML source (e.g. the invite-modal <p> descriptions
-  // in index.html) puts real newlines + indentation where the dictionary
-  // key only has single spaces, so a literal-escape match against those
-  // paragraphs used to fail silently and the text stayed in Turkish.
-  // Fix: turn every run of literal spaces in a key into a "\s+" pattern,
-  // so any whitespace/newline/indentation variant still matches. Named
-  // capture groups (one per key) let us map a match back to its exact
-  // DICT translation even though the matched text itself now differs
-  // (extra whitespace) from the DICT key used to look it up.
-  const parts = keys.map((k,i)=>{
-    const esc = k.split(/ +/)
-      .map(seg=>seg.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'))
-      .join('\\s+');
+  const parts = keys.map(k=>{
+    const esc = k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
     const pre = isWordChar(k[0]) ? '(?<!['+TR_WORD+'])' : '';
     const post = isWordChar(k[k.length-1]) ? '(?!['+TR_WORD+'])' : '';
-    return pre+'(?<g'+i+'>'+esc+')'+post;
+    return pre+esc+post;
   });
   const RE = new RegExp(parts.join('|'), 'g');
 
   function translateStr(s){
     if(!s) return s;
-    return s.replace(RE, function(m){
-      const groups = arguments[arguments.length-1];
-      if(groups && typeof groups==='object'){
-        for(const gname in groups){
-          if(groups[gname]!==undefined){
-            const key = keys[parseInt(gname.slice(1),10)];
-            return DICT[key] !== undefined ? DICT[key] : m;
-          }
-        }
-      }
-      return m;
-    });
+    return s.replace(RE, m => DICT[m] !== undefined ? DICT[m] : m);
   }
   window._t = translateStr; // exposed in case app.js-side code wants it later
 
-  const ATTRS = ['title','placeholder','aria-label','data-tip'];
+  const ATTRS = ['title','placeholder','aria-label'];
 
   function translateEl(el){
     if(el.nodeType!==1) return;
