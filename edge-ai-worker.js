@@ -253,19 +253,18 @@ self.onmessage = async (ev)=>{
       return;
     }
     if(d.type === 'chat'){
-      // 🔌 LLM varsa derin sohbet için kullanılır; yoksa HATA ÜRETMEZ —
-      // cihaz içi inline Butler motoru zaten cevap üretmiş olur.
-      if(!llm){
-        self.postMessage({ type:'chat-skip', reason:'llm-not-ready' });
-        return;
-      }
+      // Kullanıcı Butler'a yazdığında model (gerekirse) indirilir ve gerçek LLM cevap verir.
       try{
         const pipe = await ensureLlm(d.model === 'phi3' ? 'phi3' : 'fast');
-        const gen = await pipe(chatMessages(String(d.text||'')), { max_new_tokens: 160, temperature: 0.4, do_sample: true, top_p: 0.9 });
+        const ctx = String(d.context||'').slice(-3000);
+        const prompt = (ctx ? 'Sohbet geçmişi:\n'+ctx+'\n\n' : '') + 'Kullanıcının sorusu: '+String(d.text||'');
+        const gen = await pipe(chatMessages(prompt), { max_new_tokens: 200, temperature: 0.5, do_sample: true, top_p: 0.9 });
         const raw = Array.isArray(gen) ? gen[0]?.generated_text : gen?.generated_text;
-        self.postMessage({ type:'chat-reply', text: stripGenerated(raw) || '(boş cevap)' });
+        let out = raw;
+        if(Array.isArray(raw)){ const last = raw[raw.length-1]; out = last && last.content ? last.content : ''; }
+        self.postMessage({ type:'chat-reply', text: stripGenerated(out) || '(boş cevap)' });
       }catch(e){
-        self.postMessage({ type:'chat-skip', reason: String(e?.message||e) });
+        self.postMessage({ type:'error', kind:'llm', msg: String(e?.message||e) });
       }
       return;
     }
