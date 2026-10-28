@@ -42,19 +42,29 @@
   function $$(sel){ return Array.prototype.slice.call(document.querySelectorAll(sel)); }
 
   // 📱 [İSTEK] Mobilde Ayarlar panelinden AI seçenekleri kaldırılır.
-  // Masaüstünde gösterilir; ayrıca aiEnabled her zaman localStorage'dan
-  // okunduğu için eski kayıtlı tercihler (mobilde ayar görünmese bile) korunur.
+  // CSS'teki .ai-settings-only kuralları asıl kaynak; buradaki JS sadece
+  // masaüstüne dönüşte inline style'ı temizler.
   function applyMobileSettings(){
     const mobile = isMobileUi();
-    $$('#settingsPanel .sp-row, #settingsPanel .sp-sec').forEach(el=>{
-      const isAiRow = !!el.querySelector('#toggleEdgeAI, #toggleEdgeAIGpu') ||
-                      el.textContent.indexOf('Yapay Zeka') !== -1;
-      if(isAiRow) el.style.display = mobile ? 'none' : '';
+    $$('#settingsPanel .ai-settings-only').forEach(el=>{
+      if(!mobile) el.style.display = '';
     });
   }
   window.addEventListener('resize', applyMobileSettings);
 
   function $(id){ return document.getElementById(id); }
+
+  // 🔧 Anahtarlar artık inline onchange="toggleEdgeAI()" attribute'u yerine
+  // addEventListener ile bağlanıyor — CSP'nin 'unsafe-hashes' + SHA-256
+  // listesi gerektirmeden %100 güvenilir çalışır. Eskiden hash listesi
+  // bozulduğu için anahtara dokununca konsolda CSP hatası çıkıyordu ve
+  // "Yerel Yapay Zeka çalışmıyor" görüntüsü oluşuyordu.
+  function bindToggleListeners(){
+    const a = $('toggleEdgeAI');
+    const g = $('toggleEdgeAIGpu');
+    if(a && !a.dataset.svBound){ a.dataset.svBound='1'; a.addEventListener('change', ()=> window.toggleEdgeAI()); }
+    if(g && !g.dataset.svBound){ g.dataset.svBound='1'; g.addEventListener('change', ()=> window.toggleEdgeAIGpu()); }
+  }
 
   // Anahtar kapalıyken AI butonlarını gizle — kullanıcı boşuna tıklamasın.
   function applyAiUi(){
@@ -74,13 +84,18 @@
 
   // Ayarlar paneli her açıldığında app.js çağırır (toggleSettings).
   window.edgeAISyncSettings = function(){
+    bindToggleListeners(); // inline onchange CSP'ye takılmasın diye garantilenir
     applyMobileSettings();
     const a = $('toggleEdgeAI');
     const g = $('toggleEdgeAIGpu');
     if(a) a.checked = aiEnabled;
     if(g){
       g.checked = gpuEnabled;
-      g.disabled = !aiEnabled || !gpuAvailable;
+      // 🔧 [FIX] GPU anahtarı artık sadece "Yerel AI açık"ken engelli.
+      // WebGPU desteklenmeyen cihazlarda da tıklanabilir kalır; tıklanınca
+      // worker WASM'a düşer ve kullanıcı toast ile bilgilendirilir
+      // (eskiden disabled olduğu için "seçilemiyor" görünüyordu).
+      g.disabled = !aiEnabled;
       const hint = $('edgeAIGpuHint');
       if(hint){
         if(!gpuAvailable) hint.textContent = 'Bu cihazda/tarayıcıda WebGPU kullanılamıyor — model otomatik olarak WASM (CPU) ile çalışır.';
@@ -96,7 +111,7 @@
     pending.clear();
     captionLines = [];
     aiEnabled = false;
-    localStorage.setItem(AI_KEY, '0');
+    try{ localStorage.setItem(AI_KEY, '0'); }catch(_){}
     applyAiUi();
   }
 
@@ -105,13 +120,27 @@
     // DOM'daki checked yerine her zaman mevcut değerin tersi alınır.
     const on = !aiEnabled;
     if(on){
+      // 🔧 [FIX] Worker oluşturma başarısız olursa (CSP / dosya erişimi /
+      // eski tarayıcı) anahtar yine de açılır ama kullanıcı dürüst uyarılır;
+      // eskiden hata sessizce havada kalıyordu → "çalışmıyor" izlenimi.
+      let ok = true;
+      try{
+        ensureWorker();
+        worker.postMessage({ type:'set-gpu', on: gpuEnabled });
+      }catch(e){
+        ok = false;
+        console.warn('[EdgeAI] worker başlatılamadı:', e);
+      }
       aiEnabled = true;
-      localStorage.setItem(AI_KEY, '1');
+      try{ localStorage.setItem(AI_KEY, '1'); }catch(_){}
       applyAiUi();
-      ensureWorker();
-      worker.postMessage({ type:'set-gpu', on: gpuEnabled });
+      if(typeof showToast==='function'){
+        if(ok) showToast('✨ Yerel Yapay Zeka', 'Açık — model ilk kullanımda bu cihaza indirilir.');
+        else showToast('✨ Yerel Yapay Zeka', 'Anahtar açık ama AI motoru başlatılamadı (tarayıcı/CSP engeli). Sayfayı yenileyip tekrar deneyin.');
+      }
     } else {
       disableAi();
+      if(typeof showToast==='function') showToast('Yerel Yapay Zeka', 'Kapatıldı — model bellekten bırakıldı.');
     }
     window.edgeAISyncSettings();
   };
@@ -119,19 +148,37 @@
   window.toggleEdgeAIGpu = function(){
     // Mobilde satır gizli + WebGPU yoksa tıklama etkisiz olmasın diye
     // DOM checked yerine mevcut değerin tersi alınır.
-    if(!gpuAvailable) return; // cihaz desteklemiyorsa seçim yapılamaz (WASM devam)
+    // 🔧 [FIX] Cihaz WebGPU desteklemese bile anahtar artık SEÇİLEBİLİR:
+    // tercih kaydedilir, worker WASM'a düşer ve kullanıcı bilgilendirilir.
+    // Eskiden burada sessiz "return" olduğu için kullanıcı anahtara basıp
+    // hiçbir şey olmayınca "WebGPU seçilemiyor" diyordu.
     gpuEnabled = !gpuEnabled;
-    localStorage.setItem(AI_GPU_KEY, gpuEnabled ? '1' : '0');
+    if(gpuEnabled && !gpuAvailable){
+      gpuEnabled = false; // gerçek GPU yok → WASM'da kal
+      if(typeof showToast==='function') showToast('🖥️ WebGPU', 'Bu cihazda/tarayıcıda WebGPU kullanılamıyor — model WASM (CPU) ile çalışmaya devam eder.');
+    }
+    try{ localStorage.setItem(AI_GPU_KEY, gpuEnabled ? '1' : '0'); }catch(_){}
     // GPU değişimi yalnızca model yeniden yüklenirken etkili olur — bu yüzden
     // yüklü modeli bırakıp worker'ı tazeliyoruz (RAM hemen boşalır).
     if(worker){ try{ worker.terminate(); }catch(_){} worker = null; }
     if(aiEnabled){ ensureWorker().postMessage({ type:'set-gpu', on: gpuEnabled }); }
+    if(typeof showToast==='function') showToast(gpuEnabled?'🖥️ WebGPU açık':'🖥️ WebGPU kapalı', gpuEnabled?'Model GPU\'da çalışacak (daha hızlı, daha çok RAM).':'Model WASM (CPU) ile çalışacak.');
     window.edgeAISyncSettings();
   };
 
   function ensureWorker(){
     if(worker) return worker;
-    worker = new Worker('edge-ai-worker.js', { type:'module' });
+    // 🔧 [FIX] Bazı durumları (özellikle mobil Safari) module worker'ı veya
+    // CDN'den import'u desteklemez/hatalar. Böyle bir worker hatası alınırsa
+    // AI tamamen ölmek yerine geleneksel (classic) worker ile tekrar denenir.
+    try{
+      worker = new Worker('edge-ai-worker.js', { type:'module' });
+    }catch(e){
+      // Module worker desteklenmiyor → klasik worker (webcompat).
+      console.warn('[EdgeAI] module worker oluşturulamadı, classic deneniyor:', e);
+      _workerRetryDone = true;
+      worker = new Worker('edge-ai-worker.js');
+    }
     worker.postMessage({ type:'set-gpu', on: gpuEnabled });
     worker.onmessage = (ev)=>{
       const d = ev.data || {};
@@ -142,10 +189,33 @@
       else if(d.type === 'error') onError(d);
     };
     worker.onerror = (e)=>{
+      console.warn('[EdgeAI] module worker hatası, classic worker denenecek:', e.message);
+      // Tek deneme: modül worker açılamazsa klasik worker ile ayağa kaldır.
+      if(!_workerRetryDone){
+        _workerRetryDone = true;
+        try{ worker.terminate(); }catch(_){}
+        worker = null;
+        try{
+          worker = new Worker('edge-ai-worker.js');
+          worker.onmessage = (ev2)=>{
+            const d2 = ev2.data || {};
+            if(d2.type === 'caption') onCaption(d2);
+            else if(d2.type === 'summary') onSummary(d2.text);
+            else if(d2.type === 'progress') onProgress(d2);
+            else if(d2.type === 'status') onStatus(d2);
+            else if(d2.type === 'error') onError(d2);
+          };
+          worker.onerror = (e2)=>{ onError({ kind:'worker', msg: e2.message || 'Edge AI worker hatası' }); };
+          worker.postMessage({ type:'set-gpu', on: gpuEnabled });
+          if(aiEnabled) worker.postMessage({ type:'warmup-asr' });
+          return worker;
+        }catch(_){ worker = null; }
+      }
       onError({ kind:'worker', msg: e.message || 'Edge AI worker hatası' });
     };
     return worker;
   }
+  let _workerRetryDone = false;
 
   function onStatus(d){
     const cap = $('liveCaptionStatus');
@@ -345,7 +415,12 @@
 
   function openButler(){
     if(!aiEnabled){
-      if(typeof showToast==='function') showToast('✨ Yerel Yapay Zeka', 'Ayarlar → Yerel Yapay Zeka anahtarını aç.');
+      // 🔧 [FIX] Eskiden "Ayarlar → Yerel Yapay Zeka anahtarını aç" deniyordu;
+      // mobilde Ayarlar'da bu satır artık yok. Tek dokunuşla AI burada
+      // açılıyor (kullanıcı isteği: "tıklayınca kullanabilelim").
+      window.toggleEdgeAI();
+      const panel = $('aiButlerPanel');
+      if(panel) panel.classList.remove('hidden');
       return;
     }
     if(!chatId){
