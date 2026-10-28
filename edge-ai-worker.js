@@ -205,7 +205,27 @@ self.onmessage = async (ev)=>{
       return;
     }
     if(d.type === 'warmup-asr'){
-      await ensureAsr();
+      // 🔧 [FIX] Eskiden burada Whisper Tiny modeli otomatik indiriliyordu —
+      // HF erişimi olmayan kullanıcılarda "Yerel model yüklenemedi" hatasının
+      // kaynağı buydu. Artık warmup YAPILMAZ; asr yalnızca altyazı fiilen
+      // açıldığında, ilerleme göstergesiyle ve sessiz hata yönetimiyle yüklenir.
+      return;
+    }
+    if(d.type === 'chat'){
+      // 🔌 LLM varsa derin sohbet için kullanılır; yoksa HATA ÜRETMEZ —
+      // cihaz içi inline Butler motoru zaten cevap üretmiş olur.
+      if(!llm){
+        self.postMessage({ type:'chat-skip', reason:'llm-not-ready' });
+        return;
+      }
+      try{
+        const pipe = await ensureLlm(d.model === 'phi3' ? 'phi3' : 'fast');
+        const gen = await pipe(chatMessages(String(d.text||'')), { max_new_tokens: 160, temperature: 0.4, do_sample: true, top_p: 0.9 });
+        const raw = Array.isArray(gen) ? gen[0]?.generated_text : gen?.generated_text;
+        self.postMessage({ type:'chat-reply', text: stripGenerated(raw) || '(boş cevap)' });
+      }catch(e){
+        self.postMessage({ type:'chat-skip', reason: String(e?.message||e) });
+      }
       return;
     }
     if(d.type === 'set-translate'){
