@@ -74,6 +74,9 @@ async function ensureAsr(){
       device, dtype, progress_callback: progressCb('asr')
     });
   }catch(e){
+    // 🔧 WebGPU yüklemesi başarısız olursa (dtype/bellek hatası) sessizce
+    // WASM'a düş — kullanıcıya da bilgi ver.
+    self.postMessage({ type:'status', kind:'asr', msg:'WebGPU açılamadı, WASM (CPU) deneniyor…' });
     asr = await pipeline('automatic-speech-recognition', ASR_ID, {
       device: 'wasm', dtype: 'q8', progress_callback: progressCb('asr')
     });
@@ -97,14 +100,24 @@ async function ensureLlm(which){
     });
     llmId = want;
   }catch(e){
-    if(want !== LLM_FAST){
-      self.postMessage({ type:'status', kind:'llm', msg:'Phi-3 açılamadı, Qwen2.5 0.5B deneniyor…' });
-      llm = await pipeline('text-generation', LLM_FAST, {
+    // 🔧 [FIX] Önce aynı model WASM'a düşürülerek denenir (WebGPU dtype
+    // hataları en sık burada olurdu); o da olmazsa Phi-3 → Qwen'e geçilir.
+    self.postMessage({ type:'status', kind:'llm', msg: label+' '+device+' üzerinde açılamadı, WASM (CPU) deneniyor…' });
+    try{
+      llm = await pipeline('text-generation', want, {
         device: 'wasm', dtype: 'q8', progress_callback: progressCb('llm')
       });
-      llmId = LLM_FAST;
-    } else {
-      throw e;
+      llmId = want;
+    }catch(e2){
+      if(want !== LLM_FAST){
+        self.postMessage({ type:'status', kind:'llm', msg:'Phi-3 açılamadı, Qwen2.5 0.5B deneniyor…' });
+        llm = await pipeline('text-generation', LLM_FAST, {
+          device: 'wasm', dtype: 'q8', progress_callback: progressCb('llm')
+        });
+        llmId = LLM_FAST;
+      } else {
+        throw e2;
+      }
     }
   }
   self.postMessage({ type:'status', kind:'llm', msg: (llmId===LLM_PHI?'Phi-3 Mini':'Qwen2.5 0.5B')+' hazır · veriler bu cihazda' });
