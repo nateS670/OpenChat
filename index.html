@@ -38,13 +38,11 @@
          tanımlanmadığı için default-src 'self''e düşüyordu ve data:
          şemasını kapsamıyordu.
      Kalıcı çözüm: HER İKİ dosyayı da TEK KAYNAKTAN (bu içerik) senkron
-     tutun. connect-src artık geniş "https: wss:" joker yerine sadece
-     gerçekte kullanılan 'self' + wss://broker.emqx.io:8084 içeriyor —
-     önceden bir XSS/hata durumunda veri herhangi bir https/wss sunucusuna
-     sızdırılabilirdi, artık sadece kendi origin'inize ve MQTT broker'ınıza
-     bağlantıya izin veriliyor. Kullanılmayan blob: izinleri (connect-src,
-     worker-src, img-src, media-src) de kaldırıldı — kod tabanında blob:
-     URL üretimi/tüketimi olmadığı doğrulandı; en az yetki ilkesi.
+     tutun.      connect-src: MQTT broker + Edge AI model indirmeleri (Hugging Face /
+     jsDelivr). Whisper Tiny ve yerel LLM ağırlıkları tarayıcı önbelleğine
+     iner; sohbet/ses içeriği bu hostlara gönderilmez. WASM için
+     script-src 'wasm-unsafe-eval' gerekir. worker-src blob: Transformers.js
+     iç işçileri içindir.
      NOT: style-src hâlâ 'unsafe-inline' içeriyor çünkü uygulama genelinde
      yoğun biçimde inline style="..." attribute'u kullanılıyor; bunu
      kaldırmak CSS class'larına büyük bir refactor gerektirir (ayrı bir
@@ -56,7 +54,7 @@
      eklerseniz, o attribute'un SHA-256 hash'ini hesaplayıp bu listeye
      (HEM burada HEM vercel.json'da) eklemeniz gerekir. -->
 <meta http-equiv="Content-Security-Policy"
-  content="default-src 'self'; script-src 'self' 'unsafe-hashes' 'sha256-IvUf/j5cuNDz3sxD/u2bbHGl6NwoHiSsz0R4Q3cTuBw=' 'sha256-DWGnfeEbNwv9jwlHlQYTnLGJDp+Tj0ejUw4Rj1RitQU=' 'sha256-S4bpmtS7OYV/malYqZUITz53d0KteTPoS/jCmTOk8ro=' 'sha256-xJrZG9n1FygJXkmPxLxTH8OEhV76O8fVuxds874nbfg=' 'sha256-InkM0l5BOcAV9jYIF10RwVHItiIwY0a+FkAMxHcQPow=' 'sha256-DHtb1CYR9axiy/zRgWk/psvmLS5uq+AkVJwj6iSbYMk=' 'sha256-5oi4h9xAN2dTRQhmsXol4hg2135f6YQpU7BkenU4O+M=' 'sha256-J3E/f5d5/34F5BtKnKVAEVBCvXQxyJ2AMqr6muiQtZ8=' 'sha256-/ij4MxMEGaNnAzbnXoZf8TIg/SmFd9sumqifTXh+UPc=' 'sha256-f3EjXRs8J6Yn1Xeb9tBSes2d39B8S3rJ/IBaFZzNnpM=' 'sha256-EcAgGREOOc1mNCuAqE2xO4Gk/hBqdehoK3DVv4IVQm4=' 'sha256-P0pRQKX0HinN3n4okEEis4QOgSCmHrFBGtXa7/lqzNA=' 'sha256-phGdiCp0/pWWnwa8Oy0lw1olbjVK454ufG2KE5jaQJM=' 'sha256-EZ++dmiicTPJEOXkEf6+SofRLM8h6t5jrZjA2AK5P4A=' 'sha256-pAlgQ4EycuIXi8+JgDqJLM0xeXc/MPOG21NhEIT9U3E=' 'sha256-Nijp/v1yoZipFx79lmuR/YgbiGe2znNpntCCDJr/1k8=' 'sha256-kSbbCC7t+BD/7SYmCfZ5fKRWtdWL7/u+VmlsWax/K60=' 'sha256-XDHgZyW7IUGHzxQn2m9x6uRYLONHTubUbOrn787bkGA=' 'sha256-vSBZsmi2iivP9pJeUJWSTnOifiD1i1WWUoLGpRYeKMs=' 'sha256-HNz1hCy7o/d6BL1A0RZTi9gh+6pIA1gvKnK+VlWp1C8=' 'sha256-mXoUGq5Am8d1OXdR3P1YTQeYRv83AwCmzwyclnjWOJg=' 'sha256-30wxdX1hqFD1vAVRLIKKZnApRBgF4l0dERfNX7KnkKI=' 'sha256-IwCuiVyXSw5XjBCLAWK72ARVdInu2Z/Cf9BLe4tbG/A=' 'sha256-bdJSANIYyo0E+vqeuDxI3/0C2M8Hr7hnRP2PD0P/3y8=' 'sha256-+erodhSWnnIlHsBwh19SbBuJInbAYf5koVyrJMcG6S8=' 'sha256-ivs9iXhWZhmeL7cwJtSqD8lfuhx0Kt8qcQQl9mS5G44=' 'sha256-8sGOxawpqL0FZpHU1lnqfrsA77OETq9d9JBx0YqtzLU=' 'sha256-V/addRRUItZ6Hh4QTsUgihrxpszlRVTZBBCdeP43jeA=' 'sha256-WMBYi/TrZy7dsyHjt//THkhBY9ya+U0kVg6YJWrHu/o=' 'sha256-DD7dKOAipiG8aamt+4kb503DasE26kxgKK/taus2Eao=' 'sha256-vcbEjgV+Xc4avVbFwX/NPtjcediK4d5xgaUnzCTDeHE=' 'sha256-uccJSazmdcF/mMtJyx4qHt0AZGvhK0T1XRRP941Mneg=' 'sha256-Kd7NkbcsRU79poxKfniTazpXpg6bFIQWy8pDVMaBknM=' 'sha256-6wasJN8UlR/BvmzMnBodP/owDvyA+IFoCMN2tpAEp2g=' 'sha256-Zp7yKoLksfpLGoTMEMk65h0Gb8ntcLZ5T8wIpljf5dA=' 'sha256-9pXtbsgDi9Pfg2/ZJI/pgWPFaqTchKztx+PSNes/++g=' 'sha256-04Nwxq0I11CG2q+MGRVNbZzBqq648ldb0GHvOY1tcZs=' 'sha256-AmM+MIXdTU2ujrj/GG5KXtTy7orcXmF12oufjuYSnP4=' 'sha256-vWEsDPPwx/VjuH7/dHNaFlXRrCnSjPkJVtdoE+20Uuc=' 'sha256-WlQc7YRbqSniBofvmGn+YaxXSsWx+LaG9Y82WBeSvNo=' 'sha256-bCF9jk/ca5F256ykwWkQrYAM60QAhW5hDrE3EkbTrYQ=' 'sha256-rdJlkZGshxH2Iovry4g5oAb/9EWmbnrkgKPBP2G0flU=' 'sha256-Ju0A7yACC2/A+WHtT32gRICwgCv+AO/1QMhrncoA4LI=' 'sha256-qzNw7624DGvrgzEnXlau+3KX19+SDYGaZjV1oE14voA=' 'sha256-k38yLnsc0War16j1Qme8KO2OQZXA1pL6vPjSoYMXHjE=' 'sha256-rtI6IHrMmYrxlhuvUZdYf0qIU0eNjUdSMDjsbaINDWw=' 'sha256-inudtaFpzc4a03uuBrYDuXUetMjBw69a3+X4meD8r2s=' 'sha256-jpc5af794uH3BwHLPXcUIWZjOLKaV2pOokcz44+eavI=' 'sha256-sKc/l4mgfhDX+AD15wyEvQtSVkD7A+dzJNpFkcv0jq8=' 'sha256-ylhdR+I5GHNg2Zx6GgxoQKxCnlQZaPNnbDiToK5y7+s=' 'sha256-bAhrDRx87WvklHl0jJGUT+dRKuFnefAu3cdKAZ9N7hY=' 'sha256-xNHYQh54+MsAotH/P/2cSGLfhviUeqXP1kXE33UKVm0=' 'sha256-4l0mWdj/ygF3jH9E1IJVL8VZCqe/XCmFMR3UqaN7bq8=' 'sha256-hVwcw/aRcEWcc4vUWgALwUjzKkkeMG5J/9g24eMK5h8=' 'sha256-GMZFxzwQK6nX5B6DIze+5rfiYOlwvCybZzd4q5etv+4=' 'sha256-RtLOJOdv5HDUchREU47hrvbSfNXSOs5fqf+gaSpQqf8=' 'sha256-ZJ3LB11cDdbE8tQe779CfT/OT7uAcZXAxl5+w7Y5Mro=' 'sha256-Ao54pfJgHz90puiIUm7cU+FWyFpMoCwpmcgae0VXOLc=' 'sha256-JpkpMyYkX4TELQI1PpX/x1ni1B9XSq1yhO4mt6dCoHE=' 'sha256-rIUoRckt98sC7aI+cTbi+GZjnmQ2fgHWF1rKhjU6bno=' 'sha256-B0/uJzcxayenpppoGmGwuzjkU8e+K3fgJm2GKQv/n9I=' 'sha256-NbTjNRf7cMsQtpFP5mQ4eNs7z7tlE6jKOuDQIhJtl54=' 'sha256-OK3p3KxcQzvkXZIBwD0DCY0NzoC0foq9oQFkE6Aj4ME=' 'sha256-QsHBQ98PXTC3wAj1O877jTr7mBF+tRk+dzrrYmmSV1w=' 'sha256-xW2LwE6JH4Upyv3irrojUEiqRrYPlWMsmcDiJV0sLlQ=' 'sha256-GzdgO/cCmxgn6y+UvQGjMEtcK1v8nlzQUD41YFBMCmM=' 'sha256-kDkI/Hq0uLd5ugj91v92WT/TVnw5rSoWREvQFz8pil0=' 'sha256-1lWpQcJhb98x+ETIFvZ8zZxb/L14WF6foxoMMhp/FCQ=' 'sha256-B1QaQ/NSYb91ozzPOcacTIt2zUENFZR5kFc2Q4kj+w4=' 'sha256-emRjCrIs4UE8YKHLrUXwfHswSDclJC9gT/MUfduZSnk=' 'sha256-ILgBI9BtpHqb5ZKDzXzH3ECBDDsIhn+JTobBCSfas6A=' 'sha256-PUTQ7qyVA84i4yi2/sBjEkXv0Dd8NDFHrglr8pmTM+U=' 'sha256-jHF5hTIlMDyGZRAsNK0HO/WFYrwPvI2I1q0o1xKKB6I=' 'sha256-NdYem/e14sX7LWk3l8wGScGgNaqPxASSY3CT1BtpOBU=' 'sha256-dSINsq7m6CMgVg6l9D6uB6rLjAYOcDAMX+91uFA6uLA=' 'sha256-q0WzkPM+1UGUFrO09BGLp1UacP9T/hWfDPydrpoDjlw=' 'sha256-A1zC/JhUzuHsPWr8+7iWZijANz3VS0dLimuD/PTvZT0=' 'sha256-oF4jDs3NSU/mfCV+PnoO6Ml2hflzrrjMdW83VRZAKKA=' 'sha256-eK6Jrsnnf2z2pU06Mx/NCYKNFtheiHe5acTd0zR/7rY=' 'sha256-AiITtuKV3MFLPHaCvcpnp3StUtrP+xxenQNbib0L6og=' 'sha256-+FeKtdto8DaonHr/UAmRV4So+qofGB5n/UFO6Y/2nqk=' 'sha256-X/76XMQB6Mv6AJEx/WQlN2PvdOmLkffeWNG7PnuqB3Q=' 'sha256-sqUHYsOcZLjdtIuGOEzSx87J3ysPp4hsApNh6fPRds4=' 'sha256-s9l18uogdsQo18aT3Rc1VvPOyf12PzvtMB9NLUoq+54=' 'sha256-3wWB0LseXH1fwgqu5zn/kQYhEC5RKjRjfc2LKsNBU+Q=' 'sha256-PYHpqwftcdEG1Ju6SyUooZFunXtSeeuYr3iHYiuxZ64=' 'sha256-R0v4V6gbYMa5b/AOJaObhItnMad+JUuFNthN8VBldX8=' 'sha256-fFU0EAcb38Bg6C6dyYdVz/ZC5/1n0YGIWrQwXqj1MEY='; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' wss://broker.emqx.io:8084; worker-src 'self' blob:; img-src 'self' data: blob: https://*.tenor.com https://tenor.com https://c.tenor.com https://*.giphy.com https://giphy.com https://media0.giphy.com https://media1.giphy.com https://media2.giphy.com https://media3.giphy.com https://media4.giphy.com https://*.imgur.com https://imgur.com; media-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';">
+  content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net 'unsafe-hashes' 'sha256-IvUf/j5cuNDz3sxD/u2bbHGl6NwoHiSsz0R4Q3cTuBw=' 'sha256-DWGnfeEbNwv9jwlHlQYTnLGJDp+Tj0ejUw4Rj1RitQU=' 'sha256-S4bpmtS7OYV/malYqZUITz53d0KteTPoS/jCmTOk8ro=' 'sha256-xJrZG9n1FygJXkmPxLxTH8OEhV76O8fVuxds874nbfg=' 'sha256-InkM0l5BOcAV9jYIF10RwVHItiIwY0a+FkAMxHcQPow=' 'sha256-DHtb1CYR9axiy/zRgWk/psvmLS5uq+AkVJwj6iSbYMk=' 'sha256-5oi4h9xAN2dTRQhmsXol4hg2135f6YQpU7BkenU4O+M=' 'sha256-J3E/f5d5/34F5BtKnKVAEVBCvXQxyJ2AMqr6muiQtZ8=' 'sha256-/ij4MxMEGaNnAzbnXoZf8TIg/SmFd9sumqifTXh+UPc=' 'sha256-f3EjXRs8J6Yn1Xeb9tBSes2d39B8S3rJ/IBaFZzNnpM=' 'sha256-EcAgGREOOc1mNCuAqE2xO4Gk/hBqdehoK3DVv4IVQm4=' 'sha256-P0pRQKX0HinN3n4okEEis4QOgSCmHrFBGtXa7/lqzNA=' 'sha256-phGdiCp0/pWWnwa8Oy0lw1olbjVK454ufG2KE5jaQJM=' 'sha256-EZ++dmiicTPJEOXkEf6+SofRLM8h6t5jrZjA2AK5P4A=' 'sha256-pAlgQ4EycuIXi8+JgDqJLM0xeXc/MPOG21NhEIT9U3E=' 'sha256-Nijp/v1yoZipFx79lmuR/YgbiGe2znNpntCCDJr/1k8=' 'sha256-kSbbCC7t+BD/7SYmCfZ5fKRWtdWL7/u+VmlsWax/K60=' 'sha256-XDHgZyW7IUGHzxQn2m9x6uRYLONHTubUbOrn787bkGA=' 'sha256-vSBZsmi2iivP9pJeUJWSTnOifiD1i1WWUoLGpRYeKMs=' 'sha256-HNz1hCy7o/d6BL1A0RZTi9gh+6pIA1gvKnK+VlWp1C8=' 'sha256-mXoUGq5Am8d1OXdR3P1YTQeYRv83AwCmzwyclnjWOJg=' 'sha256-30wxdX1hqFD1vAVRLIKKZnApRBgF4l0dERfNX7KnkKI=' 'sha256-IwCuiVyXSw5XjBCLAWK72ARVdInu2Z/Cf9BLe4tbG/A=' 'sha256-bdJSANIYyo0E+vqeuDxI3/0C2M8Hr7hnRP2PD0P/3y8=' 'sha256-+erodhSWnnIlHsBwh19SbBuJInbAYf5koVyrJMcG6S8=' 'sha256-ivs9iXhWZhmeL7cwJtSqD8lfuhx0Kt8qcQQl9mS5G44=' 'sha256-8sGOxawpqL0FZpHU1lnqfrsA77OETq9d9JBx0YqtzLU=' 'sha256-V/addRRUItZ6Hh4QTsUgihrxpszlRVTZBBCdeP43jeA=' 'sha256-WMBYi/TrZy7dsyHjt//THkhBY9ya+U0kVg6YJWrHu/o=' 'sha256-DD7dKOAipiG8aamt+4kb503DasE26kxgKK/taus2Eao=' 'sha256-vcbEjgV+Xc4avVbFwX/NPtjcediK4d5xgaUnzCTDeHE=' 'sha256-uccJSazmdcF/mMtJyx4qHt0AZGvhK0T1XRRP941Mneg=' 'sha256-Kd7NkbcsRU79poxKfniTazpXpg6bFIQWy8pDVMaBknM=' 'sha256-6wasJN8UlR/BvmzMnBodP/owDvyA+IFoCMN2tpAEp2g=' 'sha256-Zp7yKoLksfpLGoTMEMk65h0Gb8ntcLZ5T8wIpljf5dA=' 'sha256-9pXtbsgDi9Pfg2/ZJI/pgWPFaqTchKztx+PSNes/++g=' 'sha256-04Nwxq0I11CG2q+MGRVNbZzBqq648ldb0GHvOY1tcZs=' 'sha256-AmM+MIXdTU2ujrj/GG5KXtTy7orcXmF12oufjuYSnP4=' 'sha256-vWEsDPPwx/VjuH7/dHNaFlXRrCnSjPkJVtdoE+20Uuc=' 'sha256-WlQc7YRbqSniBofvmGn+YaxXSsWx+LaG9Y82WBeSvNo=' 'sha256-bCF9jk/ca5F256ykwWkQrYAM60QAhW5hDrE3EkbTrYQ=' 'sha256-rdJlkZGshxH2Iovry4g5oAb/9EWmbnrkgKPBP2G0flU=' 'sha256-Ju0A7yACC2/A+WHtT32gRICwgCv+AO/1QMhrncoA4LI=' 'sha256-qzNw7624DGvrgzEnXlau+3KX19+SDYGaZjV1oE14voA=' 'sha256-k38yLnsc0War16j1Qme8KO2OQZXA1pL6vPjSoYMXHjE=' 'sha256-rtI6IHrMmYrxlhuvUZdYf0qIU0eNjUdSMDjsbaINDWw=' 'sha256-inudtaFpzc4a03uuBrYDuXUetMjBw69a3+X4meD8r2s=' 'sha256-jpc5af794uH3BwHLPXcUIWZjOLKaV2pOokcz44+eavI=' 'sha256-sKc/l4mgfhDX+AD15wyEvQtSVkD7A+dzJNpFkcv0jq8=' 'sha256-ylhdR+I5GHNg2Zx6GgxoQKxCnlQZaPNnbDiToK5y7+s=' 'sha256-bAhrDRx87WvklHl0jJGUT+dRKuFnefAu3cdKAZ9N7hY=' 'sha256-xNHYQh54+MsAotH/P/2cSGLfhviUeqXP1kXE33UKVm0=' 'sha256-4l0mWdj/ygF3jH9E1IJVL8VZCqe/XCmFMR3UqaN7bq8=' 'sha256-hVwcw/aRcEWcc4vUWgALwUjzKkkeMG5J/9g24eMK5h8=' 'sha256-GMZFxzwQK6nX5B6DIze+5rfiYOlwvCybZzd4q5etv+4=' 'sha256-RtLOJOdv5HDUchREU47hrvbSfNXSOs5fqf+gaSpQqf8=' 'sha256-ZJ3LB11cDdbE8tQe779CfT/OT7uAcZXAxl5+w7Y5Mro=' 'sha256-Ao54pfJgHz90puiIUm7cU+FWyFpMoCwpmcgae0VXOLc=' 'sha256-JpkpMyYkX4TELQI1PpX/x1ni1B9XSq1yhO4mt6dCoHE=' 'sha256-rIUoRckt98sC7aI+cTbi+GZjnmQ2fgHWF1rKhjU6bno=' 'sha256-B0/uJzcxayenpppoGmGwuzjkU8e+K3fgJm2GKQv/n9I=' 'sha256-NbTjNRf7cMsQtpFP5mQ4eNs7z7tlE6jKOuDQIhJtl54=' 'sha256-OK3p3KxcQzvkXZIBwD0DCY0NzoC0foq9oQFkE6Aj4ME=' 'sha256-QsHBQ98PXTC3wAj1O877jTr7mBF+tRk+dzrrYmmSV1w=' 'sha256-xW2LwE6JH4Upyv3irrojUEiqRrYPlWMsmcDiJV0sLlQ=' 'sha256-GzdgO/cCmxgn6y+UvQGjMEtcK1v8nlzQUD41YFBMCmM=' 'sha256-kDkI/Hq0uLd5ugj91v92WT/TVnw5rSoWREvQFz8pil0=' 'sha256-1lWpQcJhb98x+ETIFvZ8zZxb/L14WF6foxoMMhp/FCQ=' 'sha256-B1QaQ/NSYb91ozzPOcacTIt2zUENFZR5kFc2Q4kj+w4=' 'sha256-emRjCrIs4UE8YKHLrUXwfHswSDclJC9gT/MUfduZSnk=' 'sha256-ILgBI9BtpHqb5ZKDzXzH3ECBDDsIhn+JTobBCSfas6A=' 'sha256-PUTQ7qyVA84i4yi2/sBjEkXv0Dd8NDFHrglr8pmTM+U=' 'sha256-jHF5hTIlMDyGZRAsNK0HO/WFYrwPvI2I1q0o1xKKB6I=' 'sha256-NdYem/e14sX7LWk3l8wGScGgNaqPxASSY3CT1BtpOBU=' 'sha256-dSINsq7m6CMgVg6l9D6uB6rLjAYOcDAMX+91uFA6uLA=' 'sha256-q0WzkPM+1UGUFrO09BGLp1UacP9T/hWfDPydrpoDjlw=' 'sha256-A1zC/JhUzuHsPWr8+7iWZijANz3VS0dLimuD/PTvZT0=' 'sha256-oF4jDs3NSU/mfCV+PnoO6Ml2hflzrrjMdW83VRZAKKA=' 'sha256-eK6Jrsnnf2z2pU06Mx/NCYKNFtheiHe5acTd0zR/7rY=' 'sha256-AiITtuKV3MFLPHaCvcpnp3StUtrP+xxenQNbib0L6og=' 'sha256-+FeKtdto8DaonHr/UAmRV4So+qofGB5n/UFO6Y/2nqk=' 'sha256-X/76XMQB6Mv6AJEx/WQlN2PvdOmLkffeWNG7PnuqB3Q=' 'sha256-sqUHYsOcZLjdtIuGOEzSx87J3ysPp4hsApNh6fPRds4=' 'sha256-s9l18uogdsQo18aT3Rc1VvPOyf12PzvtMB9NLUoq+54=' 'sha256-3wWB0LseXH1fwgqu5zn/kQYhEC5RKjRjfc2LKsNBU+Q=' 'sha256-PYHpqwftcdEG1Ju6SyUooZFunXtSeeuYr3iHYiuxZ64=' 'sha256-R0v4V6gbYMa5b/AOJaObhItnMad+JUuFNthN8VBldX8=' 'sha256-fFU0EAcb38Bg6C6dyYdVz/ZC5/1n0YGIWrQwXqj1MEY='; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' wss://broker.emqx.io:8084 https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://cdn-lfs-eu-1.huggingface.co https://cas-bridge.xethub.hf.co https://cdn.jsdelivr.net; worker-src 'self' blob: https://cdn.jsdelivr.net; img-src 'self' data: https: blob:; media-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';">
 <script src="mqtt.min.js" integrity="sha384-pkdqKjFaO3sj6U3p0jw1a2jxnrn38WxqzlLENwXRihs7xeqAysATUlz5f+4wI9jz" crossorigin="anonymous"></script>
 <style>
 /* ── LIGHT THEME — openchat ── */
@@ -769,9 +767,6 @@ html.dark .inp-tools{border-bottom-color:rgba(255,255,255,.07)}
 
 /* Read receipt ticks */
 .ticks{font-size:11px;opacity:.8}
-/* ✨ [YENİ] Delivered — okunmadan önceki ara durum, "read" ile karışmaması
-   için bilinçli olarak daha soluk/nötr bırakıldı. */
-.ticks.delivered{opacity:.65}
 .ticks.read{color:#a5f3e8}
 
 /* Edited label */
@@ -1075,6 +1070,36 @@ html.dark .tslider{background:#475569}
 .call-ctrl button.active-mute{background:#ef4444!important}
 .call-ctrl button.active-deafen{background:#7c3aed!important}
 .call-ctrl button.active-video{background:#22c55e!important}
+.call-ctrl button.active-caption{background:#0ea5e9!important}
+#liveCaptionBar{
+  width:min(640px,92%);z-index:4;margin:0 auto 8px;
+  background:rgba(0,0,0,.62);backdrop-filter:blur(10px);
+  border:1px solid rgba(255,255,255,.14);border-radius:14px;
+  padding:10px 14px;color:#fff;text-align:center;
+}
+#liveCaptionBar.hidden{display:none!important}
+#liveCaptionStatus{font-size:10px;letter-spacing:.04em;opacity:.75;margin-bottom:6px;text-transform:uppercase}
+#liveCaptionText{font-size:16px;font-weight:650;line-height:1.35;min-height:1.35em;white-space:pre-wrap}
+#liveCaptionText:not(.has-text){opacity:.55;font-weight:500;font-size:13px}
+#liveCaptionMode{
+  margin-top:8px;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2);
+  border-radius:8px;padding:4px 8px;font-size:12px;
+}
+#aiButlerPanel{
+  position:fixed;inset:0;z-index:9800;background:rgba(0,0,0,.55);
+  display:flex;align-items:center;justify-content:center;padding:16px;
+  backdrop-filter:blur(4px);
+}
+#aiButlerPanel.hidden{display:none!important}
+#aiButlerCard{
+  width:min(520px,96vw);max-height:82vh;overflow:auto;background:var(--panel);
+  color:var(--text);border:1px solid var(--border);border-radius:16px;padding:18px 20px;
+  box-shadow:0 18px 50px rgba(0,0,0,.35);
+}
+#aiButlerOut{
+  white-space:pre-wrap;font-size:13.5px;line-height:1.55;background:var(--input-bg);
+  border-radius:12px;padding:12px;min-height:120px;margin-top:10px;
+}
 #endCallBtn{background:#ed4245!important;min-width:70px!important;height:70px!important}
 #endCallBtn:hover{background:#c03537!important}
 
@@ -1162,6 +1187,49 @@ html:not(.dark) .toast{background:#334155}
 @keyframes dropBounce{from{transform:translateY(0)}to{transform:translateY(-10px)}}
 .chat-area.drag-over #dropOverlay{display:flex!important}
 @keyframes modalIn{from{opacity:0;transform:scale(.85) translateY(20px)}to{opacity:1;transform:scale(1) translateY(0)}}
+
+/* ✨ [3.7] GİRİŞ / KAYIT SONRASI GEÇİŞ ANİMASYONU
+   authScreen kapanırken önce hafifçe büyür (push-in), sonra mainApp
+   aşağıdan yukarı kayarak + hafif scale ile oturur. Tamamen CSS —
+   app.js sadece sınıf ekleyip çıkarıyor (inline onclick yok, CSP temiz). */
+@keyframes authExit{from{opacity:1;transform:scale(1)}to{opacity:0;transform:scale(1.06)}}
+@keyframes appEnter{from{opacity:0;transform:translateY(26px) scale(.965)}to{opacity:1;transform:none}}
+@keyframes welcomePop{
+  0%{opacity:0;transform:translate(-50%,-50%) scale(.72)}
+  55%{opacity:1;transform:translate(-50%,-50%) scale(1.05)}
+  100%{opacity:1;transform:translate(-50%,-50%) scale(1)}
+}
+@keyframes welcomeOut{to{opacity:0;transform:translate(-50%,-50%) scale(1.18)}}
+@keyframes welcomeRing{from{transform:scale(.4);opacity:.55}to{transform:scale(2.1);opacity:0}}
+
+#authScreen.sv-auth-out{animation:authExit .32s ease-in forwards;pointer-events:none}
+#mainApp.sv-app-enter{animation:appEnter .55s cubic-bezier(.22,1,.36,1) both}
+#welcomeBurst{
+  position:fixed;inset:0;z-index:9600;display:flex;align-items:center;justify-content:center;
+  pointer-events:none;
+  /* Arka planı hafifçe karart ki alttaki uygulama metni rozetin içinden geçmesin */
+  background:radial-gradient(circle at 50% 50%,rgba(255,123,123,.22),rgba(0,0,0,.55) 45%,rgba(0,0,0,.55));
+  animation:welcomeOut .45s ease-in .95s forwards;
+}
+#welcomeBurst .wb-card{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  display:flex;flex-direction:column;align-items:center;gap:10px;
+  animation:welcomePop .5s cubic-bezier(.34,1.56,.64,1) both;
+}
+#welcomeBurst .wb-ring{
+  position:absolute;left:50%;top:50%;width:150px;height:150px;margin:-75px 0 0 -75px;
+  border-radius:50%;border:2px solid var(--primary);animation:welcomeRing .9s ease-out both;
+}
+#welcomeBurst .wb-av{
+  width:96px;height:96px;border-radius:50%;background:var(--primary);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:40px;font-weight:900;
+  box-shadow:0 14px 40px rgba(255,60,60,.45);overflow:hidden;
+}
+#welcomeBurst .wb-av img{width:100%;height:100%;object-fit:cover}
+#welcomeBurst .wb-hi{font-size:15px;font-weight:700;color:var(--text);background:var(--panel);padding:6px 16px;border-radius:20px;box-shadow:var(--sh);white-space:nowrap}
+@media(prefers-reduced-motion:reduce){
+  #authScreen.sv-auth-out,#mainApp.sv-app-enter,#welcomeBurst,#welcomeBurst .wb-card,#welcomeBurst .wb-ring{animation:none!important}
+}
 
 /* Dosya mesajı */
 .file-msg{display:flex;align-items:center;gap:10px;padding:4px 0}
@@ -1294,6 +1362,31 @@ html:not(.dark) .gs-item.active{background:rgba(255,123,123,.10)}
 .gs-item-text{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .gs-item-text mark{background:rgba(99,102,241,.25);color:var(--primary);border-radius:3px;padding:0 2px}
 .gs-empty{padding:30px;text-align:center;color:var(--muted);font-size:14px}
+
+/* ── LİNK ÖNİZLEME ───────────────────────────────── */
+.link-preview{margin-top:8px;border-radius:12px;border:1px solid var(--border);overflow:hidden;background:var(--panel);cursor:pointer;transition:.15s;max-width:320px}
+.link-preview:hover{border-color:var(--primary);transform:translateY(-1px)}
+.link-preview-thumb{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:var(--input-bg)}
+.link-preview-body{padding:10px 12px}
+.link-preview-domain{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;display:flex;align-items:center;gap:5px}
+.link-preview-favicon{width:12px;height:12px;border-radius:2px}
+.link-preview-title{font-size:13px;font-weight:600;color:var(--text);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:3px}
+.link-preview-desc{font-size:11px;color:var(--muted);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* YouTube özel */
+.link-preview.yt{border-color:rgba(255,0,0,.25)}
+.link-preview.yt:hover{border-color:#ff0000}
+.link-preview-yt-wrap{position:relative;display:block}
+.link-preview-yt-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.25);transition:.15s}
+.link-preview.yt:hover .link-preview-yt-play{background:rgba(0,0,0,.4)}
+.link-preview-yt-play-btn{width:48px;height:34px;background:#ff0000;border-radius:8px;display:flex;align-items:center;justify-content:center}
+.link-preview-yt-play-btn::after{content:'';border-style:solid;border-width:9px 0 9px 18px;border-color:transparent transparent transparent #fff;margin-left:3px}
+.link-preview-duration{position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.8);color:#fff;font-size:10px;font-weight:700;padding:2px 5px;border-radius:4px;font-family:monospace}
+/* kendi mesajında */
+.msg.me .link-preview{border-color:rgba(255,255,255,.2);background:rgba(255,255,255,.08)}
+.msg.me .link-preview.yt{border-color:rgba(255,80,80,.4)}
+.msg.me .link-preview-title{color:#fff}
+.msg.me .link-preview-domain{color:rgba(255,255,255,.55)}
+.msg.me .link-preview-desc{color:rgba(255,255,255,.45)}
 
 /* ── ANKET ────────────────────────────────────────── */
 #pollModal{position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:8000;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
@@ -1553,6 +1646,9 @@ html:not(.dark) .gs-item.active{background:rgba(255,123,123,.10)}
   #callBtn{padding:0 10px;height:38px;font-size:18px;min-width:38px;border-radius:10px;display:flex!important}
   .callbtn-txt{display:none}
 
+  /* Link önizleme */
+  .link-preview{max-width:100%}
+
   /* Participants grid */
   .participants-grid{grid-template-columns:repeat(2,1fr)}
 
@@ -1715,13 +1811,7 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
       <p style="color:var(--muted);font-size:14px;margin:0 0 28px">Hesabınla giriş yap veya yeni hesap oluştur</p>
 
       <!-- Kayıtlı hesaplar -->
-      <!-- 🐛 [FIX] Eskiden overflow-y:auto hemen ardından gelen overflow:hidden
-           tarafından eziliyordu (aynı elemanda iki kez overflow set edilince
-           sonraki kazanır), bu yüzden liste scroll OLMUYOR, sadece 3+ hesapta
-           konteyner büyüyüp sayfayı aşağı itiyordu. overflow-x:hidden + 
-           overflow-y:auto ayrı ayrı verilerek hem köşe yuvarlama korunuyor
-           hem de gerçek dikey kaydırma çalışıyor. -->
-      <div id="savedAccountsList" class="hidden" style="margin-bottom:20px;text-align:left;max-height:220px;overflow-x:hidden;overflow-y:auto;border:1px solid var(--border);border-radius:14px;background:var(--panel)"></div>
+      <div id="savedAccountsList" class="hidden" style="margin-bottom:20px;text-align:left;max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--panel)"></div>
       <div id="orDivider" class="hidden" style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
         <div style="flex:1;height:1px;background:var(--border)"></div>
         <span style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">veya</span>
@@ -1828,15 +1918,6 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
     <span>🔒 Şifre Değiştir</span>
     <span style="color:var(--muted);font-size:12px">→</span>
   </div>
-  <div class="sp-sec">🔐 Kimlik Doğrulama</div>
-  <div class="sp-row" style="cursor:pointer" data-act="openInviteModal" data-a="create">
-    <span>📤 Davet Oluştur</span>
-    <span style="color:var(--muted);font-size:12px">→</span>
-  </div>
-  <div class="sp-row" style="cursor:pointer" data-act="openInviteModal" data-a="accept">
-    <span>📥 Davet ile Doğrula</span>
-    <span style="color:var(--muted);font-size:12px">→</span>
-  </div>
   <div class="sp-sec">İstatistikler</div>
   <div class="sp-row" style="cursor:pointer" onclick="openStats();toggleSettings()">
     <span>📊 Mesaj İstatistiklerim</span>
@@ -1914,7 +1995,7 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
         <button id="mobileMenuBtn" onclick="toggleMobileSidebar()" title="Menü">☰</button>
         <h1 style="display:flex;align-items:center;gap:0;letter-spacing:-.5px">
           <span style="color:var(--primary);font-weight:900">open</span><span style="position:relative;display:inline-flex;align-items:center"><svg width="22" height="22" viewBox="0 0 24 24" style="margin:0 1px -1px" xmlns="http://www.w3.org/2000/svg"><path d="M12 3C7.03 3 3 6.58 3 11c0 2.1.87 4.01 2.29 5.47L4 21l4.87-1.55A9.6 9.6 0 0012 20c4.97 0 9-3.58 9-8s-4.03-9-9-9z" fill="var(--primary)"/></svg><span style="color:var(--primary);font-weight:900">h</span><span style="color:var(--primary);font-weight:900">at</span></span>
-          <span style="font-size:13px;font-weight:500;color:var(--muted);background:var(--sec);padding:2px 8px;border-radius:20px;margin-left:6px">Beta 3.5</span>
+          <span style="font-size:13px;font-weight:500;color:var(--muted);background:var(--sec);padding:2px 8px;border-radius:20px;margin-left:6px">Beta 3.7</span>
         </h1>
 
       </div>
@@ -2100,18 +2181,13 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
           </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center">
+          <button id="aiButlerBtn" class="btn-sec" style="padding:0 12px;height:38px;font-size:16px;border-radius:10px" title="AI Chat Butler — sohbeti cihazda özetle">✨</button>
           <button onclick="toggleMsgSearch()" class="btn-sec" style="padding:0 12px;height:38px;font-size:16px;border-radius:10px" title="Mesajlarda Ara">🔍</button>
           <button id="callBtn" class="btn-ok" style="height:38px;border-radius:10px;padding:0 16px">📞 <span class="callbtn-txt">Sesli Ara</span></button>
           <button id="videoCallBtn" class="btn-sec" onclick="startVideoCall()" title="Görüntülü Ara" style="height:38px;border-radius:10px;padding:0 14px;display:none">📹 <span class="callbtn-txt">Görüntülü</span></button>
           <button id="groupDetailBtn" class="hidden btn-sec" onclick="openGroupDetail(chatId)" style="padding:0 14px;height:38px;border-radius:10px">⋮</button>
         </div>
       </div>
-
-      <!-- 🛡️ [YENİ — Denetim Raporu Bulgu #1] Kalıcı kimlik güven durumu.
-           chatKeyFp'den (ECDH OTURUM anahtarı kodu) FARKLI bir şey: bu,
-           UZUN VADELİ kimlik anahtarının pinlenmiş/onaylı olup olmadığını
-           gösterir — oturumlar arası kalıcıdır, tek bir toast değil. -->
-      <div id="chatIdentityTrust" style="display:none;padding:8px 14px;font-size:12px;line-height:1.5"></div>
 
       <div id="msgSearchBar" class="hidden">
         <span>🔍</span>
@@ -2263,12 +2339,22 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
         </div>
         <div id="audioPh"></div>
 
+        <div id="liveCaptionBar" class="hidden">
+          <div id="liveCaptionStatus">Whisper Tiny · tarayıcı içi · sunucusuz</div>
+          <div id="liveCaptionText">Karşı taraf konuşunca altyazı burada akar.</div>
+          <select id="liveCaptionMode" title="Altyazı / çeviri">
+            <option value="off">Konuşulan dil (transkripsiyon)</option>
+            <option value="en">İngilizceye çevir (Whisper)</option>
+            <option value="tr">Türkçeye çevir (yerel LLM)</option>
+          </select>
+        </div>
         <!-- Kontrol butonları -->
         <div class="call-ctrl">
           <button id="muteBtn" onclick="toggleMute()" title="Mikrofon">🎤</button>
           <button id="deafenBtn" onclick="toggleDeafen()" title="Ses">🔊</button>
           <button id="videoBtn" onclick="toggleVideo()" title="Kamera Aç/Kapat" style="background:rgba(59,130,246,.35)!important">📷</button>
           <button id="screenBtn" title="Ekran Paylaş" style="background:rgba(59,130,246,.4)!important">🖥️</button>
+          <button id="liveCaptionBtn" title="Canlı Altyazı (Whisper Tiny, tarayıcı içi)">CC</button>
           <button id="endCallBtn" class="btn-d" title="Aramayı Kapat">📵</button>
         </div>
       </div>
@@ -2349,19 +2435,9 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
 
 <div id="termsModal" class="overlay hidden" style="z-index:9999">
   <div class="card" style="width:520px;max-width:94vw;text-align:left;max-height:85vh;display:flex;flex-direction:column;padding:0">
-    <div style="padding:22px 26px 4px;flex-shrink:0;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-      <div>
-        <h3 style="margin:0 0 4px;font-size:18px">📋 Kullanım Şartları ve Sistem Bilgilendirmesi</h3>
-        <p style="margin:0;font-size:12px;color:var(--muted)">Devam etmeden önce lütfen okuyun.</p>
-      </div>
-      <!-- 🌐 [YENİ] Bu metin önemli/uzun olduğu için, kullanıcı Ayarlar'a
-           gitmeden, modal içinden doğrudan TR/EN seçebilsin diye eklendi.
-           Global setSvLang() çağrılır — sayfanın geri kalanıyla aynı dil
-           mekanizması, sadece giriş noktası burası da olsun diye. -->
-      <div id="termsLangToggle" style="flex-shrink:0;display:flex;gap:4px;background:var(--bg2,rgba(127,127,127,.12));border-radius:8px;padding:3px">
-        <button type="button" data-terms-lang="tr" style="font-size:11px;padding:4px 9px;border-radius:6px;border:none;cursor:pointer;background:transparent;color:var(--muted)">TR</button>
-        <button type="button" data-terms-lang="en" style="font-size:11px;padding:4px 9px;border-radius:6px;border:none;cursor:pointer;background:transparent;color:var(--muted)">EN</button>
-      </div>
+    <div style="padding:22px 26px 4px;flex-shrink:0">
+      <h3 style="margin:0 0 4px;font-size:18px">📋 Kullanım Şartları ve Sistem Bilgilendirmesi</h3>
+      <p style="margin:0;font-size:12px;color:var(--muted)">Devam etmeden önce lütfen okuyun.</p>
     </div>
     <div id="termsBody" style="overflow-y:auto;padding:14px 26px;font-size:13px;line-height:1.6;color:var(--text);flex:1"></div>
     <div style="padding:16px 26px 22px;border-top:1px solid var(--border);flex-shrink:0">
@@ -2374,47 +2450,30 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
   </div>
 </div>
 
-<!-- 🛡️ [YENİ — Denetim Raporu Bulgu #1, Model B] İmzalı Davet Modalı -->
-<div id="inviteModal" class="overlay hidden" style="z-index:9999">
-  <div class="card" style="width:480px;max-width:94vw;text-align:left;padding:0">
-    <div style="padding:20px 24px 4px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+<div id="aiButlerPanel" class="hidden">
+  <div id="aiButlerCard">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
       <div>
-        <h3 id="inviteModalTitle" style="margin:0 0 4px;font-size:17px">🔐 Kimlik Doğrulama</h3>
-        <p id="inviteModalSub" style="margin:0;font-size:12px;color:var(--muted)">Username tek başına kimlik kanıtı değildir.</p>
+        <div style="font-weight:800;font-size:16px">✨ AI Chat Butler</div>
+        <div id="aiButlerStatus" style="font-size:11px;color:var(--muted);margin-top:4px">Mesajlar tarayıcı RAM'inde kalır</div>
       </div>
-      <button data-act="closeInviteModal" style="background:none;border:none;color:var(--muted);font-size:18px;padding:0;min-width:auto;cursor:pointer">✕</button>
+      <button id="aiButlerClose" class="btn-sec" style="padding:6px 10px;min-width:auto" title="Kapat">✕</button>
     </div>
-    <div style="padding:16px 24px 4px;display:flex;gap:6px">
-      <button type="button" id="inviteTabCreate" data-act="switchInviteTab" data-a="create" class="btn-sec" style="flex:1;padding:8px;font-size:12.5px;border-radius:8px">📤 Davet Oluştur</button>
-      <button type="button" id="inviteTabAccept" data-act="switchInviteTab" data-a="accept" class="btn-sec" style="flex:1;padding:8px;font-size:12.5px;border-radius:8px">📥 Davet Kabul Et</button>
+    <p style="font-size:12px;color:var(--muted);line-height:1.5;margin:12px 0 0">
+      Uçtan uca şifre kırılmaz: özet buluta gitmez. Transformers.js + WebGPU ile Qwen2.5-0.5B (hızlı) veya Phi-3 Mini (daha güçlü, büyük indirme) bu cihazda çalışır.
+    </p>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center">
+      <select id="aiButlerModel" style="flex:1;min-width:180px;padding:8px 10px;border-radius:10px;border:1px solid var(--border);background:var(--input-bg);color:var(--text)">
+        <option value="fast">Hızlı · Qwen2.5 0.5B</option>
+        <option value="phi3">Güçlü · Phi-3 Mini (WebGPU)</option>
+      </select>
+      <button id="aiButlerRun" style="padding:8px 16px">Özetle</button>
     </div>
-
-    <div id="inviteCreatePane" style="padding:14px 24px 22px">
-      <p style="font-size:12.5px;color:var(--muted);margin:0 0 10px;line-height:1.5">
-        Bu kodu SADECE gerçekten sizinle konuşmak istediğiniz kişiye,
-        uygulama DIŞINDAN bir kanaldan (WhatsApp, yüz yüze, vb.) gönderin.
-        15 dakika geçerlidir ve yalnızca bir kez kullanılabilir.
-      </p>
-      <textarea id="inviteOutputText" readonly rows="5" style="width:100%;font-family:monospace;font-size:11px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg,var(--panel));color:var(--text);resize:none"></textarea>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <button type="button" data-act="generateInviteForModal" class="btn-sec" style="flex:1;padding:10px;font-size:12.5px">🔄 Yeni Davet Üret</button>
-        <button type="button" data-act="copyInviteOutput" class="btn-ok" style="flex:1;padding:10px;font-size:12.5px">📋 Kopyala</button>
-      </div>
-    </div>
-
-    <div id="inviteAcceptPane" style="padding:14px 24px 22px;display:none">
-      <p style="font-size:12.5px;color:var(--muted);margin:0 0 10px;line-height:1.5">
-        Karşı taraftan aldığınız davet kodunu buraya yapıştırın. Doğrulanırsa,
-        o kullanıcı adı için gelen gerçek kimlik anahtarı KALICI olarak
-        onaylanır ve pinlenir.
-      </p>
-      <textarea id="inviteInputText" rows="5" placeholder="Davet kodunu buraya yapıştırın…" style="width:100%;font-family:monospace;font-size:11px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg,var(--panel));color:var(--text);resize:none"></textarea>
-      <button type="button" data-act="acceptInviteFromModal" class="btn-ok" style="width:100%;padding:10px;margin-top:10px;font-size:12.5px">✅ Doğrula ve Kabul Et</button>
-      <div id="inviteAcceptResult" style="margin-top:10px;font-size:12px"></div>
-    </div>
+    <div id="aiButlerOut"></div>
   </div>
 </div>
 
-<script src="i18n.js"></script>
+<script src="i18n.js" integrity="sha384-D8BlgMAmlTdUn1TdKvKMG9HtoTl2c5+mzhUHtPsvZ6nY9RyRAoPvq8P2LgOVo/s+" crossorigin="anonymous"></script>
 <script src="app.js"></script>
+<script src="edge-ai.js"></script>
 </body></html>
