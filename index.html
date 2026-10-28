@@ -2602,8 +2602,14 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
         <option value="phi3">Güçlü · Phi-3 Mini (WebGPU)</option>
       </select>
       <button id="aiButlerRun" style="padding:8px 16px">Özetle</button>
+      <button id="aiButlerSendChat" class="btn-sec" style="padding:8px 12px;min-width:auto;display:none" title="Son AI cevabını sohbete gönder">📤 Sohbete gönder</button>
     </div>
     <div id="aiButlerOut"></div>
+    <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
+      <input id="aiButlerInp" type="text" placeholder="Butler'a yaz… (ör. 'yarın ne konuşmuştuk?')" autocomplete="off"
+        style="flex:1;min-width:0;padding:9px 12px;border-radius:12px;border:1px solid var(--border);background:var(--input-bg);color:var(--font-color, var(--text));font-size:13px">
+      <button id="aiButlerSend" class="btn-sec" style="padding:8px 14px;min-width:auto" disabled title="Gönder">➤</button>
+    </div>
   </div>
 </div>
 
