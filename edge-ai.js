@@ -1,5 +1,11 @@
 /* OpenChat Edge AI — main thread. Whisper captions + local chat butler. */
 (function(){
+  // ✨ [3.7] Ayarlar → "Yerel Yapay Zeka" anahtarı. Kapalıyken hiçbir model
+  // indirilmez, worker oluşturulmaz, RAM kullanılmaz. Tercih cihazda saklanır.
+  const AI_KEY = 'sv_edge_ai';
+  const AI_GPU_KEY = 'sv_edge_ai_gpu';
+  let aiEnabled = localStorage.getItem(AI_KEY) === '1';
+  let gpuEnabled = localStorage.getItem(AI_GPU_KEY) === '1';
   const taps = new Map();
   const pending = new Map();
   let worker = null;
@@ -8,9 +14,66 @@
 
   function $(id){ return document.getElementById(id); }
 
+  // Anahtar kapalıyken AI butonlarını gizle — kullanıcı boşuna tıklamasın.
+  function applyAiUi(){
+    const but = $('aiButlerBtn');
+    const cap = $('liveCaptionBtn');
+    if(but) but.style.display = aiEnabled ? '' : 'none';
+    if(cap) cap.style.display = aiEnabled ? '' : 'none';
+    const panel = $('aiButlerPanel');
+    if(panel && !aiEnabled) panel.classList.add('hidden');
+    const bar = $('liveCaptionBar');
+    if(bar && !aiEnabled) bar.classList.add('hidden');
+  }
+
+  // Ayarlar paneli her açıldığında app.js çağırır (toggleSettings).
+  window.edgeAISyncSettings = function(){
+    const a = $('toggleEdgeAI');
+    const g = $('toggleEdgeAIGpu');
+    if(a) a.checked = aiEnabled;
+    if(g){ g.checked = gpuEnabled; g.disabled = !aiEnabled; }
+  };
+
+  function disableAi(){
+    try{ setCaptions(false); }catch(_){}
+    if(worker){ try{ worker.terminate(); }catch(_){} worker = null; }
+    pending.clear();
+    captionLines = [];
+    aiEnabled = false;
+    localStorage.setItem(AI_KEY, '0');
+    applyAiUi();
+  }
+
+  window.toggleEdgeAI = function(){
+    const cb = $('toggleEdgeAI');
+    const on = !!(cb && cb.checked);
+    if(on){
+      aiEnabled = true;
+      localStorage.setItem(AI_KEY, '1');
+      applyAiUi();
+      ensureWorker();
+      worker.postMessage({ type:'set-gpu', on: gpuEnabled });
+    } else {
+      disableAi();
+    }
+    window.edgeAISyncSettings();
+  };
+
+  window.toggleEdgeAIGpu = function(){
+    const cb = $('toggleEdgeAIGpu');
+    gpuEnabled = !!(cb && cb.checked);
+    localStorage.setItem(AI_GPU_KEY, gpuEnabled ? '1' : '0');
+    // GPU değişimi yalnızca model yeniden yüklenirken etkili olur — bu yüzden
+    // yüklü modeli bırakıp worker'ı tazeliyoruz (RAM hemen boşalır).
+    if(worker){ try{ worker.terminate(); }catch(_){} worker = null; }
+    if(aiEnabled){ ensureWorker().postMessage({ type:'set-gpu', on: gpuEnabled }); }
+    window.edgeAISyncSettings();
+  };
+
   function ensureWorker(){
     if(worker) return worker;
     worker = new Worker('edge-ai-worker.js', { type:'module' });
+    worker.postMessage({ type:'set-gpu', on: gpuEnabled });
     worker.onmessage = (ev)=>{
       const d = ev.data || {};
       if(d.type === 'caption') onCaption(d);
@@ -152,6 +215,10 @@
   }
 
   async function setCaptions(on){
+    if(on && !aiEnabled){
+      if(typeof showToast==='function') showToast('✨ Yerel Yapay Zeka', 'Ayarlar → Yerel Yapay Zeka anahtarını aç.');
+      return;
+    }
     captionsOn = !!on;
     const bar = $('liveCaptionBar');
     const btn = $('liveCaptionBtn');
@@ -174,7 +241,9 @@
   }
 
   const api = {
+    get enabled(){ return aiEnabled; },
     attachRemoteStream(userId, stream){
+      if(!aiEnabled) return; // kapalıyken ses hiç yakalanmaz
       if(!userId || !stream) return;
       pending.set(userId, stream);
       if(captionsOn) startTap(userId, stream).catch(()=>{});
@@ -207,6 +276,10 @@
   }
 
   function openButler(){
+    if(!aiEnabled){
+      if(typeof showToast==='function') showToast('✨ Yerel Yapay Zeka', 'Ayarlar → Yerel Yapay Zeka anahtarını aç.');
+      return;
+    }
     if(!chatId){
       if(typeof showToast==='function') showToast('AI Butler','Önce bir sohbet aç.');
       return;
@@ -243,6 +316,6 @@
     ensureWorker().postMessage({ type:'summarize', messages: msgs, model });
   }
 
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', bindUi);
-  else bindUi();
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>{ bindUi(); applyAiUi(); window.edgeAISyncSettings(); });
+  else { bindUi(); applyAiUi(); window.edgeAISyncSettings(); }
 })();
