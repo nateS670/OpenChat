@@ -13,26 +13,12 @@ const DB_KEY  = 'shareview_ultra_localdb_v6';
 // 🛡️ [KRİTİK-V3-H1] Mesaj içeriği ARTIK DB_KEY (plaintext) içinde DEĞİL.
 // Ayrı, her zaman şifreli bir depoda tutulur. Anahtar yoksa hiç yazılmaz.
 const MSG_KEY = 'shareview_ultra_msgs_v1';
-// 🛡️ [YENİ-SEC — KRİTİK — Hesap İzolasyonu Fix]
-// ÖNCEKİ HALİ: MSG_KEY tek, GLOBAL bir localStorage anahtarıydı — aynı
-// cihazda birden fazla "kayıtlı hesap" arasında geçiş yapıldığında
-// (uygulamanın kendi desteklediği bir özellik), İKİNCİ hesabın İLK
-// `saveDB()` çağrısı, BİRİNCİ hesabın TÜM şifreli mesaj geçmişinin
-// üzerine YAZIP KALICI OLARAK YOK EDİYORDU (şifreleme onu OKUMAYI
-// engelliyordu ama ÜZERİNE YAZILMASINI engellemiyordu).
-// ŞİMDİ: her hesap kendi `MSG_KEY_<user_id>` anahtarını kullanıyor —
-// bkz. _msgKeyFor. Eski, paylaşımlı global veri ise SADECE kriptografik
-// olarak kanıtlanabiliyorsa (o hesabın anahtarıyla GERÇEKTEN çözülebiliyorsa)
-// yeni hesaba-özel anahtara taşınıyor — bkz. _migrateGlobalMsgKeyIfOwned.
-function _msgKeyFor(userId){
-  return MSG_KEY + '_' + String(userId||'').toLowerCase();
-}
 let _decryptedMsgCache = {}; // bellekteki çözülmüş mesajlar — getDB()/saveDB() buradan okur/yazar
 // 🛡️ [FIX-4] Büyük dosya eklerinin ('fc_' önekli __cache__ girdileri) çözülmüş
 // hâli — render senkron olduğu için (crypto.subtle her zaman async) dosya
 // içeriği burada bellekte tutulur; localStorage'a HER ZAMAN şifreli yazılır.
 let _decryptedFileCache = new Map();
-const APP_VERSION = '3.5.0';
+const APP_VERSION = '3.7.0';
 const SES_KEY = 'shareview_ultra_session_v6';
 
 // ══════════════════════════════════════════════════════════════════
@@ -61,26 +47,6 @@ function _needsTermsAcceptance(user){
   return !user || user.termsAcceptedVersion !== TERMS_VERSION;
 }
 
-// 🌐 [YENİ] Terms modalının kendi TR/EN düğmelerini, sayfanın geri kalanıyla
-// AYNI global dil sistemine (window.SV_LANG / setSvLang) bağlar — ayrı bir
-// çeviri mekanizması DEĞİL, sadece ek bir giriş noktası. setSvLang() sayfayı
-// yeniden yüklediği için (mevcut Ayarlar > Dil davranışıyla tutarlı),
-// terms onaylanmamışsa modal otomatik olarak tekrar açılır ve düğmeler
-// yeni dile göre doğru vurgulanmış hâlde görünür.
-function _syncTermsLangToggle(){
-  const wrap = document.getElementById('termsLangToggle');
-  if(!wrap) return;
-  wrap.querySelectorAll('[data-terms-lang]').forEach(b=>{
-    const active = b.dataset.termsLang === (window.SV_LANG || 'en');
-    b.style.background = active ? 'var(--primary)' : 'transparent';
-    b.style.color = active ? '#fff' : 'var(--muted)';
-    if(!b._svBound){
-      b._svBound = true;
-      b.addEventListener('click', ()=>{ if(typeof setSvLang==='function') setSvLang(b.dataset.termsLang); });
-    }
-  });
-}
-
 function showTermsModal(){
   return new Promise(resolve=>{
     const modal = $('termsModal');
@@ -91,7 +57,6 @@ function showTermsModal(){
     cb.checked = false;
     btn.disabled = true;
     modal.classList.remove('hidden');
-    _syncTermsLangToggle();
     // Her açılışta temiz dinleyiciler — eski Promise'i tetiklememesi için
     cb.onchange = ()=>{ btn.disabled = !cb.checked; };
     btn.onclick = ()=>{
@@ -104,6 +69,45 @@ function showTermsModal(){
 
 // Terms onayını gerekiyorsa gösterip, ardından ana uygulamayı açan tek
 // merkezi fonksiyon. authScreen→mainApp geçişi yapan HER yer bunu kullanır.
+// ✨ [3.7] Giriş/kayıt sonrası geçiş animasyonu. Kullanıcı adının ilk harfi
+// (veya avatarı) ortada büyüyerek belirir, mainApp yumuşakça oturur.
+// Önce authScreen 'push-in' ile kapanır, ~300ms sonra mainApp açılır.
+// Her açılışta yeni eleman üretildiği için inline onclick/onload YOK — CSP temiz.
+function _playWelcomeTransition(){
+  let burst = $('welcomeBurst');
+  if(burst) burst.remove();
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduce) return;
+
+  burst = document.createElement('div');
+  burst.id = 'welcomeBurst';
+  const card = document.createElement('div');
+  card.className = 'wb-card';
+  const ring = document.createElement('div');
+  ring.className = 'wb-ring';
+  const av = document.createElement('div');
+  av.className = 'wb-av';
+  const name = String((ME && ME.user_id) || '').trim();
+  const avUrl = sanitizeAvatarUrl ? sanitizeAvatarUrl(ME && ME.avatar) : '';
+  if(avUrl){
+    const img = document.createElement('img');
+    img.src = avUrl; img.alt = '';
+    av.appendChild(img);
+  } else {
+    av.textContent = (name[0] || '?').toUpperCase();
+  }
+  const hi = document.createElement('div');
+  hi.className = 'wb-hi';
+  // Tam cümle kullanılmıyor: i18n sözlüğü "Hoş Geldin" kelime sınırı
+  // mantığıyla çalışıyor, parçalanmış cümleyi güvenle çeviremez.
+  hi.textContent = (name || 'openchat') + ' · Hoş geldin';
+  card.appendChild(ring); card.appendChild(av); card.appendChild(hi);
+  burst.appendChild(card);
+  document.body.appendChild(burst);
+  setTimeout(()=>{ try{ burst.remove(); }catch(e){} }, 1500);
+}
+
+// authScreen→mainApp geçişi yapan HER yer bunu kullanır.
 async function revealApp(){
   if(_needsTermsAcceptance(ME)){
     await showTermsModal();
@@ -112,13 +116,31 @@ async function revealApp(){
     const k2 = (ME.user_id||'').toLowerCase();
     if(db.users[k2]){ db.users[k2].termsAcceptedVersion = TERMS_VERSION; saveDB(db); }
   }
-  $('authScreen').style.display='none';
-  $('mainApp').classList.remove('hidden');
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const auth = $('authScreen');
+  const app  = $('mainApp');
+  // Ses/bağlantı kurulumu beklemesin: animasyon sürerken uygulama açılır.
+  if(!reduce && auth && auth.style.display !== 'none'){
+    auth.classList.add('sv-auth-out');
+    setTimeout(()=>{ auth.style.display='none'; auth.classList.remove('sv-auth-out'); }, 320);
+  } else if(auth){
+    auth.style.display='none';
+  }
+  if(app){
+    app.classList.remove('hidden');
+    if(!reduce){
+      app.classList.remove('sv-app-enter');
+      void app.offsetWidth; // reflow — animasyon her girişte yeniden oynasın
+      app.classList.add('sv-app-enter');
+      setTimeout(()=>app.classList.remove('sv-app-enter'), 700);
+    }
+  }
   document.body.classList.add('sv-logged-in');
+  _playWelcomeTransition();
 }
 
 // ══════════════════════════════════════════════════════════════════
-// ✨ [3.6] GÜNCELLEME LOGU
+// ✨ [3.7] GÜNCELLEME LOGU
 // Yeni sürüm çıktıkça buraya en üste yeni bir <div> ekleyin — liste en
 // yeni üstte olacak şekilde tutulur. Kullanıcı bir kez görüp kapattıktan
 // sonra tekrar rahatsız etmemek isterseniz CHANGELOG_LATEST sabitini
@@ -127,7 +149,20 @@ async function revealApp(){
 // ══════════════════════════════════════════════════════════════════
 const CHANGELOG_HTML = `
 <div style="margin-bottom:18px">
-  <div style="font-weight:800;color:var(--primary);font-size:14px;margin-bottom:6px">Sürüm 3.6</div>
+  <div style="font-weight:800;color:var(--primary);font-size:14px;margin-bottom:6px">Sürüm 3.7</div>
+  <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px">
+    <li>🎙️ Yeni: Canlı altyazı — aramalarda konuşulanlar Whisper Tiny ile tarayıcının içinde yazıya dökülür (WebGPU varsa hızlandırılır, yoksa WASM)</li>
+    <li>🌍 Yeni: Altyazı çeviri modları — konuşulan dil, İngilizceye çeviri (Whisper) veya yerel LLM ile Türkçeye çeviri; arama sırasında canlı değiştirilebilir</li>
+    <li>🔊 Altyazı için karşı tarafın sesi ayrı bir AudioWorklet ile yakalanır — hoparlöre hiç yönlendirilmez, çift ses/echo oluşmaz</li>
+    <li>✨ Yeni: AI Chat Butler — sohbeti cihazda özetler (Qwen2.5 0.5B hızlı, Phi-3 Mini güçlü); model henüz yüklenmemişse anında kural tabanlı özet gösterilir</li>
+    <li>🔒 Yapay zeka tamamen cihaz içi: mesajlar ve ses hiçbir sunucuya gitmez, sadece model dosyaları indirilir ve önbelleğe alınır (Transformers.js)</li>
+    <li>⚙️ Otomatik geri düşme: WebGPU açılamazsa otomatik WASM'a, Phi-3 yüklenemezse Qwen2.5'e geçilir; model indirme yüzdesi canlı gösterilir</li>
+    <li>🧹 Arama bitince altyazı otomatik kapanır, ses tamponları ve model işçisi temizlenir</li>
+    <li>✨ Giriş/kayıt sonrası karşılama animasyonu — ekran yumuşakça oturur, avatarın ortada büyüyerek kısa bir "Hoş geldin" gösterir (hareket azaltma ayarına saygılı)</li>
+  </ul>
+</div>
+<div style="margin-bottom:18px;opacity:.6">
+  <div style="font-weight:800;color:var(--primary);font-size:14px;margin-bottom:6px">Sürüm 3.6 <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;background:var(--sec);color:var(--muted);padding:2px 7px;border-radius:8px;margin-left:6px;vertical-align:middle">Eski sürüm</span></div>
   <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px">
     <li>🔒 Kapsamlı güvenlik sıkılaştırması: mesaj bazlı imzalama, DataChannel/e2e kimlik sahteciliği koruması, grup yönetici yetki kontrolleri</li>
     <li>🛡️ CSP (Content Security Policy) sıkılaştırıldı; eksik güvenlik başlıkları ve SRI eklendi</li>
@@ -197,13 +232,208 @@ const $   = id => document.getElementById(id);
 // Null-safe element setter — null element için hata fırlatmaz
 const $set = (id, prop, val) => { const el=$(id); if(el) el[prop]=val; return el; };
 const $on  = (id, ev, fn) => { const el=$(id); if(el) el.addEventListener(ev,fn); return el; };
+function _csprngBytes(n){
+  if(!crypto?.getRandomValues) throw new Error('[SEC] WebCrypto CSPRNG kullanılamıyor');
+  return crypto.getRandomValues(new Uint8Array(n));
+}
+function _secureHex(n=16){
+  return Array.from(_csprngBytes(n), b=>b.toString(16).padStart(2,'0')).join('');
+}
+function _secureB64Url(n=16){
+  return btoa(String.fromCharCode(..._csprngBytes(n))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function _secureRandomFloat(){
+  const b=_csprngBytes(4);
+  const n=(b[0]*0x1000000)+(b[1]<<16)+(b[2]<<8)+b[3];
+  return n/0x100000000;
+}
+function _secureRandomInt(max){
+  max=Math.floor(Number(max)||0);
+  if(max<=0) return 0;
+  return Math.floor(_secureRandomFloat()*max);
+}
 // 🛡️ [MED-06] Kriptografik olarak güvenli ID üretimi — Math.random() tahmin edilebilirdi
-const uid = () => {
-  const arr = crypto.getRandomValues(new Uint8Array(9));
-  return Array.from(arr, b => b.toString(36).padStart(2,'0')).join('').slice(0,9);
-};
+const uid = () => _secureB64Url(9).slice(0,12);
 const gt  = () => new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
 const now = () => Date.now();
+
+// ══════════════════════════════════════════════════════════════════
+// 🛡️ SEC-KERNEL — fail-closed kriptografi, replay, oturum nesli
+// ══════════════════════════════════════════════════════════════════
+let _sessionAlive = false;
+let _cryptoEpoch = 1;
+let _sessionId = _secureB64Url(18);
+let _outSeq = 0;
+const _usedIvB64 = new Set();
+const _usedCipherIvByPeer = new Map(); // peer → Set(ivB64)
+const _seenPresenceNonces = new Map();
+const _peerSeqState = new Map(); // userId → {sid, lastSeq, ids:Set}
+const _MSG_TS_SKEW_MS = 24 * 60 * 60 * 1000;
+const FILE_SEC = {
+  MAX_BYTES: 10 * 1024 * 1024,
+  MAX_CHARS: 15_000_000,
+  MAX_NAME: 180,
+  MAX_MIME: 80,
+  MAX_DC_BUFFER: 8 * 1024 * 1024,
+  MAX_DC_FRAME: 16 * 1024 * 1024,
+  ALLOW_MIME: /^(image\/(jpeg|jpg|png|gif|webp|bmp)|application\/pdf|text\/plain|video\/(mp4|webm)|audio\/(mpeg|ogg|wav|webm)|application\/octet-stream)$/i
+};
+const P2P_ALLOWED_TYPES = new Set([
+  'presence','typing','profile_sync','check_user_id','user_id_taken',
+  'private_msg','group_msg','group_invite','group_update','group_kick',
+  'friend_req','friend_accept','friend_remove',
+  'msg_read','group_read','msg_edit','msg_delete','msg_react','msg_vanish','reaction',
+  'dc_offer','dc_answer','dc_ice','rtc_offer','rtc_answer','rtc_ice','rtc_end','rtc_reject','rtc_busy','rtc_renego','rtc_renego_ans',
+  'call_state','grp_offer','grp_answer','grp_ice','grp_end','grp_call_active','grp_call_ended',
+  'screen_started','screen_ended','screen_offer','screen_answer'
+]);
+const DC_ONLY_TYPES = new Set([
+  'private_msg','group_msg','group_invite','group_update','group_kick',
+  'friend_req','friend_accept','friend_remove','profile_sync',
+  'msg_read','group_read','msg_edit','msg_delete','msg_react','msg_vanish','reaction','typing'
+]);
+
+function _freshAesIv(scope){
+  if(!crypto?.getRandomValues) throw new Error('[SEC] WebCrypto CSPRNG kullanılamıyor');
+  for(let i=0;i<12;i++){
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    let b64='';
+    for(let j=0;j<iv.length;j++) b64 += String.fromCharCode(iv[j]);
+    const k = (scope||'') + '|' + btoa(b64);
+    if(_usedIvB64.has(k)) continue;
+    _usedIvB64.add(k);
+    if(_usedIvB64.size > 40000){
+      const drop = _usedIvB64.size - 20000;
+      let n=0;
+      for(const old of _usedIvB64){ _usedIvB64.delete(old); if(++n>=drop) break; }
+    }
+    return iv;
+  }
+  throw new Error('[SEC] AES-GCM IV üretilemedi (çakışma)');
+}
+function _noteIncomingIv(peer, ivB64){
+  if(typeof ivB64!=='string' || ivB64.length<8 || ivB64.length>64) return false;
+  const id = String(peer||'_');
+  let s = _usedCipherIvByPeer.get(id);
+  if(!s){ s=new Set(); _usedCipherIvByPeer.set(id,s); }
+  if(s.has(ivB64)) return false;
+  s.add(ivB64);
+  if(s.size>8000){ const first=s.values().next().value; s.delete(first); }
+  return true;
+}
+function _registerPresenceNonce(userId, nonce){
+  if(typeof nonce!=='string' || nonce.length<10 || nonce.length>160) return false;
+  let s=_seenPresenceNonces.get(userId);
+  if(!s){ s=new Set(); _seenPresenceNonces.set(userId,s); }
+  if(s.has(nonce)) return false;
+  s.add(nonce);
+  if(s.size>400){ const first=s.values().next().value; s.delete(first); }
+  return true;
+}
+function _safeEmoji(e){
+  if(typeof e!=='string') return '';
+  const t=e.trim();
+  if(!t || t.length>16 || /[<>&"'`]/.test(t)) return '';
+  return t;
+}
+function _sanitizeFileName(n){
+  if(typeof n!=='string') return 'file';
+  const t=n.replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').replace(/^\.+/,'dot_').slice(0, FILE_SEC.MAX_NAME);
+  return t || 'file';
+}
+function _sanitizeMime(m){
+  if(typeof m!=='string') return 'application/octet-stream';
+  const t=m.trim().slice(0, FILE_SEC.MAX_MIME);
+  return FILE_SEC.ALLOW_MIME.test(t) ? t : 'application/octet-stream';
+}
+function _wipeCryptoSession(reason){
+  _cryptoEpoch++;
+  _sessionAlive = false;
+  _lsEncKey = null;
+  _idKeyPair = null;
+  _myPassport = null;
+  _passportPromise = null;
+  _sigAlgName = null;
+  _sessionKeyPair = null;
+  _bootstrapKey = null;
+  _bootstrapKeyPromise = null;
+  Object.keys(_peerAESKeyCache).forEach(k=>delete _peerAESKeyCache[k]);
+  Object.keys(_peerPublicKeyCache).forEach(k=>delete _peerPublicKeyCache[k]);
+  Object.keys(_peerSigningKeys).forEach(k=>delete _peerSigningKeys[k]);
+  Object.keys(_lastPresenceIdentity).forEach(k=>delete _lastPresenceIdentity[k]);
+  Object.keys(_verifyCache).forEach(k=>delete _verifyCache[k]);
+  _verifiedPeers.clear();
+  _usedIvB64.clear();
+  _usedCipherIvByPeer.clear();
+  _seenPresenceNonces.clear();
+  _peerSeqState.clear();
+  _decryptedMsgCache = {};
+  if(_decryptedFileCache) _decryptedFileCache.clear();
+  try{ sessionStorage.removeItem('_sk'); }catch(e){}
+  _sessionId = _secureB64Url(18);
+  _outSeq = 0;
+  console.warn('[SEC] Kripto oturumu silindi:', reason||'');
+}
+function _assertLiveCrypto(epochAtStart){
+  if(!_sessionAlive || (epochAtStart!=null && epochAtStart!==_cryptoEpoch)){
+    throw new Error('[SEC] Oturum/anahtar geçersiz — işlem iptal');
+  }
+}
+function _isGroupMemberNow(groupId, userId){
+  try{
+    const g=getDB().groups[groupId];
+    return !!(g && Array.isArray(g.members) && g.members.includes(userId));
+  }catch(e){ return false; }
+}
+function _validateIncomingP2P(d, src){
+  if(!_sessionAlive) return false;
+  if(!d || typeof d!=='object') return false;
+  if(typeof d.type!=='string' || d.type.length>48 || !P2P_ALLOWED_TYPES.has(d.type)) return false;
+  if(d.from!=null && !isWhitelisted(d.from)) return false;
+  if(d.to!=null && d.to!=='global' && d.to!==(ME&&ME.user_id) && !isWhitelisted(d.to)) return false;
+  if(d.groupId!=null){
+    if(typeof d.groupId!=='string' || d.groupId.length>128 || !d.groupId.startsWith('GRP_')) return false;
+  }
+  if(DC_ONLY_TYPES.has(d.type) && src!=='dc'){
+    console.warn('[SEC] DC-only tip MQTT üzerinden reddedildi:', d.type);
+    return false;
+  }
+  if((d.type==='group_msg'||d.type==='group_update'||d.type==='group_kick'||d.type==='group_read'||d.type==='group_invite') && d.groupId){
+    if(d.type==='group_invite') return true;
+    if(ME && !_isGroupMemberNow(d.groupId, ME.user_id) && d.type!=='group_kick'){
+      console.warn('[SEC] Grup üyesi olmayan alıcı, paket atıldı:', d.type, d.groupId);
+      return false;
+    }
+    if(d.from && d.type!=='group_kick' && d.type!=='group_invite' && !_isGroupMemberNow(d.groupId, d.from)){
+      console.warn('[SEC] Grup üyesi olmayan gönderen reddedildi:', d.from, d.groupId);
+      return false;
+    }
+  }
+  return true;
+}
+function _trackPeerSeq(from, msg){
+  if(!from || !msg || msg.seq==null) return true;
+  const seq=Number(msg.seq);
+  if(!Number.isFinite(seq) || seq<0) return false;
+  const sid=typeof msg.sid==='string' ? msg.sid.slice(0,64) : '';
+  let st=_peerSeqState.get(from);
+  if(!st || (sid && st.sid && st.sid!==sid)){
+    st={sid, lastSeq:-1, ids:new Set()};
+    _peerSeqState.set(from, st);
+  }
+  if(msg.id){
+    if(st.ids.has(msg.id)) return false;
+    st.ids.add(msg.id);
+    if(st.ids.size>2000){ const first=st.ids.values().next().value; st.ids.delete(first); }
+  }
+  if(seq<=st.lastSeq) return false;
+  st.lastSeq=seq;
+  if(msg.ts!=null){
+    const ts=Number(msg.ts);
+    if(!Number.isFinite(ts) || Math.abs(Date.now()-ts)>_MSG_TS_SKEW_MS) return false;
+  }
+  return true;
+}
 
 // ══════════════════════════════════════════════════════════════════
 //  🔐 ŞİFRE GÜVENLİK MOTORU v2.0
@@ -265,7 +495,7 @@ async function _idbGetKey(){
 
 let _lsEncKey = null; // CryptoKey — başarılı login sonrası set edilir
 
-async function _setLsEncKey(password, saltHex, iterations = PBKDF2_ITERATIONS_LEGACY_KEY, userId = null){
+async function _setLsEncKey(password, saltHex){
   try{
     const km = await crypto.subtle.importKey(
       'raw', new TextEncoder().encode(password), {name:'PBKDF2'}, false, ['deriveKey']
@@ -274,7 +504,7 @@ async function _setLsEncKey(password, saltHex, iterations = PBKDF2_ITERATIONS_LE
     // hiçbir şekilde (ne bu koddan ne de DevTools konsolundan) dışarı
     // çıkarılamaz; yalnızca encrypt/decrypt işlemleri için kullanılabilir.
     _lsEncKey = await crypto.subtle.deriveKey(
-      {name:'PBKDF2', salt:_hexToBytes(saltHex), iterations, hash:'SHA-256'},
+      {name:'PBKDF2', salt:_hexToBytes(saltHex), iterations:310_000, hash:'SHA-256'},
       km, {name:'AES-GCM', length:256}, false, ['encrypt','decrypt']
     );
     // 🛡️ [AZ RİSK FIX] Ham bayt YOK — güvenli CryptoKey nesnesi doğrudan
@@ -284,42 +514,40 @@ async function _setLsEncKey(password, saltHex, iterations = PBKDF2_ITERATIONS_LE
       sessionStorage.setItem('_sk','1');
     }catch(e){}
     // 🛡️ [KRİTİK-V3-H1] Anahtar hazır olur olmaz şifreli mesajları belleğe çöz
-    // 🛡️ [YENİ-SEC — HESAP İZOLASYONU] `userId` global `ME` değişkeninden
-    // OKUNMUYOR — çağıran (pwSave/pwVerify) kendi `user_id` parametresini
-    // doğrudan buraya geçiriyor. Bunun nedeni: bu fonksiyon çağrıldığı anda
-    // (hesap değişimi/girişi sırasında) `ME` henüz YENİ hesaba güncellenmemiş
-    // olabilir (hâlâ önceki hesabı gösteriyor olabilir) — global `ME`'ye
-    // güvenmek, mesajların YANLIŞ (eski) hesabın anahtarı altına yazılmasına
-    // yol açardı.
-    await _loadEncryptedMessages(userId);
+    await _loadEncryptedMessages();
     // 🛡️ [SAST-3 FIX] Outbox'ı da artık hazır olan anahtarla yeniden oku/birleştir
     await _reloadOutboxAfterKeyReady();
     // 🛡️ [FIX-4] Dosya cache'ini de arka planda çöz
     _preloadFileCache();
-  }catch(e){ _lsEncKey = null; }
+    _sessionAlive = true;
+  }catch(e){
+    _lsEncKey = null;
+    _sessionAlive = false;
+    throw e;
+  }
 }
 
 // 🛡️ [AZ RİSK FIX] Sayfa yenilemesinde (aynı sekme) anahtarı IndexedDB'den
 // geri yükle — sessionStorage'daki işaret yalnızca "dene" sinyali verir,
 // gerçek anahtar hiçbir zaman Web Storage'a yazılmaz.
-// 🛡️ [YENİ-SEC — HESAP İZOLASYONU] `userId` parametresi eklendi — bkz.
-// _setLsEncKey'deki aynı gerekçe (global ME'ye güvenilmiyor).
-async function _tryRestoreEncKeyFromSession(userId){
+async function _tryRestoreEncKeyFromSession(){
   try{
     const marker = sessionStorage.getItem('_sk');
     if(!marker) return false;
     const key = await _idbGetKey();
     if(!key) return false;
     _lsEncKey = key;
-    await _loadEncryptedMessages(userId);
+    await _loadEncryptedMessages();
     // 🛡️ [SAST-3 FIX] Outbox'ı da artık hazır olan anahtarla yeniden oku/birleştir
     await _reloadOutboxAfterKeyReady();
     // 🛡️ [FIX-4] Dosya cache'ini de arka planda çöz
     _preloadFileCache();
+    _sessionAlive = true;
     return true;
   }catch(e){
     sessionStorage.removeItem('_sk');
     _lsEncKey = null;
+    _sessionAlive = false;
     return false;
   }
 }
@@ -339,18 +567,16 @@ function _b642ab(b64){
 }
 
 async function _lsSetEncrypted(key, value){
-  if(!_lsEncKey){ localStorage.setItem(key, value); return; }
-  try{
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ct = await crypto.subtle.encrypt(
-      {name:'AES-GCM', iv}, _lsEncKey, new TextEncoder().encode(value)
-    );
-    localStorage.setItem(key, JSON.stringify({
-      _enc: 1,
-      iv:   _ab2b64(iv.buffer),
-      ct:   _ab2b64(ct)
-    }));
-  }catch(e){ localStorage.setItem(key, value); }
+  if(!_lsEncKey) throw new Error('[SEC] Şifreli localStorage yazımı için anahtar hazır değil');
+  const iv = _freshAesIv('ls:'+String(key));
+  const ct = await crypto.subtle.encrypt(
+    {name:'AES-GCM', iv}, _lsEncKey, new TextEncoder().encode(value)
+  );
+  localStorage.setItem(key, JSON.stringify({
+    _enc: 1,
+    iv:   _ab2b64(iv.buffer),
+    ct:   _ab2b64(ct)
+  }));
 }
 
 // 🛡️ [FIX-4] Tek bir 'fc_' dosya cache girdisini çöz, belleğe koy, görünürse yeniden çiz.
@@ -387,64 +613,21 @@ async function _preloadFileCache(){
 
 async function _lsGetDecrypted(key){
   const raw = localStorage.getItem(key);
-  if(!raw || !_lsEncKey) return raw;
+  if(!raw) return raw;
+  if(!_lsEncKey) throw new Error('[SEC] Şifreli localStorage okuması için anahtar hazır değil');
+  let p;
+  try{ p = JSON.parse(raw); }
+  catch(e){ throw new Error('[SEC] Şifreli depo bozuk — düz metin reddedildi'); }
+  if(!p || p._enc !== 1 || typeof p.iv!=='string' || typeof p.ct!=='string'){
+    throw new Error('[SEC] Düz metin depo reddedildi (fail-closed)');
+  }
   try{
-    const p = JSON.parse(raw);
-    if(!p || p._enc !== 1) return raw;
     const iv = _b642ab(p.iv);
     const ct = _b642ab(p.ct);
     const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv}, _lsEncKey, ct);
     return new TextDecoder().decode(pt);
-  }catch(e){ return raw; }
-}
-
-// 🛡️ [YENİ-SEC — KRİTİK — Hesap İzolasyonu Fix] `_lsGetDecrypted`'den
-// FARKLI olarak, çözme BAŞARISIZ olursa ham (hâlâ şifreli) string'i DEĞİL,
-// kesin bir `null` döndürür. Bu, "bu anahtarla bu veriyi GERÇEKTEN çözebildim
-// mi" sorusuna belirsizlik bırakmayan bir kriptografik sahiplik testi olarak
-// kullanılıyor (bkz. _migrateGlobalMsgKeyIfOwned) — AES-GCM'in authentication
-// tag'i sayesinde, decrypt SADECE doğru anahtarla başarılı olabilir.
-async function _lsTryDecryptStrict(key, cryptoKey){
-  const raw = localStorage.getItem(key);
-  if(!raw || !cryptoKey) return null;
-  try{
-    const p = JSON.parse(raw);
-    if(!p || p._enc !== 1) return null; // şifreli bir blob bile değil
-    const iv = _b642ab(p.iv);
-    const ct = _b642ab(p.ct);
-    const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv}, cryptoKey, ct);
-    return new TextDecoder().decode(pt);
-  }catch(e){ return null; } // ← KESİN başarısızlık sinyali, ham veri asla dönmez
-}
-
-// 🛡️ [YENİ-SEC — KRİTİK — Hesap İzolasyonu Fix]
-// Eski, PAYLAŞIMLI global MSG_KEY altında kalan veriyi, SADECE bu hesabın
-// anahtarıyla GERÇEKTEN çözülebiliyorsa (kriptografik kanıt) hesaba-özel
-// yeni anahtara taşır. Çözme başarısız olursa (veri BAŞKA bir hesaba aitse
-// ya da bozuksa) HİÇBİR ŞEYE DOKUNULMAZ — eski veri olduğu gibi bırakılır
-// ki gerçek sahibi hesap bir gün bu cihazda tekrar giriş yaparsa onu hâlâ
-// kurtarabilsin. Yanlış hesaba SESSİZCE taşıma YAPILMAZ.
-async function _migrateGlobalMsgKeyIfOwned(userId){
-  if(!_lsEncKey || !userId) return;
-  const newKey = _msgKeyFor(userId);
-  if(localStorage.getItem(newKey)) return; // zaten bu hesaba özel veri var, tekrar deneme
-  if(!localStorage.getItem(MSG_KEY)) return; // eski paylaşımlı veri hiç yok
-  const decrypted = await _lsTryDecryptStrict(MSG_KEY, _lsEncKey);
-  if(decrypted === null){
-    // Bu hesabın anahtarı bu veriyi açamadı — büyük ihtimalle BAŞKA bir
-    // hesaba ait. Dokunmuyoruz; o hesap giriş yaptığında kurtarabilsin.
-    console.log('[SEC] Eski paylaşımlı mesaj deposu bu hesaba ait değil — dokunulmadı, olduğu gibi bırakıldı.');
-    return;
-  }
-  // ✅ Kriptografik kanıt: bu hesabın anahtarı GERÇEKTEN çözdü → veri bu hesaba ait.
-  try{
-    await _lsSetEncrypted(newKey, decrypted);
-    localStorage.removeItem(MSG_KEY); // güvenle taşındı — paylaşımlı eski slot artık gereksiz
-    console.log('[SEC] Eski paylaşımlı mesaj deposu bu hesaba güvenle taşındı ✅');
   }catch(e){
-    console.error('[SEC] Mesaj deposu taşıma hatası (eski veri korunuyor, yeniden denenecek):', e);
-    // Yazma başarısız olursa eski global veriye DOKUNMUYORUZ — bir sonraki
-    // girişte tekrar denenir.
+    throw new Error('[SEC] Şifreli localStorage çözme başarısız');
   }
 }
 
@@ -454,20 +637,15 @@ async function _migrateGlobalMsgKeyIfOwned(userId){
 // Anahtar ilk kez hazır olduğunda, eski düz metin mesajları bulup
 // şifreli MSG_KEY deposuna taşır ve DB_KEY'den siler.
 // ══════════════════════════════════════════════════════════════════
-async function _loadEncryptedMessages(userId){
+async function _loadEncryptedMessages(){
   try{
-    const myKey = userId ? _msgKeyFor(userId) : null;
-    // 1) ÇOK ESKİ format: DB_KEY içinde düz metin mesajlar (hiç hesaba-özel
-    // şifreleme yokken kaydedilmiş) — doğrudan İÇİNDE BULUNULAN oturuma
-    // (ME.user_id) ait kabul edilir; o dönemde henüz hesap-bazlı ayrım
-    // kavramı yoktu, "yanlış hesaba ait olma" ihtimali söz konusu değil.
-    if(_lsEncKey && myKey && !localStorage.getItem(myKey)){
+    if(_lsEncKey && !localStorage.getItem(MSG_KEY)){
       try{
         const legacyRaw = localStorage.getItem(DB_KEY);
         if(legacyRaw){
           const legacy = JSON.parse(legacyRaw);
           if(legacy && legacy.messages && Object.keys(legacy.messages).length>0){
-            await _lsSetEncrypted(myKey, JSON.stringify(legacy.messages));
+            await _lsSetEncrypted(MSG_KEY, JSON.stringify(legacy.messages));
             delete legacy.messages;
             localStorage.setItem(DB_KEY, JSON.stringify(legacy));
             console.log('[SEC] Eski düz metin mesajlar şifrelenip taşındı ✅');
@@ -476,12 +654,7 @@ async function _loadEncryptedMessages(userId){
       }catch(e){ console.error('[SEC] Migration hatası:', e); }
     }
 
-    // 2) 🛡️ [YENİ-SEC — KRİTİK] Eski PAYLAŞIMLI global MSG_KEY → hesaba özel
-    // anahtar. SADECE kriptografik olarak kanıtlanabiliyorsa taşınır —
-    // bkz. _migrateGlobalMsgKeyIfOwned tanımındaki ayrıntılı not.
-    if(_lsEncKey) await _migrateGlobalMsgKeyIfOwned(userId);
-
-    const raw = myKey ? await _lsGetDecrypted(myKey) : null;
+    const raw = await _lsGetDecrypted(MSG_KEY);
     if(!raw){ _decryptedMsgCache = {}; }
     else{
       try{ _decryptedMsgCache = JSON.parse(raw) || {}; }
@@ -519,32 +692,17 @@ function _setPwStore(s){ localStorage.setItem(PW_STORE_KEY, JSON.stringify(s)); 
 
 // ── Salt üretimi ──────────────────────────────────────────────────
 function _genSalt(){
-  return Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
+  return _secureHex(16);
 }
 
-// ── PBKDF2-SHA256 — bkz. PBKDF2_ITERATIONS_* sabitleri ────────────
-// 🛡️ [YENİ-SEC FIX] İterasyon sayısı artık PARAMETRE — sabit-kodlanmış
-// değil. Neden: mevcut hesapların şifre hash'i/şifreleme anahtarı ESKİ
-// (daha düşük) iterasyon sayısıyla hesaplanmış durumda; bunu sessizce
-// yükseltmek mevcut kullanıcıları giriş yapamaz hale getirir VE zaten
-// şifrelenmiş mesaj geçmişlerini çözülemez kılar. Bunun yerine her hesap
-// kaydında HANGİ iterasyon sayısının kullanıldığı saklanıyor (bkz.
-// pwSave/pwVerify) — mevcut hesaplar kendi eski değerleriyle doğrulanmaya
-// devam eder, YENİ kayıt/şifre değişiklikleri ise güncel (600.000,
-// OWASP 2026 minimum) değeri kullanır. Kayıtta iterasyon bilgisi yoksa
-// (bu düzeltmeden ÖNCE oluşturulmuş eski hesaplar) koddaki eski
-// sabit değerlere (310.000 / 100.000) düşülüyor — bu, o hesapların
-// ilk oluşturulduğu andaki GERÇEK değerdi, tahmin değil.
-const PBKDF2_ITERATIONS_CURRENT     = 600_000; // yeni kayıt/şifre değişikliği
-const PBKDF2_ITERATIONS_LEGACY_HASH = 310_000; // bu fixten önceki hesapların şifre hash'i
-const PBKDF2_ITERATIONS_LEGACY_KEY  = 100_000; // bu fixten önceki hesapların şifreleme anahtarı
-async function _pbkdf2Hash(password, saltHex, iterations = PBKDF2_ITERATIONS_CURRENT){
+// ── PBKDF2-SHA256 — 310.000 iterasyon ────────────────────────────
+async function _pbkdf2Hash(password, saltHex){
   const enc = new TextEncoder();
   const keyMat = await crypto.subtle.importKey(
     'raw', enc.encode(password), {name:'PBKDF2'}, false, ['deriveBits']
   );
   const bits = await crypto.subtle.deriveBits(
-    { name:'PBKDF2', salt:_hexToBytes(saltHex), iterations, hash:'SHA-256' },
+    { name:'PBKDF2', salt:_hexToBytes(saltHex), iterations:310_000, hash:'SHA-256' },
     keyMat, 256
   );
   return Array.from(new Uint8Array(bits)).map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -563,20 +721,14 @@ async function pwSave(user_id, password){
   const cleanPw = _sanitizePassword(password);
   if(!_validatePassword(cleanPw)) throw new Error('Geçersiz şifre');
   const salt = _genSalt();
-  // 🛡️ [YENİ-SEC FIX] Yeni kayıt/şifre değişikliğinde her zaman GÜNCEL
-  // (600.000) iterasyon sayısı kullanılıyor — bkz. yukarıdaki not.
-  const hash = await _pbkdf2Hash(cleanPw, salt, PBKDF2_ITERATIONS_CURRENT);
+  const hash = await _pbkdf2Hash(cleanPw, salt);
   const store = _getPwStore();
-  store[_sanitizeUsername(user_id).toLowerCase()] = {
-    salt, hash,
-    pwIterations: PBKDF2_ITERATIONS_CURRENT,
-    keyIterations: PBKDF2_ITERATIONS_CURRENT
-  };
+  store[_sanitizeUsername(user_id).toLowerCase()] = { salt, hash };
   _setPwStore(store);
   // 🛡️ [KRİTİK-V3-H1] Yeni kayıt/şifre belirleme sırasında da anahtarı türet
   // ve AWAIT et — eskiden bu hiç çağrılmıyordu, yeni kullanıcılarda şifreleme
   // hiç başlamıyordu.
-  await _setLsEncKey(cleanPw + salt, salt, PBKDF2_ITERATIONS_CURRENT, user_id);
+  await _setLsEncKey(cleanPw + salt, salt);
 }
 
 // ── Şifre doğrula ─────────────────────────────────────────────────
@@ -586,40 +738,12 @@ async function pwVerify(user_id, password){
   const entry = store[_sanitizeUsername(user_id).toLowerCase()];
   if(!entry) return null;
   if(!_validatePassword(cleanPw)) return false;
-  // 🛡️ [YENİ-SEC FIX] Bu hesap için kayıtlı iterasyon sayısı kullanılıyor
-  // (yoksa — bu fixten önce oluşturulmuş bir hesapsa — eski gerçek
-  // değerlere düşülüyor). Böylece mevcut kullanıcıların hash'i/şifreleme
-  // anahtarı DEĞİŞMEDEN doğru şekilde doğrulanmaya/türetilmeye devam eder.
-  const pwIter  = entry.pwIterations  || PBKDF2_ITERATIONS_LEGACY_HASH;
-  const keyIter = entry.keyIterations || PBKDF2_ITERATIONS_LEGACY_KEY;
-  const hash = await _pbkdf2Hash(cleanPw, entry.salt, pwIter);
+  const hash = await _pbkdf2Hash(cleanPw, entry.salt);
   const ok = _safeCompare(hash, entry.hash);
   // 🛡️ [KRİTİK-V3-H1] Başarılı girişte anahtarı AWAIT ederek türet —
   // eskiden fire-and-forget'ti (.catch ile, await edilmeden), bu yüzden
   // çağıran kod anahtar hazır olmadan UI'ı açabiliyordu.
-  if(ok){
-    await _setLsEncKey(cleanPw + entry.salt, entry.salt, keyIter, user_id);
-    // 🛡️ [YENİ-SEC FIX] Sessiz kademeli yükseltme: eski bir hesap başarıyla
-    // giriş yaptıysa (yani doğru şifreyi biliyorsa), gelecekteki girişler
-    // için iterasyon sayısını GÜNCEL değere yükselt — şifre hash'ini yeni
-    // parametrelerle yeniden hesaplayıp kaydet. Kullanıcı hiçbir şey fark
-    // etmez, ama hesabı zamanla otomatik olarak güncel korumaya kavuşur.
-    // NOT: keyIterations kasıtlı olarak YÜKSELTİLMİYOR — bunu yapmak
-    // mevcut şifreli mesaj geçmişini yeni anahtarla uyumsuz hale getirir
-    // (tam bir re-encrypt gerektirir, kapsam dışı bırakıldı).
-    if(!entry.pwIterations){
-      try{
-        const upgradedHash = await _pbkdf2Hash(cleanPw, entry.salt, PBKDF2_ITERATIONS_CURRENT);
-        const store2 = _getPwStore();
-        const k2 = _sanitizeUsername(user_id).toLowerCase();
-        if(store2[k2]){
-          store2[k2].hash = upgradedHash;
-          store2[k2].pwIterations = PBKDF2_ITERATIONS_CURRENT;
-          _setPwStore(store2);
-        }
-      }catch(e){ /* yükseltme başarısız olsa da girişi bozma — bir sonraki girişte tekrar denenir */ }
-    }
-  }
+  if(ok) await _setLsEncKey(cleanPw + entry.salt, entry.salt);
   return ok;
 }
 
@@ -802,215 +926,6 @@ async function _exportEdPubB64(){
   return _b64(raw);
 }
 
-// ══════════════════════════════════════════════════════════════════
-// 🛡️ [YENİ — Denetim Raporu Bulgu #1, Model B] İmzalı Davet (first-contact
-// binding)
-// ══════════════════════════════════════════════════════════════════
-// AMAÇ: /api/identity?action=issue HERKESE, herhangi bir userId için,
-// sahiplik kanıtı olmadan pasaport verdiğinden (bilinçli — sunucuda kalıcı
-// hesap/registry yok), sunucu ASLA "bu userId'nin gerçek sahibi budur"
-// diyemez. Bu fonksiyonlar bu ispatı SUNUCUYA HİÇ İHTİYAÇ DUYMADAN,
-// tamamen kendi kalıcı imza anahtarınızla (bkz. _ensureIdKeyPair) İMZALI
-// bir davet üzerinden sağlar. Davetin güvenliği sunucudan DEĞİL, onu
-// paylaştığınız KANALDAN gelir (WhatsApp, yüz yüze QR, vb.) — siz daveti
-// gerçekten Bob'a/Bob'dan aldığınızı zaten biliyorsunuzdur; imza sadece
-// bu davetin İÇERİĞİNİN yolda değiştirilmediğini garanti eder.
-//
-// Davet formatı (JSON, imzalanmadan önce):
-//   { v:1, userId, username, pubKey (ham genel anahtar, base64),
-//     alg, fp (SHA-256 parmak izi, hex), nonce, createdAt, expiresAt }
-// Taşınan paket: { payload: <yukarıdaki obje>, signature: <base64> }
-// İmza, payload'ın JSON.stringify'ı üzerinden, davet sahibinin KENDİ
-// kalıcı özel anahtarıyla atılır (aynı _ensureIdKeyPair — presence
-// imzalamada kullanılanla AYNI anahtar). Böylece:
-//   • Payload'daki TEK BİR karakter değişse imza geçersiz olur (bütünlük).
-//   • Alıcı, payload içindeki pubKey ile imzayı doğrular — yani "bu
-//     daveti, payload'da yazan pubKey'in özel anahtarına sahip biri
-//     oluşturdu" ispatlanır (kendi kendine imzalı, CA gerektirmez).
-const INVITE_TTL_MS = 15 * 60 * 1000; // 15 dakika — QR/link kısa ömürlü olmalı
-
-async function generateContactInvite(){
-  if(!ME) throw new Error('[SEC] Davet için önce giriş yapılmalı');
-  const kp = await _ensureIdKeyPair();
-  const pubRaw = await crypto.subtle.exportKey('raw', kp.publicKey);
-  const fp = await _fingerprintIdentityPubKey(new Uint8Array(pubRaw));
-  const payload = {
-    v: 1,
-    userId: ME.user_id,
-    username: ME.user_id,
-    pubKey: _b64(pubRaw),
-    alg: _sigAlgName,
-    fp,
-    nonce: _b64(crypto.getRandomValues(new Uint8Array(16))),
-    createdAt: Date.now(),
-    expiresAt: Date.now() + INVITE_TTL_MS,
-  };
-  const payloadStr = JSON.stringify(payload);
-  const signAlg = _sigAlgName === 'ECDSA-P256' ? {name:'ECDSA', hash:'SHA-256'} : 'Ed25519';
-  const sigBuf = await crypto.subtle.sign(signAlg, kp.privateKey, new TextEncoder().encode(payloadStr));
-  const packet = { payload, signature: _b64(sigBuf) };
-  // URL-safe base64 — link/QR içine gömülebilsin diye
-  return btoa(JSON.stringify(packet)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-}
-
-// Daveti çöz + kriptografik olarak doğrula. Hiçbir yerel state DEĞİŞTİRMEZ
-// — sadece "bu davet geçerli mi" sorusuna cevap verir. Onaylamak (bağlama
-// oluşturmak) için acceptContactInvite kullanılır.
-async function _verifyInviteSignature(inviteStr){
-  let packet;
-  try{
-    const b64 = inviteStr.replace(/-/g,'+').replace(/_/g,'/');
-    packet = JSON.parse(atob(b64));
-  }catch(e){ return {ok:false, reason:'Davet çözülemedi (bozuk/eksik veri).'}; }
-
-  const { payload, signature } = packet || {};
-  if(!payload || typeof payload!=='object' || !signature){
-    return {ok:false, reason:'Davet formatı geçersiz.'};
-  }
-  if(payload.v !== 1) return {ok:false, reason:'Desteklenmeyen davet sürümü.'};
-  if(!payload.userId || !payload.pubKey || !payload.fp || !payload.nonce){
-    return {ok:false, reason:'Davette eksik alan(lar) var.'};
-  }
-  // ── Replay koruması: süre + daha önce tüketilmiş nonce ──────────────
-  if(!payload.expiresAt || Date.now() > payload.expiresAt){
-    return {ok:false, reason:'Davetin süresi dolmuş — yeni bir davet isteyin.'};
-  }
-  const used = _getUsedInviteNonces();
-  if(used[payload.nonce]){
-    return {ok:false, reason:'Bu davet daha önce kullanılmış (replay engellendi).'};
-  }
-  // ── Payload bütünlüğü: pubKey'in gerçekten fp'yi ürettiğini doğrula ──
-  // (fp alanı payload içinde taşınıyor olsa da KÖRÜ KÖRÜNE güvenilmez —
-  // pubKey'den yeniden hesaplanıp karşılaştırılır.)
-  let pubRawU8;
-  try{ pubRawU8 = _u8(payload.pubKey); }catch(e){ return {ok:false, reason:'pubKey çözülemedi.'}; }
-  const recomputedFp = await _fingerprintIdentityPubKey(pubRawU8);
-  if(recomputedFp !== payload.fp){
-    return {ok:false, reason:'Davet tahrif edilmiş (fp/pubKey uyuşmuyor).'};
-  }
-  // ── İmza doğrulaması: payload'ı, İÇİNDE TAŞIDIĞI pubKey ile doğrula ──
-  const alg = payload.alg === 'ECDSA-P256'
-    ? {name:'ECDSA', namedCurve:'P-256'}
-    : {name:'Ed25519'};
-  const verifyAlg = payload.alg === 'ECDSA-P256'
-    ? {name:'ECDSA', hash:'SHA-256'}
-    : 'Ed25519';
-  let pubKey;
-  try{
-    pubKey = await crypto.subtle.importKey('raw', pubRawU8, alg, false, ['verify']);
-  }catch(e){ return {ok:false, reason:'pubKey import edilemedi (desteklenmeyen algoritma?).'}; }
-  let sigOk = false;
-  try{
-    sigOk = await crypto.subtle.verify(
-      verifyAlg, pubKey, _u8(signature), new TextEncoder().encode(JSON.stringify(payload))
-    );
-  }catch(e){ return {ok:false, reason:'İmza doğrulama sırasında hata oluştu.'}; }
-  if(!sigOk) return {ok:false, reason:'İmza geçersiz — davet tahrif edilmiş olabilir.'};
-
-  return {ok:true, userId: payload.userId, username: payload.username, fingerprint: payload.fp, nonce: payload.nonce};
-}
-
-// Daveti doğrula VE kabul et — onaylı bağlamayı (Model B) kalıcı olarak
-// yazar. Bu noktadan sonra bu userId için gelen HER anahtar bu
-// fingerprint'le eşleşmek ZORUNDADIR (bkz. _checkAndPinPeerIdentity).
-// 🛡️ Halihazırda PİNLENMİŞ, FARKLI bir kimlik varsa (ör. bu userId'yle
-// zaten önceden — belki de Model A/unverified olarak — konuşulmuş ve o
-// oturumda BAŞKA bir anahtar görülmüşse) burada SESSİZCE üzerine
-// yazılmaz; kullanıcı açıkça bilgilendirilir, çünkü bu durum ya davetin
-// yanlış kişiden geldiği ya da daha önceki oturumun zaten bir saldırgana
-// ait olduğu anlamına gelebilir.
-async function acceptContactInvite(inviteStr){
-  const result = await _verifyInviteSignature(inviteStr);
-  if(!result.ok){
-    if(typeof showToast==='function') showToast('❌ Davet Geçersiz', result.reason);
-    return {ok:false, reason: result.reason};
-  }
-  if(result.userId.toLowerCase() === (ME?.user_id||'').toLowerCase()){
-    if(typeof showToast==='function') showToast('❌ Davet Geçersiz', 'Kendi davetinizi kabul edemezsiniz.');
-    return {ok:false, reason:'self-invite'};
-  }
-  const uidKey = result.userId.toLowerCase();
-  const pinStore = _getIdPinStore();
-  if(pinStore[uidKey] && pinStore[uidKey] !== result.fingerprint){
-    if(typeof showToast==='function'){
-      showToast('⚠️ Uyuşmazlık', `"${result.userId}" için hâlihazırda farklı bir kimlik pinli. Bu davet o kimlikle eşleşmiyor — önce mevcut sohbetteki güvenlik uyarısını inceleyin.`);
-    }
-    return {ok:false, reason:'existing-pin-mismatch'};
-  }
-  _markInviteNonceUsed(result.nonce);
-  const bindings = _getApprovedBindings();
-  bindings[uidKey] = {fingerprint: result.fingerprint, boundAt: Date.now(), addedVia:'invite'};
-  _setApprovedBindings(bindings);
-  // Zaten pinliyse (eşleşen) ya da hiç pin yoksa — pin'i de hemen kur ki
-  // bir sonraki presence'ı beklemeden "trusted" görünsün.
-  if(!pinStore[uidKey]){
-    pinStore[uidKey] = result.fingerprint;
-    _setIdPinStore(pinStore);
-  }
-  Object.keys(_verifyCache).forEach(k=>{ if(k.startsWith(result.userId+'|')) delete _verifyCache[k]; });
-  delete _verifyResultCache[result.userId];
-  if(typeof showToast==='function') showToast('✅ Doğrulanmış Kişi Eklendi', `${result.userId} artık güvenli/doğrulanmış kişi olarak işaretli.`);
-  if(typeof chatId !== 'undefined' && chatId === result.userId){ if(typeof renderChat==='function') renderChat(); if(typeof _renderIdentityTrust==='function') _renderIdentityTrust(result.userId); }
-  return {ok:true, userId: result.userId};
-}
-
-// ── Davet Modalı — UI bağlantı katmanı ─────────────────────────────
-let _inviteModalTargetUserId = null; // 'accept' modu bir sohbetten açıldıysa hangi kullanıcı için
-window.openInviteModal = (mode, userId) => {
-  _inviteModalTargetUserId = userId || null;
-  $('inviteModal')?.classList.remove('hidden');
-  _switchInviteTab(mode || 'create');
-};
-window.closeInviteModal = () => {
-  $('inviteModal')?.classList.add('hidden');
-  _inviteModalTargetUserId = null;
-};
-window._switchInviteTab = (tab) => {
-  const isCreate = tab === 'create';
-  $('inviteCreatePane').style.display = isCreate ? 'block' : 'none';
-  $('inviteAcceptPane').style.display = isCreate ? 'none' : 'block';
-  $('inviteTabCreate').style.background = isCreate ? 'var(--primary)' : '';
-  $('inviteTabCreate').style.color = isCreate ? '#fff' : '';
-  $('inviteTabAccept').style.background = !isCreate ? 'var(--primary)' : '';
-  $('inviteTabAccept').style.color = !isCreate ? '#fff' : '';
-  $('inviteAcceptResult').innerHTML = '';
-  if(isCreate && !$('inviteOutputText').value) window._generateInviteForModal();
-  if(!isCreate && _inviteModalTargetUserId){
-    $('inviteModalSub').innerText = `"${_inviteModalTargetUserId}" için davet kodu yapıştırın.`;
-  } else {
-    $('inviteModalSub').innerText = 'Username tek başına kimlik kanıtı değildir.';
-  }
-};
-window._generateInviteForModal = async () => {
-  try{
-    $('inviteOutputText').value = '⏳ Üretiliyor…';
-    const invite = await generateContactInvite();
-    $('inviteOutputText').value = invite;
-  }catch(e){
-    $('inviteOutputText').value = '';
-    if(typeof showToast==='function') showToast('Hata', 'Davet üretilemedi: '+(e.message||e));
-  }
-};
-window._copyInviteOutput = async () => {
-  const v = $('inviteOutputText').value;
-  if(!v) return;
-  try{ await navigator.clipboard.writeText(v); if(typeof showToast==='function') showToast('Kopyalandı', 'Davet kodu panoya kopyalandı.'); }
-  catch(e){ $('inviteOutputText').select(); document.execCommand('copy'); }
-};
-window._acceptInviteFromModal = async () => {
-  const v = $('inviteInputText').value.trim();
-  const resEl = $('inviteAcceptResult');
-  if(!v){ resEl.innerHTML = '<span style="color:var(--muted)">Önce bir davet kodu yapıştırın.</span>'; return; }
-  const result = await acceptContactInvite(v);
-  if(result.ok){
-    resEl.innerHTML = `<span style="color:var(--ok)">✅ "${escHtml(result.userId)}" doğrulandı ve güvenilir olarak eklendi.</span>`;
-    $('inviteInputText').value='';
-    setTimeout(()=>window.closeInviteModal(), 1500);
-  } else {
-    resEl.innerHTML = `<span style="color:#ef4444">❌ ${escHtml(result.reason||'Davet doğrulanamadı.')}</span>`;
-  }
-};
-
 // Sunucudan imzalı pasaport iste — oturum başına bir kez, sonra önbellekten dön.
 // 🛡️ Başarısız olursa GÜVENSİZ bir fallback'e düşülmez: pasaportsuz presence
 // gönderilir ve karşı taraflar bu durumda bizimle WebRTC bağlantısı KURMAZ.
@@ -1079,38 +994,12 @@ async function _signPresenceNonce(nonce){
 // ══════════════════════════════════════════════════════════════════
 function _msgSigCanon(msg){
   // Mesajın bütünlüğü açısından kritik alanları deterministik biçimde birleştir.
-  // ⚠️ [V1 — LEGACY] Bu canonical form artık SADECE eski (sigV alanı olmayan)
-  // mesajları doğrulamak için kullanılıyor. Bağlam (hangi özel sohbet/hangi
-  // grup) hiç imzaya girmiyor — bu yüzden V2'ye geçildi (bkz. _msgSigCanonV2).
   return [msg.id||'', msg.from||'', msg.text||'', msg.time||'', msg.fileType||'', msg.fileName||''].join('|');
 }
-// 🛡️ [YENİ-SEC — KRİTİK — Bağlam Bağlama / V2 İmza]
-// ÖNCEKİ HALİ (V1): imza sadece [id,from,text,time,fileType,fileName]
-// kapsıyordu — HANGİ konuşmaya (özel sohbet mi, hangi grup mu) ait olduğu
-// hiç imzaya girmiyordu. Bu, "bağlam taşıma" saldırısına açıktı: A'nın B'ye
-// gönderdiği özel bir mesajın aynı (geçerli) imzalı `msg` objesi, A'nın
-// üye olduğu BAŞKA bir gruba veya BAŞKA bir özel sohbete enjekte
-// edilebiliyordu — imza doğrulaması, e2e kimlik kontrolü, grup üyeliği
-// kontrolü hepsi geçiyordu çünkü içerik gerçekten A'ya aitti, sadece
-// YANLIŞ bağlamda tekrar kullanılmıştı.
-//
-// ŞİMDİ (V2): `ctx` (bağlam) canonical formun EN BAŞINA ekleniyor:
-//   özel mesaj → 'p:' + alıcınınUserId'si
-//   grup mesajı → 'g:' + groupId
-// `ctx` hiçbir zaman ayrı, taşınan bir wire-format alanı olarak
-// GÖNDERİLMİYOR — hem imzalayan hem doğrulayan bunu KENDİ güvenilir yerel
-// bilgisinden (imzalayan: broadcast() içinde zaten bildiği p.to/p.groupId;
-// doğrulayan: kendi ME.user_id'si ya da işlediği d.groupId) bağımsızca
-// yeniden hesaplıyor. Saldırgan mesajı başka bir bağlama taşırsa, alıcı
-// tarafta yeniden hesaplanan `ctx` ile imzanın GERÇEKTEN neye karşı
-// üretildiği uyuşmaz → doğrulama kriptografik olarak başarısız olur.
-function _msgSigCanonV2(msg, ctx){
-  return [ctx||'', msg.id||'', msg.from||'', msg.text||'', msg.time||'', msg.fileType||'', msg.fileName||''].join('|');
-}
-async function _signMessageContent(msg, ctx){
+async function _signMessageContent(msg){
   try{
     const kp = await _ensureIdKeyPair();
-    const enc = new TextEncoder().encode(_msgSigCanonV2(msg, ctx));
+    const enc = new TextEncoder().encode(_msgSigCanon(msg));
     const signAlg = _sigAlgName === 'ECDSA-P256' ? {name:'ECDSA', hash:'SHA-256'} : 'Ed25519';
     const sig = await crypto.subtle.sign(signAlg, kp.privateKey, enc);
     return _b64(sig);
@@ -1119,98 +1008,25 @@ async function _signMessageContent(msg, ctx){
     return null;
   }
 }
-// Dönüş: true (V2 imza geçerli) | false (V2 imza VAR ama geçersiz — tahrifat/
-// bağlam-taşıma şüphesi, ÇAĞIRAN TARAF MESAJI REDDETMELİ) | 'legacy' (V1/
-// sigV alanı yok — eski istemciden, kabul edilir ama ASLA true ile eşdeğer
-// güvenilmez) | null (imza yok veya bu peer için henüz doğrulanmış anahtar yok)
-async function _verifyMessageSig(fromUserId, msg, ctx){
+// Dönüş: true (imza geçerli) | false (imza VAR ama geçersiz — tahrifat şüphesi)
+// | null (imza yok [eski mesaj] veya bu peer için henüz doğrulanmış anahtar yok — bilgi verilemez)
+async function _verifyMessageSig(fromUserId, msg){
   if(!msg || !msg.sig) return null;
   const entry = _peerSigningKeys[fromUserId];
   if(!entry) return null;
-  const verifyAlg = entry.alg==='ECDSA-P256' ? {name:'ECDSA', hash:'SHA-256'} : 'Ed25519';
   try{
-    if(msg.sigV === 2){
-      // 🛡️ V2 — bağlam-bağlı doğrulama. Alıcı `ctx`'i KENDİ bilgisinden
-      // hesaplayıp geçiriyor (asla mesajın kendi içinden okunmuyor).
-      const enc = new TextEncoder().encode(_msgSigCanonV2(msg, ctx));
-      return await crypto.subtle.verify(verifyAlg, entry.key, _u8(msg.sig), enc);
-    }
-    // ⚠️ [V1 — LEGACY] sigV alanı yok → eski format. Doğrulanabiliyorsa bile
-    // (imza geçerliyse) SONUÇ KASITLI OLARAK 'legacy' string'i — true DEĞİL.
-    // Bu, ileride biri "if(verified)" gibi gevşek bir kontrol yazarsa
-    // legacy mesajların yanlışlıkla tam-güvenilir sayılmasını engeller.
+    const verifyAlg = entry.alg==='ECDSA-P256' ? {name:'ECDSA', hash:'SHA-256'} : 'Ed25519';
     const enc = new TextEncoder().encode(_msgSigCanon(msg));
-    const legacyOk = await crypto.subtle.verify(verifyAlg, entry.key, _u8(msg.sig), enc);
-    return legacyOk ? 'legacy' : false;
+    return await crypto.subtle.verify(verifyAlg, entry.key, _u8(msg.sig), enc);
   }catch(e){ return false; }
-}
-
-// 🛡️ [YENİ-SEC — KRİTİK] Grup üyeliği kontrolü.
-// Önceden: bir üye kickle gruptan çıkarıldığında, kicklenen kişiye ve kalan
-// üyelere doğru bilgi gidiyordu (group_kick / group_update — ikisi de admin
-// yetkisi ve e2e kimlik kontrolünden geçiyor), AMA gelen group_msg/
-// group_read/msg_edit/msg_delete/msg_react hiçbir yerde "gönderen HÂLÂ bu
-// grubun üyesi mi?" diye sormuyordu. Kicklenen kişi kimliğini kaybetmediği
-// için (sadece grup ÜYELİĞİNİ kaybetti) imza doğrulaması geçmeye devam
-// ediyor, ve eğer kalan bir üyeyle DC bağlantısı hâlâ açıksa, o bağlantı
-// üzerinden gruba mesaj enjekte etmeye devam edebiliyordu. Artık her
-// grup-bazlı işlem, gönderenin YEREL üye listesinde hâlâ var olduğunu
-// doğruluyor.
-function _isGroupMember(groupId, userId){
-  const g = getDB().groups[groupId];
-  return !!(g && Array.isArray(g.members) && g.members.includes(userId));
-}
-
-// 🛡️ [YENİ — Replay Koruması #7] group_update/group_kick/msg_edit için
-// tazelik kontrolü. İki katman: (1) paket 10 dakikadan eskiyse doğrudan
-// reddedilir (eskiden yakalanmış herhangi bir paketin çok sonra tekrar
-// oynatılmasını engeller), (2) bu anahtar için daha önce UYGULANMIŞ bir
-// paketten daha eski/eşit zaman damgalıysa reddedilir.
-// 🛡️ [YENİ-SEC — KRİTİK — Zehirleme Düzeltmesi] ÖNCEKİ HALİ, durumu
-// SADECE groupId bazında (tüm göndericiler arasında PAYLAŞILAN) takip
-// ediyordu. Bu, kötü niyetli/ele geçirilmiş bir admin'in gelecek-damgalı
-// (now+60000'e kadar) ANLAMSIZ bir paket göndererek `lastSeen`'i ileri
-// "kilitlemesine" ve bu pencerede gelen BAŞKA HERHANGİ BİR göndericinin
-// (dahil kendisini admin listesinden düşüren meşru bir güncelleme)
-// paketini reddettirmesine izin veriyordu — replay koruması, koruma
-// amacının TERSİNE, bir DoS/kendini-koruma silahına dönüşüyordu.
-// ŞİMDİ: çağıran taraflar anahtarı `groupId+'|'+gönderenId` şeklinde
-// oluşturuyor (bkz. çağrı noktaları) — böylece bir gönderici SADECE KENDİ
-// akışını zehirleyebilir, asla başka bir göndericinin akışını etkileyemez
-// (d.from kriptografik olarak doğrulanmış olduğu için, X asla Y'nin
-// anahtarı altında Y gibi imzalayamaz). Ayrıca gelecek toleransı
-// 60sn→10sn'ye daraltıldı (saldırı penceresini küçültür, gerçek saat
-// kaymalarını hâlâ tolere eder).
-const _lastGroupStateTs = {}; // "groupId|senderId" -> son UYGULANMIŞ group_update zaman damgası
-const _lastGroupKickTs  = {}; // "groupId|senderId" -> son UYGULANMIŞ group_kick zaman damgası
-const _lastMsgEditTs    = {}; // "msgId|senderId"   -> son UYGULANMIŞ düzenleme zaman damgası
-const _lastGroupInviteTs = {}; // "groupId|senderId" -> son UYGULANMIŞ davet zaman damgası
-const _REPLAY_MAX_AGE_MS = 10 * 60 * 1000; // 10 dakika — DEĞİŞMEDİ, eski paket koruması
-const _FUTURE_TOLERANCE_MS = 10 * 1000;    // 60sn → 10sn — zehirleme saldırı penceresi daraltıldı
-function _isFreshGroupPacket(key, ts, lastSeenMap){
-  if(!ts || typeof ts!=='number') return false; // ts yoksa (eski/uyumsuz istemci) güvenli tarafta kal, reddet
-  const now = Date.now();
-  if(now - ts > _REPLAY_MAX_AGE_MS) return false; // çok eski — DEĞİŞMEDİ
-  if(ts > now + _FUTURE_TOLERANCE_MS) return false; // gelecekte bir zaman damgası — saat manipülasyonu şüphesi
-  const lastSeen = lastSeenMap[key] || 0;
-  if(ts <= lastSeen) return false; // bu GÖNDERİCİDEN zaten daha yeni/aynı bir paket uygulanmış
-  return true;
 }
 
 // Bir peer'ın pasaportunu (a) sunucuda doğrula, (b) presence imzasını
 // pasaport içindeki genel anahtarla yerel olarak doğrula. İkisi de
-// geçmezse peer REDDEDİLİR (aşağıdaki dönüş: {status:'rejected'}).
-// 🛡️ [YENİ — Denetim Raporu Bulgu #1] Bu fonksiyonun ispatladığı şey
-// SADECE "pasaport tahrif edilmemiş, sunucumuz imzalamış" — kimin
-// gerçekten bu userId'nin sahibi olduğunu İSPATLAMAZ (bkz. aşağıdaki
-// yorum ve _checkAndPinPeerIdentity). Bu yüzden dönüş değeri artık
-// boolean değil: {status:'trusted'|'unverified'|'rejected', fp}.
-// passport validity ≠ identity ownership — bu ayrım burada ve
-// _checkAndPinPeerIdentity'de KORUNUR, birbirine karıştırılmaz.
+// geçmezse peer DOĞRULANMAMIŞ sayılır ve onunla WebRTC kurulmaz.
 async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, presenceSig){
   const cacheKey = fromUserId + '|' + passportSig + '|' + nonce;
   if(cacheKey in _verifyCache) return _verifyCache[cacheKey];
-  const REJECTED = {status:'rejected', fp:null};
   try{
     // 🛡️ [FIX] "passport" sunucudan (identity.js) BASE64 STRING olarak gelir
     // (Buffer.from(identityPayload).toString('base64')) — obje DEĞİLDİR.
@@ -1221,11 +1037,11 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
     try{ decoded = JSON.parse(atob(passport)); }
     catch(e){
       console.warn('[SEC][VERIFY-FAIL] pasaport decode/parse edilemedi:', fromUserId, e);
-      _verifyCache[cacheKey] = REJECTED; return REJECTED;
+      _verifyCache[cacheKey] = false; return false;
     }
     if(!decoded || (decoded.username !== fromUserId && decoded.userId !== fromUserId)){
       console.warn('[SEC][VERIFY-FAIL] pasaporttaki kimlik fromUserId ile eşleşmiyor:', fromUserId, 'decoded=', decoded);
-      _verifyCache[cacheKey] = REJECTED; return REJECTED;
+      _verifyCache[cacheKey] = false; return false;
     }
     const r = await fetch('/api/identity?action=verify', {
       method: 'POST',
@@ -1236,12 +1052,12 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
     if(!r.ok){
       let body=''; try{ body = await r.text(); }catch(_){}
       console.warn('[SEC][VERIFY-FAIL] /api/identity?action=verify HTTP', r.status, fromUserId, body);
-      _verifyCache[cacheKey] = REJECTED; return REJECTED;
+      _verifyCache[cacheKey] = false; return false;
     }
     const data = await r.json();
     if(!data || data.valid !== true || !data.identity){
       console.warn('[SEC][VERIFY-FAIL] sunucu pasaportu geçersiz/valid:false buldu:', fromUserId, data);
-      _verifyCache[cacheKey] = REJECTED; return REJECTED;
+      _verifyCache[cacheKey] = false; return false;
     }
 
     // Sunucu pasaportu onayladı → şimdi presence imzasını pasaportun
@@ -1267,63 +1083,52 @@ async function _verifyPeerPassport(fromUserId, passport, passportSig, nonce, pre
       );
     }catch(e){
       console.warn('[SEC][VERIFY-FAIL] genel anahtar import edilemedi (alg=%s, pubKey uzunluğu=%s):', decoded.alg, data.identity.pubKey?.length, fromUserId, e);
-      _verifyCache[cacheKey] = REJECTED; return REJECTED;
+      _verifyCache[cacheKey] = false; return false;
     }
     const enc = new TextEncoder().encode(fromUserId + '|' + nonce);
     const sigOk = await crypto.subtle.verify(verifyAlg, pubKey, _u8(presenceSig), enc);
     if(!sigOk){
       console.warn('[SEC][VERIFY-FAIL] presence imzası pasaportun genel anahtarıyla eşleşmiyor:', fromUserId, 'alg=', decoded.alg);
-      _verifyCache[cacheKey] = REJECTED; return REJECTED;
+      _verifyCache[cacheKey] = false; return false;
     }
 
-    // 🛡️ [ÇOK KRİTİK — Kimlik Taklidi] İmza matematiksel olarak geçerli
+    // 🛡️ [ÇOK KRİTİK FIX — Kimlik Taklidi] İmza matematiksel olarak geçerli
     // olsa bile bu, sunucunun "bu kullanıcı adı gerçekten bu kişiye ait"
     // dediği anlamına GELMEZ — sunucuda kalıcı veri/hesap olmadığı için
     // /api/identity kim isterse ona bu kullanıcı adı için imzalı bir
     // pasaport verir (bkz. denetim raporu bulgu #1). Asıl güven kararı
-    // burada DEĞİL, _checkAndPinPeerIdentity'de verilir — o fonksiyon
-    // pin/onaylı-bağlama durumuna göre trusted/unverified/rejected
-    // arasında karar verir. Burada sadece SONUCU yukarı taşıyoruz.
-    const pinResult = await _checkAndPinPeerIdentity(fromUserId, _u8(data.identity.pubKey));
-    if(pinResult.status==='rejected') console.warn('[SEC][PIN-FAIL] kimlik anahtarı reddedildi:', fromUserId);
-    // 🛡️ [YENİ] Pin/doğrulama reddedilmediyse (trusted VEYA unverified —
-    // ikisi de bağlantı kurabilir), bu peer'ın imza doğrulama anahtarını
+    // burada, CİHAZDA verilir: bu kullanıcı adıyla daha önce hangi kimlik
+    // anahtarını gördük? İlk temassa pinleriz (TOFU); daha önce FARKLI bir
+    // anahtar pinlenmişse (kullanıcı adı çalınmış/aynı ad başkasınca
+    // alınmış/MITM) GÜVENMEYİZ ve kullanıcıyı uyarırız.
+    const pinOk = await _checkAndPinPeerIdentity(fromUserId, _u8(data.identity.pubKey));
+    if(!pinOk) console.warn('[SEC][PIN-FAIL] kimlik anahtarı pinlenmiş değerle eşleşmiyor:', fromUserId);
+    // 🛡️ [YENİ] Pin/doğrulama geçtiyse, bu peer'ın imza doğrulama anahtarını
     // (zaten import edilmiş CryptoKey — tekrar import etmeye gerek yok)
-    // mesaj bazlı imza doğrulaması için sakla. 'unverified' durumda da bu
-    // saklanır çünkü mesaj imzası hâlâ "bu mesaj, bağlantıyı kuran AYNI
-    // anahtarla imzalandı mı" sorusuna cevap verir — kimlik SAHİPLİĞİNE
-    // dair bir iddiada bulunmaz, sadece oturum-içi tutarlılık sağlar.
-    if(pinResult.status!=='rejected') _peerSigningKeys[fromUserId] = {key: pubKey, alg: decoded.alg || 'Ed25519'};
-    _verifyCache[cacheKey] = pinResult;
-    return pinResult;
+    // mesaj bazlı imza doğrulaması için sakla.
+    if(pinOk) _peerSigningKeys[fromUserId] = {key: pubKey, alg: decoded.alg || 'Ed25519'};
+    _verifyCache[cacheKey] = pinOk;
+    return pinOk;
   }catch(e){
     console.warn('[SEC][VERIFY-FAIL] Pasaport doğrulama istisnası:', fromUserId, e);
-    _verifyCache[cacheKey] = REJECTED;
-    return REJECTED;
+    _verifyCache[cacheKey] = false;
+    return false;
   }
 }
 
 // Bir peer için doğrulama durumunu garanti et — önbellekte varsa onu kullan,
 // yoksa son alınan presence kimlik bilgileriyle (varsa) doğrulamayı dener.
-// 🛡️ [YENİ — Bulgu #1] Dönüş artık {status, fp} — çağıranlar
-// status==='rejected' ise bağlanmamalı, aksi hâlde (trusted/unverified)
-// bağlanabilir ama UI'da unverified durumunu göstermelidir (bkz. çağıran
-// taraflardaki _isPeerTrusted kontrolleri).
 async function _ensurePeerVerified(userId){
-  if(_verifyResultCache[userId]) return _verifyResultCache[userId];
+  if(_verifiedPeers.has(userId)) return true;
   const idf = _lastPresenceIdentity[userId];
   if(!idf){
     console.warn('[SEC][VERIFY-FAIL] bu peer için kimlikli presence hiç alınmadı (henüz gelmedi ya da kimliksiz geldi):', userId);
-    return {status:'rejected', fp:null};
+    return false;
   }
-  const result = await _verifyPeerPassport(userId, idf.passport, idf.passportSig, idf.nonce, idf.presenceSig);
-  if(result.status!=='rejected'){ _verifiedPeers.add(userId); _verifyResultCache[userId] = result; }
-  else { _verifiedPeers.delete(userId); delete _verifyResultCache[userId]; }
-  if(typeof chatId !== 'undefined' && chatId === userId && typeof _renderIdentityTrust==='function') _renderIdentityTrust(userId);
-  return result;
+  const ok = await _verifyPeerPassport(userId, idf.passport, idf.passportSig, idf.nonce, idf.presenceSig);
+  if(ok) _verifiedPeers.add(userId); else _verifiedPeers.delete(userId);
+  return ok;
 }
-// userId → en son hesaplanan {status,fp} sonucu (hızlı, senkron bakış için)
-const _verifyResultCache = {};
 
 async function getMyECDHPubKeyJwk(){
   if(!_sessionKeyPair) return null;
@@ -1388,41 +1193,6 @@ function _getIdPinStore(){
 }
 function _setIdPinStore(s){ try{ localStorage.setItem(PEER_ID_PIN_KEY, JSON.stringify(s)); }catch(e){} }
 
-// 🛡️ [YENİ — Denetim Raporu Bulgu #1, Model B] "Onaylı bağlama" deposu.
-// PEER_ID_PIN_KEY ("pinned") ile KARIŞTIRILMAMALI — ayrı, daha güçlü bir
-// kavram: buraya bir userId SADECE imzalı bir davet/QR ile (bkz.
-// acceptContactInvite) yazılır, hiçbir zaman ilk-temas TOFU'suyla
-// otomatik yazılmaz. Bir userId burada varsa, o userId için gelen HER
-// anahtar bu fingerprint'le eşleşmek ZORUNDADIR — eşleşmezse durum ne
-// olursa olsun (ilk temas dahil) REDDEDİLİR, asla pinlenmez (bkz.
-// _checkAndPinPeerIdentity). Bu, sunucunun asla cevaplayamayacağı "bu
-// username'in GERÇEK sahibi kim" sorusuna, uygulama DIŞINDAN (davet
-// linkini paylaştığınız kanal — WhatsApp, yüz yüze, QR) gelen bir kanıtla
-// cevap verir; sunucuda hiçbir yeni state gerektirmez.
-const APPROVED_BINDING_KEY = 'sv_approved_binding_v1';
-function _getApprovedBindings(){
-  try{ return JSON.parse(localStorage.getItem(APPROVED_BINDING_KEY) || '{}'); }catch(e){ return {}; }
-}
-function _setApprovedBindings(s){ try{ localStorage.setItem(APPROVED_BINDING_KEY, JSON.stringify(s)); }catch(e){} }
-
-// Kullanılmış davet nonce'ları — aynı davetin tekrar tekrar "kabul
-// edilerek" işlenmesini (replay) engeller. Kalıcı: bir davet sadece BİR
-// KEZ tüketilebilir, oturum kapansa bile.
-const USED_INVITE_NONCE_KEY = 'sv_used_invite_nonces_v1';
-function _getUsedInviteNonces(){
-  try{ return JSON.parse(localStorage.getItem(USED_INVITE_NONCE_KEY) || '{}'); }catch(e){ return {}; }
-}
-function _markInviteNonceUsed(nonce){
-  try{
-    const s = _getUsedInviteNonces();
-    s[nonce] = Date.now();
-    // Depoyu şişirmemek için 30 günden eski girişleri temizle
-    const cutoff = Date.now() - 30*24*60*60*1000;
-    Object.keys(s).forEach(k=>{ if(s[k] < cutoff) delete s[k]; });
-    localStorage.setItem(USED_INVITE_NONCE_KEY, JSON.stringify(s));
-  }catch(e){}
-}
-
 async function _fingerprintIdentityPubKey(rawPubKeyU8){
   const raw = await crypto.subtle.digest('SHA-256', rawPubKeyU8);
   return [...new Uint8Array(raw)].map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -1431,139 +1201,46 @@ async function _fingerprintIdentityPubKey(rawPubKeyU8){
 const _peerPendingIdentity = {}; // userId → onay bekleyen YENİ kimlik parmak izi
 
 // pubKeyRawU8: peer pasaportundaki genel anahtarın HAM (raw) baytları.
-// 🛡️ [YENİ — Denetim Raporu Bulgu #1, gerçek fix] Dönüş artık boolean
-// DEĞİL — üç durumlu bir sonuç: {status:'trusted'|'unverified'|'rejected', fp}
-//
-//   'trusted'    → ya daha önce pinlenmiş kimlikle eşleşti (devam eden
-//                  ilişki, Model A'nın sonraki temasları), ya da imzalı
-//                  bir davetle (Model B) ONAYLANMIŞ fingerprint'le
-//                  eşleşti ve ŞİMDİ pinlendi. Bağlantı kurulur, kimlik
-//                  güvenilir sayılır.
-//   'unverified' → hiç pin YOK ve hiç onaylı davet YOK (saf username
-//                  arama/friend-request yoluyla ilk temas — Model A).
-//                  Bağlantı kurulmasına İZİN VERİLİR (kullanıcının
-//                  isteği: username akışı bozulmasın) AMA BURADA PİN
-//                  ASLA YAZILMAZ. Yani bu peer, uygulamanın hiçbir
-//                  yerinde "doğrulanmış/pinlenmiş kimlik" olarak
-//                  görünmez; her yeni bağlantıda yeniden 'unverified'
-//                  olarak değerlendirilir, sessizce 'trusted'a terfi
-//                  ETMEZ. Tek çıkış yolu: kullanıcı güvenlik kodunu
-//                  başka bir kanaldan doğrulayıp elle onaylar (Model A
-//                  → Model B geçişi, bkz. window._manuallyVerifyPeer)
-//                  YA DA karşı taraf bir davet/QR ile onaylı hâle gelir.
-//   'rejected'   → ya pinlenmiş kimlikle UYUŞMUYOR (anahtar değişti —
-//                  cihaz değişikliği ya da MITM, Test 8), ya da onaylı
-//                  bir davet VAR ama gelen anahtar o davetteki
-//                  fingerprint'le UYUŞMUYOR (Test 4 — saldırgan gerçek
-//                  bob'un onaylı fingerprint'ini taklit edemiyor).
-//                  Bağlantı KURULMAZ.
+// Dönüş: true → güvenilir (pin eşleşti ya da ilk temas), false → pin uyuşmazlığı.
 async function _checkAndPinPeerIdentity(userId, pubKeyRawU8){
   const uidKey = userId.toLowerCase();
   const fp = await _fingerprintIdentityPubKey(pubKeyRawU8);
   const store = _getIdPinStore();
   const existing = store[uidKey];
 
-  // ── 1) Zaten pinlenmiş bir kimlik var mı? (mevcut ilişkinin devamı) ──
-  if(existing){
-    if(existing === fp) return {status:'trusted', fp};
-    // Pin UYUŞMAZLIĞI — Model A/B fark etmeksizin sessizce kabul ETME.
-    console.warn('[SEC][PIN-MISMATCH]', userId, 'için pinlenen kimlik anahtarıyla eşleşmiyor.');
-    _peerPendingIdentity[userId] = fp;
-    if(typeof _showKeyChangeWarning==='function') _showKeyChangeWarning(userId);
-    return {status:'rejected', fp};
-  }
-
-  // ── 2) Pin yok — imzalı bir davetle ONAYLANMIŞ bir bağlama var mı? ──
-  // (Model B: first-contact'ı GERÇEKTEN kriptografik olarak kapatan yol)
-  const bindings = _getApprovedBindings();
-  const approved = bindings[uidKey];
-  if(approved){
-    if(approved.fingerprint === fp){
-      // Onaylı fingerprint'le eşleşti → ŞİMDİ pinle. Bu, "server passport
-      // + ilk temas" değil, "kullanıcının uygulama DIŞINDAN kanıtladığı
-      // bağlama" ile kazanılan güven — bkz. acceptContactInvite.
-      store[uidKey] = fp;
-      _setIdPinStore(store);
-      if(typeof showToast==='function') showToast('✅ Doğrulanmış Kişi', `${userId} davetle doğrulandı ve güvenilir olarak eklendi.`);
-      return {status:'trusted', fp};
+  if(!existing){
+    // İlk temas — pinle ve kabul et, kullanıcıyı bilgilendir.
+    store[uidKey] = fp;
+    _setIdPinStore(store);
+    // 🐞 [MITM-FIX] Burada _peerKeyFingerprints YAZILMAZ: bu değişken
+    // ekranda gösterilen, her iki tarafta AYNI olması gereken simetrik
+    // güvenlik koduna karşılık gelir (bkz. storePeerPublicKey — sort(myKey,
+    // peerKey) hash'i). Buradaki fp ise sadece KARŞI TARAFIN kimlik
+    // anahtarının tek taraflı hash'i — her iki cihazda FARKLI çıkar ve
+    // önceden yazılmışsa doğru simetrik kodun üzerine yazıp onu bozardı.
+    if(typeof showToast==='function'){
+      showToast('🔐 Yeni Güvenli Bağlantı', `${userId} ile ilk kez konuşuyorsunuz. Güvenlik kodunu mümkünse başka bir kanaldan doğrulayın.`);
     }
-    // Onaylı bir bağlama VAR ama gelen anahtar başka — saldırgan gerçek
-    // sahibinin fingerprint'ini bilse bile taklit EDEMEZ (private key yok).
-    console.warn('[SEC][BINDING-MISMATCH]', userId, 'onaylı davet fingerprint\'iyle eşleşmiyor — reddedildi.');
-    if(typeof showToast==='function') showToast('⛔ Kimlik Uyuşmazlığı', `"${userId}" için gelen kimlik, daha önce davetle doğruladığınız güvenlik koduyla eşleşmiyor. Bağlantı reddedildi.`);
-    return {status:'rejected', fp};
+    return true;
+  }
+  if(existing === fp){
+    return true; // beklenen kimlik — güvenilir (gösterilen kod storePeerPublicKey'den gelir)
   }
 
-  // ── 3) Ne pin ne onaylı bağlama — saf username/friend-request ile ilk
-  // temas (Model A). BURASI, güvenlik araştırmacısının bulduğu senaryonun
-  // TAM OLARAK gerçekleştiği yer: server-signed passport, HERHANGİ bir
-  // userId için, sahiplik kanıtı olmadan alınabildiğinden (bkz. identity.js
-  // yorumları), bu andaki "fp" saldırganın kendi anahtarı olabilir — bunun
-  // gerçekten userId'nin sahibine ait olduğuna dair HİÇBİR kriptografik
-  // kanıt yok. Kullanıcının isteği üzerine bağlantı burada ENGELLENMİYOR
-  // (username akışı korunuyor) ama — ve bu kritik — PİN BURADA ASLA
-  // YAZILMIYOR. 'unverified' döndürüp pin yazmamak, "saldırganın anahtarını
-  // sessizce 'victim' olarak güvenilir/kalıcı hâle getirme" saldırısını
-  // yapısal olarak imkânsız kılar: ne şimdi ne sonra store[uidKey] bu
-  // anahtarla doldurulmaz; ileride gerçek kişiyle bir davet/QR değişimi
-  // yapılırsa (Model B) o bağlama bu sahte anahtarla ASLA çakışmaz ve onu
-  // otomatik REDDEDER (yukarıdaki 2. adım).
-  console.warn('[SEC][UNVERIFIED-FIRST-CONTACT]', userId, '— pin YAZILMADI, açık doğrulama bekleniyor.');
-  return {status:'unverified', fp};
+  // Pin UYUŞMAZLIĞI — sessizce kabul ETME.
+  console.warn('[SEC][PIN-MISMATCH]', userId, 'için pinlenen kimlik anahtarıyla eşleşmiyor.');
+  _peerPendingIdentity[userId] = fp;
+  if(typeof _showKeyChangeWarning==='function') _showKeyChangeWarning(userId);
+  return false;
 }
-
-// Kullanıcı, 'unverified' bir peer'in güvenlik kodunu BAŞKA BİR KANALDAN
-// (telefon, yüz yüze) bizzat karşılaştırıp doğruladığında çağrılır — bu,
-// Model A'dan Model B'ye elle geçiştir: kullanıcının kendi doğrulaması,
-// artık bir davete eşdeğer onaylı bağlama olarak kaydedilir VE hemen
-// pinlenir.
-window._manuallyVerifyPeer = async (userId) => {
-  const uidKey = userId.toLowerCase();
-  const idf = _lastPresenceIdentity[userId];
-  if(!idf){
-    if(typeof showToast==='function') showToast('Doğrulanamadı', `${userId} için kimlik bilgisi henüz alınmadı.`);
-    return false;
-  }
-  let decoded;
-  try{ decoded = JSON.parse(atob(idf.passport)); }catch(e){ return false; }
-  const fp = _verifyCache[userId+'|'+idf.passportSig+'|'+idf.nonce]?.fp;
-  // fp önbellekte yoksa (ör. reddedilmiş bir sonuçtan sonra) presence'taki
-  // ham anahtardan tekrar hesapla.
-  const rawFp = fp || (decoded?.pubKey ? await _fingerprintIdentityPubKey(_u8(decoded.pubKey)) : null);
-  if(!rawFp){
-    if(typeof showToast==='function') showToast('Doğrulanamadı', 'Güvenlik kodu hesaplanamadı.');
-    return false;
-  }
-  const bindings = _getApprovedBindings();
-  bindings[uidKey] = {fingerprint: rawFp, boundAt: Date.now(), addedVia:'manual'};
-  _setApprovedBindings(bindings);
-  const store = _getIdPinStore();
-  store[uidKey] = rawFp;
-  _setIdPinStore(store);
-  Object.keys(_verifyCache).forEach(k=>{ if(k.startsWith(userId+'|')) delete _verifyCache[k]; });
-  _verifiedPeers.delete(userId); // yeniden hesaplansın, artık 'trusted'
-  if(typeof showToast==='function') showToast('✅ Doğrulandı', `${userId} güvenilir kişi olarak işaretlendi.`);
-  if(typeof chatId !== 'undefined' && chatId === userId){ if(typeof renderChat==='function') renderChat(); if(typeof _renderIdentityTrust==='function') _renderIdentityTrust(userId); }
-  return true;
-};
 
 // Kullanıcı uyarıyı görüp bilerek yeni kimliği kabul ederse çağrılır.
 window._acceptNewPeerIdentity = (userId) => {
   const fp = _peerPendingIdentity[userId];
   if(!fp) return;
-  const uidKey = userId.toLowerCase();
   const store = _getIdPinStore();
-  store[uidKey] = fp;
+  store[userId.toLowerCase()] = fp;
   _setIdPinStore(store);
-  // 🛡️ [YENİ — Bulgu #1] Onaylı bir davet (Model B) varsa onu da
-  // güncelle — aksi halde iki depo tutarsızlaşır (pin yeni, onaylı
-  // bağlama eski/yanlış kalır). Bu, "explicit re-verification" olarak
-  // sayılır: kullanıcı uyarıyı GÖRÜP bilerek kabul etti, sessiz değil.
-  const bindings = _getApprovedBindings();
-  if(bindings[uidKey]){
-    bindings[uidKey] = {fingerprint: fp, boundAt: Date.now(), addedVia:'manual-override'};
-    _setApprovedBindings(bindings);
-  }
   delete _peerPendingIdentity[userId];
   // Bu kullanıcı için önbelleklenmiş doğrulama sonuçlarını temizle ki
   // bir sonraki presence yeni pinle karşı doğru sonucu üretsin.
@@ -1630,100 +1307,17 @@ window._acceptNewPeerKey = async (userId) => {
 // görünmesin diye. MITM tespiti için anlamı aynı kalıyor, sadece varsayılan
 // görünüm sadeleşti.
 let _fpExpanded = false;
-// 🛡️ [YENİ — Safety Number: Doğrulandı durumu] Mevcut TOFU pinleme sistemi
-// zaten OTOMATİK olarak ilk görülen anahtarı güvenip parmak izini
-// gösteriyordu — ama kullanıcının "bu kodu karşı tarafla KARŞILAŞTIRDIM,
-// eşleşiyor" dediği AYRI, açık bir durum yoktu. Bu, "Verified/Unverified
-// durumunun anlaşılır olması" için eklendi. Doğrulama, parmak izinin
-// KENDİSİNE bağlı saklanıyor (userId → o anki fingerprint) — bu yüzden
-// anahtar değişirse (bkz. _showKeyChangeWarning) eski "doğrulandı" işareti
-// YENİ parmak iziyle otomatik olarak eşleşmez hale gelir, ayrıca bir
-// "geçersiz kıl" adımına gerek kalmaz.
-function _getVerifiedFpMap(){
-  try{ return JSON.parse(localStorage.getItem('sv_verified_fps')||'{}'); }catch(e){ return {}; }
-}
-function _setVerifiedFpMap(m){
-  try{ localStorage.setItem('sv_verified_fps', JSON.stringify(m)); }catch(e){}
-}
-function _isPeerVerified(userId, fp){
-  if(!userId || !fp) return false;
-  return _getVerifiedFpMap()[userId] === fp;
-}
-function _toggleVerified(userId, fp){
-  if(!userId || !fp) return;
-  const m = _getVerifiedFpMap();
-  if(m[userId]===fp) delete m[userId]; else m[userId]=fp;
-  _setVerifiedFpMap(m);
-  _renderChatFpEl(userId);
-}
 function _renderChatFpEl(userId){
   const fpEl = $('chatKeyFp');
   if(!fpEl) return;
   const fp = userId ? _peerKeyFingerprints[userId] : null;
   if(!fp){ fpEl.style.display='none'; return; }
   fpEl.style.display = 'block';
+  fpEl.textContent = _fpExpanded ? ('🔑 ' + fp) : '🔒 Güvenlik kodu (göster)';
   fpEl.dataset.fpUser = userId;
-  const verified = _isPeerVerified(userId, fp);
-  if(!_fpExpanded){
-    // Daraltılmış: kısa rozet, doğrulanmışsa yeşil ✓ ile
-    fpEl.innerHTML = verified
-      ? '<span style="color:var(--ok)">✅ Güvenlik kodu doğrulandı</span>'
-      : '🔒 Güvenlik kodu (göster)';
-  } else {
-    // Genişletilmiş: tam kod + doğrula/doğrulamayı kaldır butonu.
-    // 🛡️ CSP-güvenli: inline onclick yok, aşağıda addEventListener ile bağlanıyor.
-    fpEl.innerHTML = `<span class="fp-code">🔑 ${escHtml(fp)}</span>` +
-      `<button type="button" class="fp-verify-btn" style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:8px;cursor:pointer;border:1px solid ${verified?'var(--ok)':'var(--border)'};background:${verified?'var(--ok)':'transparent'};color:${verified?'#fff':'var(--muted)'}">${verified?'✓ Doğrulandı':'Karşılaştırdım, doğrula'}</button>`;
-    const btn = fpEl.querySelector('.fp-verify-btn');
-    if(btn) btn.addEventListener('click', (e)=>{ e.stopPropagation(); _toggleVerified(userId, fp); });
-  }
 }
 function _updateChatFpDisplay(userId){
   _renderChatFpEl(userId);
-}
-
-// 🛡️ [YENİ — Denetim Raporu Bulgu #1] Kalıcı kimlik güven durumu banner'ı.
-// _renderChatFpEl'den (session ECDH kodu) KASITLI OLARAK AYRI: o, BU
-// OTURUMUN e2e şifreleme anahtarını doğrular ve oturum kapanınca sıfırlanır
-// ("Oturum-içi... kalıcı pinleme yok" — bkz. storePeerPublicKey). Burası
-// ise UZUN VADELİ kimlik anahtarının (identity.js pasaportundaki) pinli/
-// onaylı olup olmadığını gösterir — kalıcıdır, TOFU/Model A/B kararının
-// doğrudan yansımasıdır. İkisi karıştırılmamalı: biri "bu oturum MITM'siz
-// mi", diğeri "bu, geçmişte konuştuğum/davetle doğruladığım AYNI kişi mi".
-function _getIdentityTrustStatus(userId){
-  if(!userId) return null;
-  const uidKey = userId.toLowerCase();
-  if(_getIdPinStore()[uidKey]) return 'trusted';
-  const cached = _verifyResultCache[userId];
-  if(cached && cached.status==='unverified') return 'unverified';
-  return null; // henüz bağlantı/karar yok (ör. peer offline)
-}
-function _renderIdentityTrust(userId){
-  const el = $('chatIdentityTrust');
-  if(!el) return;
-  const status = _getIdentityTrustStatus(userId);
-  if(status === 'trusted'){
-    el.style.display='block';
-    el.style.background='rgba(16,185,129,.08)';
-    el.style.color='var(--ok)';
-    el.innerHTML = `🔐 Kimlik doğrulandı — bu, daha önce pinlenmiş ya da davetle doğrulanmış aynı kişi.`;
-  } else if(status === 'unverified'){
-    const cached = _verifyResultCache[userId];
-    const idFp = cached && cached.fp ? cached.fp.match(/.{4}/g).join(' ').toUpperCase() : null;
-    el.style.display='block';
-    el.style.background='#fef3c7';
-    el.style.color='#92400e';
-    el.innerHTML = `⚠️ <strong>Kimlik doğrulanmadı.</strong> "${escHtml(userId)}" adını kullanan biriyle konuşuyorsunuz ama bunun iddia ettiği kişi olduğuna dair kriptografik bir kanıt yok (username herkesçe seçilebilir).`
-      + (idFp ? `<div style="margin:4px 0;font-family:monospace;font-size:11px">🔑 ${escHtml(idFp)}</div>` : '')
-      + `<div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
-          <button type="button" class="idtrust-manualverify-btn" style="font-size:11px;padding:5px 10px;border-radius:8px;background:#92400e;color:#fff;border:none;cursor:pointer">Kodu başka kanaldan doğruladım</button>
-          <button type="button" class="idtrust-invite-btn" style="font-size:11px;padding:5px 10px;border-radius:8px;background:transparent;color:#92400e;border:1px solid #92400e;cursor:pointer">Davetle Doğrula</button>
-        </div>`;
-    el.querySelector('.idtrust-manualverify-btn')?.addEventListener('click', ()=> window._manuallyVerifyPeer(userId));
-    el.querySelector('.idtrust-invite-btn')?.addEventListener('click', ()=> window.openInviteModal?.('accept', userId));
-  } else {
-    el.style.display='none';
-  }
 }
 // Tek seferlik: koda tıklanınca aç/kapat (CSP-güvenli — inline onclick değil)
 (function _initFpToggle(){
@@ -1769,7 +1363,6 @@ async function _getPeerDerivedKey(userId){
 // SESSİZCE düşülmez; hata fırlatılır ve şifreleme/çözme o ana kadar
 // kullanılamaz (fail-closed).
 let _bootstrapKey = null;
-let _bootstrapKeyBase64 = null; // 🛡️ [Bulgu #4 Fix] CryptoKey karşılaştırılamaz — rotasyon kontrolü için ham değeri de saklıyoruz
 let _bootstrapKeyPromise = null;
 async function _getBootstrapKey(){
   if(_bootstrapKey) return _bootstrapKey;
@@ -1784,7 +1377,6 @@ async function _getBootstrapKey(){
     const raw = _u8(data.bootstrapKey);
     const key = await crypto.subtle.importKey('raw', raw, {name:'AES-GCM'}, false, ['encrypt','decrypt']);
     _bootstrapKey = key;
-    _bootstrapKeyBase64 = data.bootstrapKey;
     return key;
   })();
   try{
@@ -1856,18 +1448,12 @@ async function aesDecrypt(pkt, fromUserId=null){
   }
 }
 
-// ── 3. SUNUCU YAPILANDIRMASI (MQTT broker + kimlik bilgileri + günlük topic) ─
+// ── 3. SUNUCU YAPILANDIRMASI (MQTT broker + kimlik bilgileri + topic sırrı) ─
 // 🛡️ [HIGH-02]/[MED-01] BROKER ve TOPIC_SECRET artık kaynak kodunda SABİT
 // DEĞİL. MQTT bağlantısı kurulmadan hemen önce (connectNetwork içinde)
-// GET /api/config çağrılır; Vercel Environment Variables'tan okunan
-// aşağıdaki gövde döner:
-//   { mqttBroker, mqttUsername, mqttPassword, todayTopic }
-// 🛡️ [YENİ-SEC FIX] ÖNCEDEN bu gövdede ham `topicSecret` dönüyordu ve
-// client bunu kullanarak KENDİSİ HMAC hesaplıyordu (bkz. eski
-// deriveObfuscatedTopic). Artık bu hesaplama SUNUCUDA yapılıyor —
-// server yalnızca o günün HAZIR topic adını (`todayTopic`) gönderiyor,
-// asıl sır (TOPIC_ROTATE_SECRET) hiçbir zaman ağa çıkmıyor. Sonuç
-// (client'ın bağlandığı topic) birebir aynı — mimariye etkisi yok.
+// GET /api/config çağrılır; Vercel Environment Variables'tan
+// (örn. TOPIC_ROTATE_SECRET) okunan aşağıdaki gövde döner:
+//   { mqttBroker, mqttUsername, mqttPassword, topicSecret }
 let _serverConfig = null;
 let _serverConfigPromise = null;
 async function loadServerConfig(){
@@ -1880,8 +1466,8 @@ async function loadServerConfig(){
     if(!cfg || typeof cfg.mqttBroker !== 'string' || !cfg.mqttBroker){
       throw new Error('[SEC] /api/config: mqttBroker alanı eksik/hatalı');
     }
-    if(typeof cfg.todayTopic !== 'string' || !cfg.todayTopic){
-      throw new Error('[SEC] /api/config: todayTopic alanı eksik/hatalı');
+    if(typeof cfg.topicSecret !== 'string' || !cfg.topicSecret){
+      throw new Error('[SEC] /api/config: topicSecret alanı eksik/hatalı');
     }
     _serverConfig = cfg;
     return cfg;
@@ -1895,23 +1481,30 @@ async function loadServerConfig(){
   }
 }
 
-// 🛡️ [KALDIRILDI — Denetim Raporu Bulgu #5] sanitizeLinkUrl yalnızca link
-// önizleme kartının data-lp-url'i için kullanılıyordu; önizleme özelliği
-// kaldırıldığı için bu fonksiyon da ölü kod olarak temizlendi.
+// 🛡️ [YENİ-H3] Link URL sanitizer — javascript:/vbscript:/data: protokollerini reddeder
+// onclick attribute'u yerine data-lp-url + event delegation pattern'ı kullanılır
+function sanitizeLinkUrl(url){
+  if(!url || typeof url !== 'string') return null;
+  const trimmed = url.trim().toLowerCase().replace(/\s+/g,'');
+  if(!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return null;
+  return escHtml(url.trim()); // Attribute injection'ı önle
+}
 
-// Gerçek ROOM topic'i sabit değil; günlük dönen, SUNUCUDA hesaplanıp
-// HAZIR olarak gönderilen bir topic adı kullanılır (bkz. /api/config).
-// Aynı gün + aynı sunucu sırrı = aynı topic → tüm client'lar birlikte
-// çalışır. 🛡️ [MED-01] Sunucuya erişilemezse artık GÜVENSİZ sabit ROOM
-// topic'ine SESSİZCE düşülmez — bağlantı kurulmaz (fail-closed), böylece
-// topic kaynak kodundan tahmin edilemez kalır.
-// 🛡️ [YENİ-SEC FIX] ÖNCEDEN burada topicSecret + ROOM + bugününTarihi'nden
-// HMAC-SHA256 hesaplanıyordu (topicSecret client'a ham gönderiliyordu).
-// Artık bu hesaplama sunucuda yapılıyor (bkz. /api/config), buradaki
-// fonksiyon sadece sunucudan gelen HAZIR günlük topic adını döndürüyor.
+// Gerçek ROOM topic'i sabit değil; günlük dönen, SUNUCUDAN ALINAN
+// topicSecret ile HMAC-SHA256 türetilir. Aynı gün + aynı sır = aynı hash
+// → birlikte çalışır. 🛡️ [MED-01] Sunucuya erişilemezse artık GÜVENSİZ
+// sabit ROOM topic'ine SESSİZCE düşülmez — bağlantı kurulmaz (fail-closed),
+// böylece topic kaynak kodundan tahmin edilemez kalır.
 async function deriveObfuscatedTopic(){
   const cfg = await loadServerConfig();
-  return cfg.todayTopic;
+  const enc = new TextEncoder();
+  const dateSeed = new Date().toISOString().slice(0,10);
+  const keyMat = await crypto.subtle.importKey(
+    'raw', enc.encode(cfg.topicSecret), {name:'HMAC', hash:'SHA-256'}, false, ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', keyMat, enc.encode(ROOM + dateSeed));
+  const hex = [...new Uint8Array(sig)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  return 'sv/' + hex.slice(0, 32);   // "sv/a3f8…" — 35 karakter topic
 }
 
 let _obfTopic = null; // başlangıçta null, connectNetwork'te doldurulur
@@ -2280,23 +1873,15 @@ async function _dcHandleOffer(d){
   }
   const userId = d.from;
 
-  // 🛡️ [HIGH-03]/[YENİ-H2]/[HIGH-04]/[Bulgu #1] Teklifi (offer) kabul
-  // etmeden ÖNCE gönderenin sunucu onaylı kimlik pasaportunu doğrula (son
-  // presence'ından önbelleğe alınan bilgiyle). SADECE 'rejected' (tahrif
-  // edilmiş pasaport, ya da pinlenmiş/onaylı kimlikle UYUŞMAYAN bir
-  // anahtar) bağlantıyı engeller. 'unverified' (username-arama ile ilk
-  // temas, hiç pin/onaylı davet yok) bağlantı KURULMASINA izin verilir —
-  // kullanıcının isteği: username akışı bozulmasın — ama kimlik ASLA
-  // burada pinlenmez (bkz. _checkAndPinPeerIdentity) ve arayüz bu durumu
-  // kalıcı olarak "doğrulanmadı" diye göstermek ZORUNDADIR.
-  const verifyResult = await _ensurePeerVerified(userId);
-  if(verifyResult.status==='rejected'){
-    console.warn('[SEC] Doğrulanamayan/reddedilen kimlikten gelen dc_offer reddedildi:', userId);
+  // 🛡️ [HIGH-03]/[YENİ-H2]/[HIGH-04] Teklifi (offer) kabul etmeden ÖNCE
+  // gönderenin sunucu onaylı kimlik pasaportunu doğrula (son presence'ından
+  // önbelleğe alınan bilgiyle). Doğrulanamazsa — tahrif edilmiş/sahte
+  // kimlik, olası MITM — bağlantı kurulmaz, RTCPeerConnection açılmaz.
+  const verified = await _ensurePeerVerified(userId);
+  if(!verified){
+    console.warn('[SEC] Doğrulanamayan kimlikten gelen dc_offer reddedildi:', userId);
     if(typeof showToast==='function') showToast('⚠️ Güvenlik Uyarısı', '"'+userId+'" için kimlik doğrulanamadı, bağlantı reddedildi.');
     return;
-  }
-  if(verifyResult.status==='unverified'){
-    console.warn('[SEC][UNVERIFIED] dc_offer doğrulanmamış kimlikten kabul ediliyor (Model A):', userId);
   }
 
   console.log('[DC] Offer alındı ←', userId);
@@ -2369,10 +1954,8 @@ async function _dcHandleIce(d){
     try{ await peer.pc.addIceCandidate(new RTCIceCandidate(d.cand)); }catch(e){}
   } else {
     // Remote description henüz gelmedi — kuyruğa al
-    // 🛡️ [SEC] Kuyruk sınırsız büyütülemez (bellek DoS): trickle ICE'de
-    // meşru bağlantı başına aday sayısı birkaç düzinedir; fazlası atılır.
     if(!peer.iceQueue) peer.iceQueue=[];
-    if(peer.iceQueue.length<200) peer.iceQueue.push(d.cand);
+    peer.iceQueue.push(d.cand);
   }
 }
 
@@ -2558,7 +2141,7 @@ async function connectNetwork(){
     return;
   }
 
-  // Obfuscated topic'i al (async, hazır todayTopic /api/config'ten gelir)
+  // Obfuscated topic'i hesapla (async, topicSecret /api/config'ten gelir)
   try{
     _obfTopic = await deriveObfuscatedTopic();
   }catch(e){
@@ -2658,64 +2241,6 @@ function schedRec(){
   }
   reconnTmr=setTimeout(connectNetwork,4000);
 }
-
-// 🛡️ [YENİ — Denetim Raporu Bulgu #4 Fix] loadServerConfig() VE
-// _getBootstrapKey() sonuçları hiç süresi dolmayan önbelleklerde
-// (_serverConfig, _bootstrapKey) tutuluyordu. İkisi de sunucuda AYNI
-// UTC-gün sınırından (bkz. config.js/bootstrap-key.js: `new
-// Date().toISOString().slice(0,10)`) türetiliyor — yani gece yarısını
-// aşan bir sekme HEM dünkü MQTT topic'ine HEM dünkü bootstrap AES
-// anahtarına bağlı kalmaya devam ediyordu:
-//   • todayTopic bayatlarsa → yeni güne geçen diğer kullanıcılarla aynı
-//     odada buluşulamıyor (bkz. connectNetwork/_obfTopic).
-//   • _bootstrapKey bayatlarsa → presence/group/discovery gibi bootstrap-
-//     anahtarlı paketlerin şifresi KARŞI TARAFTA çözülemiyor, aesDecrypt
-//     "Şifre çözme başarısız, paket atıldı" ile sessizce paketleri
-//     düşürüyor (peer-özel e2e mesajlaşma bundan ETKİLENMEZ — o ayrı,
-//     _getPeerDerivedKey tabanlı bir anahtarla çalışıyor; sadece canlı
-//     sinyal trafiği etkilenir, yerel geçmiş mesajlar bozulmaz).
-// Sunucunun rotasyon sınırının tam olarak hangi saat diliminde olduğunu
-// İSTEMCİDE TAHMİN ETMEK kırılgan olurdu (saat dilimi/DST/cihaz saati
-// yanlışlığı); bunun yerine periyodik olarak HER İKİ uç noktayı da
-// ÖNBELLEĞİ ATLAYARAK tazeleyip gerçek değerleri kontrol ediyoruz.
-async function _checkTopicRotation(){
-  if(!ME || !_serverConfig) return; // henüz giriş yoksa veya ilk config hiç gelmediyse kontrol gereksiz
-  // ── 1) MQTT topic rotasyonu ──────────────────────────────────────
-  try{
-    const r = await fetch('/api/config', { signal: AbortSignal.timeout(6000), cache:'no-store' });
-    if(r.ok){
-      const fresh = await r.json();
-      if(fresh && typeof fresh.todayTopic === 'string' && fresh.todayTopic
-         && fresh.todayTopic !== _serverConfig.todayTopic){
-        console.warn('[SEC] Günlük konu (topic) değişti — temiz şekilde yeniden bağlanılıyor.');
-        _serverConfig = fresh;        // önbelleği güncelle
-        _serverConfigPromise = null;  // olası yarım kalmış eski promise'i temizle
-        connectNetwork();             // mevcut temiz teardown+reconnect akışını kullan
-      }
-    }
-  }catch(e){ /* sessizce geç — ağ geçici olarak kesilmiş olabilir, 5 dk sonra tekrar denenir */ }
-
-  // ── 2) Bootstrap AES anahtarı rotasyonu ──────────────────────────
-  // Anahtarın kendisi (Base64 hâli) sunucudan sadece bir kez, karşılaştırma
-  // amacıyla ayrıca alınıp _bootstrapKeyBase64 ile kıyaslanıyor; içe
-  // aktarılmış CryptoKey nesnesi karşılaştırılamaz (opak), bu yüzden ham
-  // Base64 değeri ayrıca saklıyoruz.
-  try{
-    const r2 = await fetch('/api/bootstrap-key', { signal: AbortSignal.timeout(6000), cache:'no-store' });
-    if(r2.ok){
-      const fresh2 = await r2.json();
-      if(fresh2 && typeof fresh2.bootstrapKey === 'string' && fresh2.bootstrapKey
-         && fresh2.bootstrapKey !== _bootstrapKeyBase64){
-        console.warn('[SEC] Günlük bootstrap anahtarı değişti — önbellek tazeleniyor.');
-        const raw = _u8(fresh2.bootstrapKey);
-        _bootstrapKey = await crypto.subtle.importKey('raw', raw, {name:'AES-GCM'}, false, ['encrypt','decrypt']);
-        _bootstrapKeyBase64 = fresh2.bootstrapKey;
-        _bootstrapKeyPromise = null; // olası yarım kalmış eski promise'i temizle
-      }
-    }
-  }catch(e){ /* sessizce geç — bir sonraki periyotta tekrar denenir */ }
-}
-setInterval(_checkTopicRotation, 5*60*1000); // her 5 dakikada bir kontrol et
 // ── Stabilite: bağlantı bekçisi ──
 setInterval(()=>{
   if(mq&&mq.connected){
@@ -2779,44 +2304,13 @@ async function broadcast(p, qos=0){
     return;
   }
   p.msgId=p.msgId||uid();
-  // 🛡️ [YENİ — Replay Koruması #7] Yetki-taşıyan grup durum değişikliği
-  // paketlerine (group_update/group_kick) zaman damgası ekleniyor. Bu
-  // olmadan, bir saldırganın (ya da eski bir üyenin) daha önce yakaladığı
-  // ESKİ ama geçerli-imzalı bir group_update/group_kick paketini SONRADAN
-  // tekrar göndermesi — mesela biri kicklenip sonra yeniden eklendiyse,
-  // eski "kick" paketini tekrar oynatarak — grup durumunu geçmişe
-  // döndürebilirdi. Alıcı tarafta (bkz. group_update/group_kick
-  // handler'ları) hem "çok eski" (>10dk) hem "zaten daha yeni bir güncelleme
-  // uygulanmış" paketler reddediliyor.
-  if((p.type==='group_update'||p.type==='group_kick') && !p.ts){
-    p.ts = Date.now();
-  }
-  // 🛡️ [YENİ — group_invite Güvenlik Zinciri, adım 1/2] Diğer grup-durumu
-  // paketleriyle aynı zaman damgası koruması — bkz. alım tarafındaki
-  // ayrıntılı not (_isFreshGroupPacket çağrısı).
-  if(p.type==='group_invite' && !p.ts){
-    p.ts = Date.now();
-  }
-  // 🛡️ [YENİ — Replay Koruması #7-devam] msg_edit için de aynı zaman
-  // damgası korunması — bkz. group_update notundaki gerekçe. msg_delete'e
-  // eklemiyoruz: o işlem idempotent (tekrar uygulamak zaten "silinmiş"
-  // durumunu değiştirmiyor), risk yok.
-  if(p.type==='msg_edit' && !p.ts){
-    p.ts = Date.now();
-  }
   // 🛡️ [YENİ] Sohbet mesajı içeriğini kimlik anahtarımızla imzala (bkz.
   // _signMessageContent tanımı). Grup mesajlarında aynı `msg` nesnesi birden
   // fazla broadcast() çağrısında (her üye için bir kez) paylaşıldığından,
   // zaten imzalanmışsa (p.msg.sig varsa) tekrar imzalanmaz.
-  // 🛡️ [YENİ-SEC — V2 BAĞLAM BAĞLAMA] `ctx`, grup mesajlarında `p.groupId`'den
-  // hesaplanıyor — `p.to` DEĞİL, çünkü `p.to` her üye için ayrı ayrı
-  // değişiyor (aynı imzalanmış `msg` nesnesi TÜM üyelere aynen gönderiliyor,
-  // ctx sabit kalmalı). Özel mesajlarda tek alıcı olduğu için `p.to`
-  // doğrudan kullanılıyor.
   if((p.type==='private_msg'||p.type==='group_msg') && p.msg && !p.msg.sig && ME){
-    const _ctx = p.type==='group_msg' ? ('g:'+p.groupId) : ('p:'+p.to);
-    const _sig = await _signMessageContent(p.msg, _ctx);
-    if(_sig){ p.msg.sig = _sig; p.msg.sigV = 2; }
+    const _sig = await _signMessageContent(p.msg);
+    if(_sig) p.msg.sig = _sig;
   }
   if(_RELIABLE_TYPES.includes(p.type)) qos=Math.max(qos,1);
   const targetUser = p.to;
@@ -2910,7 +2404,7 @@ async function _reloadOutboxAfterKeyReady(){
 const _OUTBOX_KEY = 'shareview_outbox_v1';
 let _outbox=[]; // Senkron erişim için boş başlar — gerçek içerik aşağıda asenkron yüklenir
 _loadOutbox().then(arr=>{ _outbox.push(...arr); }).catch(()=>{});
-const _RELIABLE_TYPES=['private_msg','group_msg','group_invite','friend_req','friend_accept','friend_remove','msg_read','group_read','msg_delivered','msg_edit','msg_delete','reaction','msg_vanish'];
+const _RELIABLE_TYPES=['private_msg','group_msg','group_invite','friend_req','friend_accept','friend_remove','msg_read','group_read','msg_edit','msg_delete','reaction','msg_vanish'];
 async function _flushOutbox(){
   if(!_outbox.length) return;
   // 🛡️ [HIGH-02] Outbox sadece DC üzerinden gönderilir — MQTT'ye mesaj içeriği gönderilmez
@@ -2993,91 +2487,7 @@ function _isValidSelfLeave(oldMembers, newMembers, from){
   return true;
 }
 
-// 🛡️ [SEC — Gelen mesaj alan doğrulaması] Gelen `d.msg` objesi önceden
-// yalnızca text/fileData uzunluğu kontrol edilerek HAM HALİYLE saklanıyordu;
-// id/time/expiresAt/reactions/readBy/poll gibi alanlar saldırgan-kontrollü
-// olduğundan render sırasında attribute-injection ve DoS yüzeyi oluşturuyordu.
-// Meşru istemcilerin ürettiği değerler aşağıdaki biçimlerle BİREBİR uyumludur
-// (id: uid() → [a-z0-9]{9}, time: gt() → "ss:dd"), dolayısıyla bu
-// doğrulama meşru trafiği asla etkilemez. Sadece bozuk/kötü niyetli paketler
-// normalize edilir ya da tamamen reddedilir. İmza doğrulamasından SONRA
-// çağrılır (metin kırpma ile aynı nokta — imza orijinal içerik üzerinedir).
-function _sanitizeIncomingMsg(msg, fromId){
-  if(!msg || typeof msg!=='object' || Array.isArray(msg)) return false;
-  // id — dedup ve tüm DOM data-a referanslarında kullanılır; güvenli karakter seti zorunlu
-  if(typeof msg.id!=='string' || !/^[A-Za-z0-9_-]{1,64}$/.test(msg.id)) return false;
-  // from — mesaj sahibi kontrolleri (msg_edit/delete) bu alana bakar; gönderen kimliğiyle tutarsızsa normalize et
-  if(typeof msg.from!=='string' || !isWhitelisted(msg.from)) msg.from = fromId;
-  // time — yalnızca gt() ürettiği biçimdeki kısa saat damgaları kabul edilir
-  if(typeof msg.time!=='string' || msg.time.length>24) msg.time = gt();
-  else msg.time = msg.time.replace(/[&<>"']/g,'');
-  // expiresAt — sayısal zaman damgası olmalı (msg-timer data-exp özniteliğine yazılıyor)
-  if(msg.expiresAt!==undefined && msg.expiresAt!==null &&
-     (typeof msg.expiresAt!=='number' || !isFinite(msg.expiresAt))) delete msg.expiresAt;
-  // fileName/fileSize/voiceDur — tip + uzunluk normalizasyonu
-  if(msg.fileName!==undefined && (typeof msg.fileName!=='string' || msg.fileName.length>255)) msg.fileName='Dosya';
-  if(msg.fileSize!==undefined && (typeof msg.fileSize!=='number' || !isFinite(msg.fileSize))) msg.fileSize=0;
-  if(msg.voiceDur!==undefined && (typeof msg.voiceDur!=='number' || !isFinite(msg.voiceDur))) msg.voiceDur=0;
-  // reactions — {userId: emojiString} haritası; emoji en fazla 32 karakter
-  if(msg.reactions!==undefined){
-    if(typeof msg.reactions!=='object' || msg.reactions===null || Array.isArray(msg.reactions)){ delete msg.reactions; }
-    else{
-      for(const rk of Object.keys(msg.reactions)){
-        if(!isWhitelisted(rk) || typeof msg.reactions[rk]!=='string' || msg.reactions[rk].length>32) delete msg.reactions[rk];
-      }
-    }
-  }
-  // replyTo — yalnızca düz obje; from/text kısa string'e normalize
-  if(msg.replyTo!==undefined){
-    if(typeof msg.replyTo!=='object' || msg.replyTo===null || Array.isArray(msg.replyTo)){ delete msg.replyTo; }
-    else{
-      const rt=msg.replyTo;
-      if(typeof rt.from!=='string' || rt.from.length>32) rt.from='';
-      if(typeof rt.text!=='string' || rt.text.length>200) rt.text=typeof rt.text==='string'?rt.text.slice(0,200):'';
-    }
-  }
-  // readBy / deliveredTo — whitelist'li kullanıcı adlarından oluşan diziler
-  const _cleanIdArr=(v)=>{
-    if(!Array.isArray(v)) return undefined;
-    return v.filter(u=>typeof u==='string'&&isWhitelisted(u)).slice(0,500);
-  };
-  if(msg.readBy!==undefined){ const c=_cleanIdArr(msg.readBy); if(c) msg.readBy=c; else delete msg.readBy; }
-  if(msg.deliveredTo!==undefined){ const c=_cleanIdArr(msg.deliveredTo); if(c) msg.deliveredTo=c; else delete msg.deliveredTo; }
-  // poll — {question, options:[{text, voters:[]}]} şekli zorunlu
-  if(msg.poll!==undefined){
-    const p=msg.poll;
-    if(typeof p!=='object' || p===null || !Array.isArray(p.options) || !p.options.length || p.options.length>50){ delete msg.poll; }
-    else{
-      msg.poll={
-        question: typeof p.question==='string' ? p.question.slice(0,1000) : '',
-        options: p.options.map(o=>({
-          text:   (o && typeof o==='object' && typeof o.text==='string') ? o.text.slice(0,500) : '',
-          voters: (o && typeof o==='object' && Array.isArray(o.voters)) ? o.voters.filter(v=>typeof v==='string'&&isWhitelisted(v)).slice(0,500) : []
-        }))
-      };
-    }
-  }
-  return true;
-}
-
 async function handleSig(d){
-  // 🛡️ [SEC] Tek giriş noktasında şekil doğrulaması. `from` meşru
-  // istemcilerde daima whitelist biçiminde bir kullanıcı adıdır; `groupId`
-  // daima 'GRP_' önekli kısa bir kimliktir. Bu Guard, tüm alt işleyiciler
-  // için tek seferde: spoofed/anlamsız `from` ile localStorage'a veri
-  // yazılmasını, `groupId` üzerinden objeye tuhaf anahtar bulaşmasını ve
-  // grup araması gibi `try/catch`siz akışların tip hatasıyla kırılmasını
-  // engeller (ME yokken gelen sinyaller zaten aşağıda reddediliyor).
-  if(d && d.from!==undefined && d.from!==null &&
-     (typeof d.from!=='string' || !isWhitelisted(d.from))){
-    console.warn('[SEC] Geçersiz `from` alanlı sinyal reddedildi.');
-    return;
-  }
-  if(d && d.groupId!==undefined && d.groupId!==null &&
-     (typeof d.groupId!=='string' || !/^[A-Za-z0-9_-]{1,64}$/.test(d.groupId))){
-    console.warn('[SEC] Geçersiz `groupId` alanlı sinyal reddedildi.');
-    return;
-  }
   // ── WebRTC DataChannel sinyalleri — DC kurulumu için MQTT üzerinden gelir ──
   if(d.type==='dc_offer'||d.type==='dc_answer'||d.type==='dc_ice'){
     if(!_isDcSignalForMe(d)){
@@ -3149,16 +2559,14 @@ async function handleSig(d){
         const needsConnect = !peer || peer.state==='closed';
         if(needsConnect && ME.user_id < d.from){
           // Biz initiator'ız — ama ÖNCE kimlik pasaportunu doğrula.
-          // 🛡️ [Bulgu #1] Sadece 'rejected' bağlantıyı engeller;
-          // 'unverified' (Model A, ilk temas) bağlanmaya izin verir ama
-          // pin YAZILMAZ — bkz. _checkAndPinPeerIdentity.
-          _ensurePeerVerified(d.from).then(res=>{
-            if(res.status!=='rejected'){
-              if(res.status==='unverified') console.warn('[SEC][UNVERIFIED] Doğrulanmamış kimlikle bağlantı kuruluyor (Model A):', d.from);
+          // Doğrulama başarısız/eksikse (sahte/tahrif edilmiş kimlik,
+          // olası MITM) WebRTC bağlantısı ASLA kurulmaz.
+          _ensurePeerVerified(d.from).then(ok=>{
+            if(ok){
               const p2 = _dcPeers[d.from];
               if(!p2 || p2.state==='closed') _dcConnect(d.from);
             } else {
-              console.warn('[SEC] Kimlik reddedildi — WebRTC bağlantısı kurulmadı:', d.from);
+              console.warn('[SEC] Kimlik doğrulanamadı — WebRTC bağlantısı reddedildi:', d.from);
               if(typeof showToast==='function') showToast('⚠️ Güvenlik Uyarısı', '"'+d.from+'" için kimlik doğrulanamadı, bağlantı kurulmadı.');
             }
           });
@@ -3253,39 +2661,9 @@ async function handleSig(d){
     const k=[ME.user_id,d.from].sort().join('_');
     if(!db.messages[k])db.messages[k]=[];
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
-    // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/'legacy'/null (bkz. _verifyMessageSig).
-    // ÖNEMLİ: imza, gönderenin ORİJİNAL (kırpılmamış) metni üzerinden
-    // hesaplanmıştır — bu yüzden doğrulama, aşağıdaki uzunluk kırpmasından
-    // ÖNCE yapılmak ZORUNDA; aksi halde uzun ama tamamen meşru mesajlar
-    // yanlışlıkla "imza geçersiz" uyarısı alırdı.
-    // 🛡️ [YENİ-SEC — V2 BAĞLAM BAĞLAMA] `ctx`, KENDİ kimliğimizden ('p:'+ME.user_id)
-    // hesaplanıyor — mesajın içinden OKUNMUYOR. Bu mesaj aslında başka bir
-    // özel sohbete veya bir gruba ait, buraya (bana) taşınmışsa, imzanın
-    // üretildiği GERÇEK ctx ile burada hesapladığım ctx uyuşmaz → V2
-    // doğrulama başarısız olur → aşağıda REDDEDİLİR.
-    const _ctx = 'p:'+ME.user_id;
-    d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg, _ctx);
-    // 🛡️ [YENİ-SEC — KRİTİK] V2 imzası VARSA ve GEÇERSİZSE (false) — bu artık
-    // sadece kozmetik bir uyarı değil, mesaj TAMAMEN REDDEDİLİYOR (hiç
-    // saklanmıyor/gösterilmiyor). 'legacy' (V1, eski istemci) ve null
-    // (imzasız/anahtar yok) durumları hâlâ kabul ediliyor — geriye dönük
-    // uyumluluk. 'legacy' ASLA true ile eşdeğer güvenilmiyor, sadece kabul
-    // ediliyor.
-    if(d.msg._sigVerified === false){
-      console.warn('[SEC] V2 imza doğrulaması BAŞARISIZ — mesaj reddedildi (olası bağlam-taşıma denemesi):', d.from, d.msg.id);
-      return;
-    }
-    // 🛡️ [YENİ-SEC] Aşırı uzun mesaj metni, imza kontrolünden SONRA
-    // (saklama/gösterim için) kırpılıyor — bkz. MAX_INCOMING_TEXT_CHARS notu.
-    if(typeof d.msg.text==='string' && d.msg.text.length>MAX_INCOMING_TEXT_CHARS){
-      console.warn('[SEC] Aşırı uzun mesaj metni kırpıldı:', d.from, d.msg.text.length);
-      d.msg.text = d.msg.text.slice(0, MAX_INCOMING_TEXT_CHARS) + '…';
-    }
-    // 🛡️ [SEC] Gelen mesaj objesinin TÜM alanları (id/from/time/reactions/
-    // readBy/poll vb.) saklanmadan önce doğrulanır/normalize edilir —
-    // saldırgan-kontrollü meta alanların render sırasında attribute
-    // injection'ına ve tip karmaşasından doğan çökmelere kapanır.
-    if(!_sanitizeIncomingMsg(d.msg, d.from)) return;
+    // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/null (bkz. _verifyMessageSig).
+    // Sadece false (imza VAR ama geçersiz) durumunda UI'da uyarı gösterilir.
+    d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg);
     // Gelen dosya/gif verisini oturum belleğine kaydet
     if(d.msg.fileData&&d.msg.fileData&&!d.msg.fileData.startsWith('__')){
       // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
@@ -3298,15 +2676,6 @@ async function handleSig(d){
       }
     }
     db.messages[k].push(d.msg);saveDB(db);
-    // 🛡️ [YENİ — Delivered State] Mesaj GERÇEKTEN doğrulanıp (imza+üyelik
-    // kontrollerinden geçip) yerel depoya yazıldıktan SONRA — yani
-    // "receive → validate/decrypt → process" adımları tamamlandıktan
-    // sonra — gönderene teslim alındı bilgisini (ACK) gönderiyoruz.
-    // DataChannel'ın kendi send() başarısı YETERLİ SAYILMIYOR — bu, sadece
-    // paketin BİZİM tarayıcımızdan çıktığını garanti eder, karşı tarafa
-    // ULAŞTIĞINI değil. Gerçek "Delivered" durumu SADECE bu application-level
-    // ACK karşı tarafa ulaşırsa oluşur.
-    broadcast({type:'msg_delivered', to:d.from, from:ME.user_id, msgId:d.msg.id});
     if(chatId===d.from&&chatType==='private'){renderChat();markAsRead(d.from);}
     else if(!isSilentMode()){
       const _msgBody=d.msg.fileType?`📎 ${d.msg.fileName||'Dosya'}`:d.msg.text;
@@ -3322,65 +2691,11 @@ async function handleSig(d){
   }
   if(d.type==='group_invite'){
     const g=d.group;
-    // 🛡️ [YENİ-SEC — KRİTİK — group_invite Tam Güvenlik Zinciri]
-    // ÖNCEKİ HALİ: sadece `g` objesinin şeklini (tip/uzunluk) kontrol
-    // ediyordu — gönderenin kimliği (e2e), arkadaşlık durumu ve paket
-    // tazeliği HİÇ doğrulanmıyordu. Bu, arkadaş olmayan HERHANGİ bir
-    // OpenChat kullanıcısının (hatta bootstrap-anahtarıyla kimliği
-    // taklit edilmiş birinin) hedefe sahte bir grup enjekte edebilmesine
-    // izin veriyordu (bkz. red-team raporu, Bulgu 2).
-    //
-    // ŞİMDİ, sırasıyla:
-    // 1) e2e kimlik bağlama (_isE2E) — paket, bootstrap (paylaşılan)
-    //    anahtarla değil, gönderenin GERÇEK kimliğine kriptografik olarak
-    //    bağlı bir anahtarla şifrelenmiş olmalı.
-    // 2) Arkadaşlık kontrolü — private_msg'de zaten var olan aynı kural:
-    //    tanımadığınız biri sizi gruba ekleyemez.
-    // 3) Tazelik/replay koruması — group_update/kick ile aynı desen
-    //    (groupId+gönderenId bazlı, 10dk pencere).
-    // 4) `g.admins.includes(d.from)` tutarlılık kontrolü — gönderen,
-    //    KENDİSİNİ admin listesinde göstermiyorsa (ne yeni grup kurarken
-    //    ne mevcut gruba üye eklerken meşru akışta böyle bir durum asla
-    //    oluşmaz) paket şüpheli sayılır.
-    //
-    // ⚠️ DÜRÜST SINIR: `g.admins`'in TAMAMEN doğru olduğunu (gönderenin
-    // dışında listelenen diğer "adminlerin" gerçekten admin olduğunu)
-    // kriptografik olarak KANITLAYAMAYIZ — bu, sunucusuz/P2P mimaride
-    // identity TOFU ile aynı sınıf bir "ilk temas güveni" sorunu. Meşru
-    // akışta (bkz. addMemberToGroup) mevcut bir grubun TÜM admin listesi
-    // yeni davet edilen kişiye gönderiliyor, bu yüzden admin listesini
-    // sadece göndericiyle sınırlamak GERÇEK işlevselliği kırardı. Elimizden
-    // gelen: gönderenin en azından KENDİSİNİ o listede göstermesini
-    // zorunlu kılmak (aşağıya bkz.).
-    if(!g || typeof g!=='object'){ return; }
-    if(!d._isE2E){
-      console.warn('[SEC] e2e-doğrulanmamış group_invite reddedildi:', d.from);
-      return;
-    }
-    const mk = ME.user_id.toLowerCase();
-    const myFriends = (db.users[mk]?.friends)||[];
-    if(!myFriends.includes(d.from)){
-      console.warn('[SEC] Arkadaş olmayan biri group_invite gönderdi, reddedildi:', d.from);
-      return;
-    }
-    if(typeof g.id!=='string' || !g.id || g.id.length>=128 || !g.id.startsWith('GRP_')){
-      console.warn('[SEC] Geçersiz groupId formatlı group_invite reddedildi:', d.from);
-      return;
-    }
-    // 🛡️ [YENİ] Tazelik/replay koruması — bkz. yukarıdaki not.
-    if(!_isFreshGroupPacket(g.id+'|'+d.from, d.ts, _lastGroupInviteTs)){
-      console.warn('[SEC] Eski/replay group_invite reddedildi:', d.from, 'groupId=', g.id);
-      return;
-    }
-    // 🛡️ [SAST-5 FIX — korunuyor] Şekil doğrulaması ve groupId çakışma/ele
-    // geçirme koruması (mevcut bir gruba enjeksiyon YAPILAMAZ).
-    // 🛡️ [SEC] members/admins DİZİ ELEMANLARI da doğrulanıyor — önceden
-    // yalnızca dizi boyutu kontrol ediliyordu, elemanlar whitelist'siz
-    // geçiyordu; saldırgan (arkadaş) üye adı olarak HTML içerebilen string
-    // gönderip grup üye listesi render'ında stored-XSS yüzeyi
-    // oluşturabiliyordu. Meşru üye adları daima whitelist biçimindedir.
-    if(Array.isArray(g.members)) g.members=g.members.filter(u=>typeof u==='string'&&isWhitelisted(u));
-    if(Array.isArray(g.admins))  g.admins =g.admins.filter(u=>typeof u==='string'&&isWhitelisted(u));
+    // 🛡️ [SAST-5 FIX] Önceden d.group bütünüyle güvenilip DB'ye yazılıyordu —
+    // tip/uzunluk/içerik kontrolü yoktu. Tam bir sunucu-taraflı yetki kontrolü
+    // bu istemci-güvenir-istemci mimarisinde mümkün değil (bkz. not), ama en
+    // azından temel şekil doğrulaması ve groupId çakışma/ele geçirme koruması
+    // eklenir.
     if(g && typeof g==='object' && typeof g.id==='string' && g.id.length<128 && g.id.startsWith('GRP_')
        && typeof g.name==='string' && g.name.length>0 && g.name.length<=64
        && Array.isArray(g.members) && g.members.length>0 && g.members.length<=500
@@ -3389,50 +2704,17 @@ async function handleSig(d){
         // Eski format uyumluluğu: admin string ise diziye çevir
         g.admins=g.admin?[g.admin]:[d.from];
       }
-      // 🛡️ [YENİ] Gönderen kendi admin listesinde yer almıyorsa (meşru
-      // akışta bu HİÇ olmaz — bkz. yukarıdaki not) paket reddedilir.
-      if(!Array.isArray(g.admins) || !g.admins.includes(d.from)){
-        console.warn('[SEC] Gönderen kendi admin listesinde yer almıyor, group_invite reddedildi:', d.from, 'admins=', g.admins);
-        return;
-      }
-      _lastGroupInviteTs[g.id+'|'+d.from] = d.ts;
       db.groups[g.id]=g;saveDB(db);updateUI();showToast('Yeni Grup',`${d.from} sizi '${g.name}' grubuna ekledi.`);
     }
     return;
   }
   if(d.type==='group_msg'){
     if(!db.groups[d.groupId]||d.from===ME.user_id)return;
-    // 🛡️ [YENİ-SEC — KRİTİK] Gönderen artık bu grubun üyesi değilse
-    // (kicklenmişse) mesaj tamamen reddediliyor — bkz. _isGroupMember notu.
-    if(!_isGroupMember(d.groupId, d.from)){
-      console.warn('[SEC] Grup üyesi olmayan biri group_msg gönderdi, reddedildi:', d.from, 'groupId=', d.groupId);
-      return;
-    }
     const k='g_'+d.groupId;
     if(!db.messages[k])db.messages[k]=[];
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
-    // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/'legacy'/null (bkz. _verifyMessageSig).
-    // ÖNEMLİ: kırpma işleminden ÖNCE — bkz. private_msg tarafındaki not.
-    // 🛡️ [YENİ-SEC — V2 BAĞLAM BAĞLAMA] `ctx`, işlediğimiz d.groupId'den
-    // hesaplanıyor — mesajın içinden OKUNMUYOR. Bu mesaj aslında A'nın B'ye
-    // gönderdiği ÖZEL bir mesajsa veya BAŞKA bir gruba aitse, imzanın
-    // üretildiği GERÇEK ctx ile burada hesapladığım ctx uyuşmaz → V2
-    // doğrulama başarısız olur → aşağıda REDDEDİLİR.
-    const _ctx = 'g:'+d.groupId;
-    d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg, _ctx);
-    // 🛡️ [YENİ-SEC — KRİTİK] V2 imzası VARSA ve GEÇERSİZSE (false) — mesaj
-    // TAMAMEN REDDEDİLİYOR (bkz. private_msg tarafındaki aynı not).
-    if(d.msg._sigVerified === false){
-      console.warn('[SEC] V2 imza doğrulaması BAŞARISIZ (grup) — mesaj reddedildi (olası bağlam-taşıma denemesi):', d.from, d.msg.id, 'groupId=', d.groupId);
-      return;
-    }
-    // 🛡️ [YENİ-SEC] Aşırı uzun mesaj metni, imza kontrolünden SONRA kırpılıyor.
-    if(typeof d.msg.text==='string' && d.msg.text.length>MAX_INCOMING_TEXT_CHARS){
-      console.warn('[SEC] Aşırı uzun mesaj metni kırpıldı (grup):', d.from, d.msg.text.length);
-      d.msg.text = d.msg.text.slice(0, MAX_INCOMING_TEXT_CHARS) + '…';
-    }
-    // 🛡️ [SEC] bkz. private_msg tarafındaki aynı not — alan doğrulaması.
-    if(!_sanitizeIncomingMsg(d.msg, d.from)) return;
+    // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/null (bkz. _verifyMessageSig).
+    d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg);
     // Gelen dosya/gif verisini oturum belleğine kaydet
     if(d.msg.fileData&&!d.msg.fileData.startsWith('__')){
       // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
@@ -3445,8 +2727,6 @@ async function handleSig(d){
       }
     }
     db.messages[k].push(d.msg);saveDB(db);
-    // 🛡️ [YENİ — Delivered State] bkz. private_msg tarafındaki aynı not.
-    broadcast({type:'msg_delivered', to:d.from, from:ME.user_id, msgId:d.msg.id, groupId:d.groupId});
     if(chatId===d.groupId&&chatType==='group'){
       renderChat();
       broadcastGroupRead(d.groupId, d.msg.id, d.from);
@@ -3487,15 +2767,10 @@ async function handleSig(d){
     // presence'ı henüz alınmamış biri) sahte bir arama teklifi göndererek
     // arama modalını açtırabilir, SDP/ICE alışverişini tetikleyebilir ve
     // olası bir IP-sızıntısı/rahatsız etme (harassment) vektörü oluşturabilirdi.
-    // 🛡️ [Bulgu #1] rejected → engelle; unverified → izin ver (Model A,
-    // diğer bağlantı noktalarıyla tutarlı) ama loglanır.
     const _rtcVerified = await _ensurePeerVerified(d.from);
-    if(_rtcVerified.status==='rejected'){
-      console.warn('[SEC] Doğrulanamayan/reddedilen kimlikten gelen rtc_offer reddedildi:', d.from);
+    if(!_rtcVerified){
+      console.warn('[SEC] Doğrulanamayan kimlikten gelen rtc_offer reddedildi:', d.from);
       return;
-    }
-    if(_rtcVerified.status==='unverified'){
-      console.warn('[SEC][UNVERIFIED] rtc_offer doğrulanmamış kimlikten kabul ediliyor (Model A):', d.from);
     }
     // ICE restart offer — aktif arama varken geliyorsa yeniden müzakere et
     if(d.iceRestart && pc && pc.signalingState !== 'closed'){
@@ -3698,30 +2973,18 @@ function renderLoginAccounts(){
   });
 })();
 
-// 🐛 [FIX] "Giriş Yap" butonu her durumda AYNI metni kullanıyordu (EN modda
-// hep "Log In" çıkıyordu), oysa istenen davranış: varsayılan/boş form →
-// "Sign In" (yeni hesap açılabilir), kayıtlı bir hesaba tıklanınca → "Log In".
-// Türkçe tarafta görünen metin bilerek "Hesaba Giriş Yap" yapıldı ki i18n
-// sözlüğü bunu düz "Giriş Yap"tan AYRI bir anahtar olarak "Log In" diye
-// çevirebilsin (bkz. i18n.js). _selectedSavedAccountKey, kullanıcı adı alanı
-// hâlâ seçilen kayıtlı hesapla eşleşiyor mu diye takip eder; eşleşmeyi
-// kaybedince (elle değiştirilince veya hesap silinince) buton varsayılana
-// ("Giriş Yap" → "Sign In") döner.
-let _selectedSavedAccountKey = null;
-
 window.loginAs=async(key)=>{
   const db=getDB();
   if(!db.users[key])return;
   const user=db.users[key];
   const k=_sanitizeUsername(key).toLowerCase()||key;
-  _selectedSavedAccountKey = k;
 
   if(pwExists(k)){
     $('authUsername').value=user.user_id;
     $('authPassword').value='';
     $('authStatus').innerText='Şifrenizi girin.';
     $('firstLoginBanner').style.display='none';
-    $('authBtn').innerText='Hesaba Giriş Yap';
+    $('authBtn').innerText='Giriş Yap';
     setTimeout(()=>$('authPassword').focus(),80);
   } else {
     $('authUsername').value=user.user_id;
@@ -3732,29 +2995,6 @@ window.loginAs=async(key)=>{
     setTimeout(()=>$('authPassword').focus(),80);
   }
 };
-
-// 🐛 [FIX] Kullanıcı, kayıtlı bir hesabı seçtikten SONRA kullanıcı adını
-// elle değiştirirse (yani aslında farklı/yeni bir hesap açmak istiyorsa),
-// buton "Hesaba Giriş Yap" (Log In) yazmaya devam etmemeli — varsayılan
-// "Giriş Yap" (Sign In) durumuna dönmeli. Sadece butonun o an gerçekten
-// "seçili hesap" metinlerinden birini gösterdiği durumda müdahale ediyoruz
-// ki brute-force kilidi / "Kontrol ediliyor..." gibi başka geçici durumları
-// ezmeyelim.
-(()=>{
-  const input=$('authUsername');
-  if(!input) return;
-  input.addEventListener('input',()=>{
-    if(!_selectedSavedAccountKey) return;
-    const cur=_sanitizeUsername(input.value.trim()).toLowerCase();
-    if(cur===_selectedSavedAccountKey) return; // hâlâ aynı hesap
-    _selectedSavedAccountKey=null;
-    const btn=$('authBtn');
-    if(btn && (btn.innerText==='Hesaba Giriş Yap' || btn.innerText==='Şifre Belirle ve Giriş Yap')){
-      btn.innerText='Giriş Yap';
-      $('firstLoginBanner').style.display='none';
-    }
-  });
-})();
 
 // ── HESAP SİLME ───────────────────────────────────────────────────
 window.confirmDeleteAccount=(key)=>{
@@ -3802,18 +3042,6 @@ window.confirmDeleteAccount=(key)=>{
       const list=getAccounts().filter(a=>a!==key);
       localStorage.setItem(ACC_KEY,JSON.stringify(list));
     }catch(e){}
-    // 🐛 [FIX] Silinen hesap o an formda seçiliyse (kullanıcı ona tıklamış,
-    // buton "Hesaba Giriş Yap" durumundaysa) formu ve butonu varsayılana
-    // ("Giriş Yap" → Sign In) döndür — aksi halde silinmiş bir hesap için
-    // hâlâ "Log In" yazan, kafa karıştırıcı bir buton kalırdı.
-    if(_selectedSavedAccountKey===key){
-      _selectedSavedAccountKey=null;
-      $('authUsername').value='';
-      $('authPassword').value='';
-      $('authStatus').innerText='';
-      $('firstLoginBanner').style.display='none';
-      $('authBtn').innerText='Giriş Yap';
-    }
     overlay.remove();
     renderLoginAccounts();
     showDeletedToast(u.user_id);
@@ -4233,8 +3461,8 @@ function updateUI(){
   $('lstR').innerHTML=me.requests.length?me.requests.map(r=>`
     <div class="li" style="cursor:default">
       <div style="display:flex;align-items:center;flex:1;min-width:0">
-        <div class="av2">${escHtml(r.charAt(0).toUpperCase())}</div>
-        <span style="margin-left:10px;font-weight:600;font-size:13px">${escHtml(r)}</span>
+        <div class="av2">${r.charAt(0).toUpperCase()}</div>
+        <span style="margin-left:10px;font-weight:600;font-size:13px">${r}</span>
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0">
         <button class="btn-ok req-acc-btn" data-req-user="${escHtml(r)}" style="padding:5px 10px;font-size:12px;border-radius:8px">✓ Kabul</button>
@@ -4282,7 +3510,7 @@ function updateFriends(){
         <div class="li ${chatId===f?'on':''}" data-act="selChat" data-a="${escHtml(f)}" data-a2="private" data-ctx-act="showCtx" data-ctx-a="${escHtml(f)}">
           <div style="display:flex;align-items:center;flex:1;min-width:0">
             <div class="av2" style="position:relative">${av}<span class="sdot status-dot" style="background:${stColor[st]}"></span></div>
-            <div class="fi"><strong>${escHtml(f)}</strong>${verBadge(f)}<span class="sub">${sub}${typingBubble}</span></div>
+            <div class="fi"><strong>${f}</strong>${verBadge(f)}<span class="sub">${sub}${typingBubble}</span></div>
           </div>
           <button data-act="showCtx" data-a="${escHtml(f)}" data-stop="1" data-pass-event="1" style="background:none;border:none;color:var(--muted);padding:4px 6px;font-size:16px;min-width:auto;cursor:pointer;flex-shrink:0">⋮</button>
         </div>
@@ -4308,7 +3536,7 @@ function updateFriends(){
         <div class="li ${chatId===g.id?'on':''}" data-act="selChat" data-a="${escHtml(g.id)}" data-a2="group">
           <div style="display:flex;align-items:center;flex:1;min-width:0">
             <div class="av2" style="background:${callInfo?'#22c55e':'var(--ok)'};overflow:hidden;${callInfo?'box-shadow:0 0 0 2px #22c55e':''}">${avHTML}</div>
-            <div class="fi"><strong>${escHtml(g.name)}</strong>${callBadge}<span class="sub">${subText}</span></div>
+            <div class="fi"><strong>${g.name}</strong>${callBadge}<span class="sub">${subText}</span></div>
           </div>
           <button data-act="openGroupDetail" data-a="${escHtml(g.id)}" data-stop="1" style="background:none;border:none;color:var(--muted);padding:4px 6px;font-size:16px;min-width:auto;cursor:pointer;flex-shrink:0">⋮</button>
         </div>
@@ -4370,7 +3598,7 @@ function svUpdateProfilePanel(){
   const profAv=$('svProfAv');
   if(profAv){
     profAv.innerHTML = av&&av.startsWith('data:')
-      ? `<img src="${escHtml(av)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
+      ? `<img src="${av}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
       : ME.user_id.charAt(0).toUpperCase();
   }
   // İsim + token
@@ -4416,7 +3644,7 @@ function updateBlockedList(){
   if(!bl.length){$('blockedList').innerHTML='<div style="padding:12px 20px;font-size:13px;color:var(--muted)">Engellenmiş kullanıcı yok.</div>';return;}
   $('blockedList').innerHTML=bl.map(u=>`
     <div class="sp-bl-item">
-      <span>🚫 ${escHtml(u)}</span>
+      <span>🚫 ${u}</span>
       <button data-act="unblock" data-a="${escHtml(u)}" style="background:none;border:none;color:var(--ok);font-size:12px;font-weight:600;cursor:pointer;padding:0">Engeli Kaldır</button>
     </div>`).join('');
 }
@@ -4586,8 +3814,6 @@ window.selChat=(id,type)=>{
 
   if(type==='private'){
     $('chatName').innerText=id;$('chatSub').dataset.t='0';
-    // 🛡️ [YENİ — Denetim Raporu Bulgu #1] Kalıcı kimlik güven durumu
-    _renderIdentityTrust(id);
     const _st=isOn(id)?(peerStatuses[id]||'available'):'offline';
     const _stColor={available:'var(--ok)',busy:'#ef4444',dnd:'#7c3aed',away:'#f59e0b',offline:'#6b7280'};
     const _stLabel={available:'Çevrimiçi',busy:'Meşgul',dnd:'Rahatsız Etme',away:'Uzakta'};
@@ -4624,7 +3850,6 @@ window.selChat=(id,type)=>{
     _renderChatFpEl(id);
   }else{
     const g=getDB().groups[id];
-    if($('chatIdentityTrust')) $('chatIdentityTrust').style.display='none';
     $('chatName').innerText=g.name;$('chatSub').innerText=`${g.members.length} Üye`;
     if(g.avatar){ setAvatarEl($('chatAv'), g.avatar, 'G'); }
     else{ $('chatAv').innerText='G'; }
@@ -4673,7 +3898,7 @@ function renderChat(){
             <span class="mcc-icon">📵</span>
             <div class="mcc-body">
               <div class="mcc-title">Cevapsız Arama</div>
-              <div class="mcc-sub">${escHtml(m.from||'')} · ${escHtml(m.time||'')}</div>
+              <div class="mcc-sub">${escHtml(m.from||'')} · ${m.time||''}</div>
             </div>
             ${canCall?`<button class="mcc-btn" data-act="_uiCallBack" data-a="${escHtml(m.from||'')}">Geri Ara</button>`:''}
           </div>
@@ -4728,15 +3953,12 @@ function renderChat(){
         const audio=new Audio(safeVoice);
         _vmAudios[m.id]=audio;
       }
-      // 🛡️ [SEC] m.id/sid attribute'lara escape'siz yazılmıyordu — ingest
-      // doğrulaması olsa bile savunma derinliği olarak escape ediliyor.
-      const esid=escHtml(sid), emid=escHtml(m.id);
-      contentHTML=`<div class="voice-msg" id="${esid}">
-        <button class="vm-play" data-act="playVoiceMsg" data-a="${emid}" data-self="2" data-playing="0">▶</button>
-        <div class="vm-wave" data-act="_uiPlayVoiceFromWave" data-a="${emid}" data-a2="${esid}">
+      contentHTML=`<div class="voice-msg" id="${sid}">
+        <button class="vm-play" data-act="playVoiceMsg" data-a="${m.id}" data-self="2" data-playing="0">▶</button>
+        <div class="vm-wave" data-act="_uiPlayVoiceFromWave" data-a="${m.id}" data-a2="${sid}">
           <svg viewBox="0 0 181 40" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;color:${me?'rgba(255,255,255,.8)':'var(--primary)'}">${barsSVG}</svg>
         </div>
-        <span class="vm-time" id="${esid}_t">${durStr}</span>
+        <span class="vm-time" id="${sid}_t">${durStr}</span>
       </div>`;
     } else if(m.fileType==='image'){
       // 🛡️ [ÇOK KRİTİK FIX] fileData artık src'ye yazılmadan önce şema
@@ -4772,10 +3994,49 @@ function renderChat(){
       // URL'leri tıklanabilir yap
       txt = txt.replace(/(https?:\/\/[^\s<>"]+)/g,'<a href="$1" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;opacity:.85" data-act="_uiNoop" data-stop="1">$1</a>');
       contentHTML=`<span class="msg-text">${txt}${editedHTML}</span>`;
+      // Link önizleme kartı
+      if(m.linkPreview){
+        const lp = m.linkPreview;
+        // 🛡️ [YENİ-H3] sanitizeLinkUrl: sadece http/https geçer
+        const safeUrl = sanitizeLinkUrl(lp.url||'');
+        if(safeUrl && (lp.type === 'youtube' || lp.ytId)){
+          const thumb = escHtml(lp.thumb || `https://img.youtube.com/vi/${escHtml(lp.ytId||'')}/hqdefault.jpg`);
+          contentHTML += `<div class="link-preview yt" data-lp-url="${safeUrl}">
+            <div class="link-preview-yt-wrap">
+              <img class="link-preview-thumb" src="${thumb}" alt="${escHtml(lp.title||'')}" loading="lazy" data-onerror="ytfallback" data-ytid="${escHtml(lp.ytId||'')}">
+              <div class="link-preview-yt-play"><div class="link-preview-yt-play-btn"></div></div>
+            </div>
+            <div class="link-preview-body">
+              <div class="link-preview-domain">
+                <img class="link-preview-favicon" src="https://www.youtube.com/favicon.ico" data-onerror="hide">
+                YouTube${lp.author?` · ${escHtml(lp.author)}`:''}
+              </div>
+              <div class="link-preview-title">${escHtml(lp.title||'YouTube Video')}</div>
+            </div>
+          </div>`;
+        } else if(safeUrl && lp.title){
+          // 🛡️ [FIX-3] escHtml() sadece HTML-escape yapar, URL şeması filtrelemez.
+          // javascript:/vbscript:/data:text gibi tehlikeli şemaları da reddetmek için
+          // sanitizeAvatarUrl (yalnızca https:// ve data:image/ kabul eder) kullanılır.
+          const safeImg = sanitizeAvatarUrl(lp.image);
+          const safeFavicon = sanitizeAvatarUrl(lp.favicon);
+          contentHTML += `<div class="link-preview" data-lp-url="${safeUrl}">
+            ${safeImg?`<img class="link-preview-thumb" src="${escHtml(safeImg)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-onerror="hide">`:''}
+            <div class="link-preview-body">
+              <div class="link-preview-domain">
+                ${safeFavicon?`<img class="link-preview-favicon" src="${escHtml(safeFavicon)}" referrerpolicy="no-referrer" data-onerror="hide">`:''}
+                ${escHtml(lp.domain||'')}
+              </div>
+              <div class="link-preview-title">${escHtml(lp.title)}</div>
+              ${lp.desc?`<div class="link-preview-desc">${escHtml(lp.desc)}</div>`:''}
+            </div>
+          </div>`;
+        }
+      }
     }
     // Kaybolucak mesaj — geri sayım rozeti
     const vanishBadge = m.expiresAt
-      ? `<span class="vanish-badge">⏱️ <span class="msg-timer" data-exp="${escHtml(m.expiresAt)}">...</span></span>`
+      ? `<span class="vanish-badge">⏱️ <span class="msg-timer" data-exp="${m.expiresAt}">...</span></span>`
       : '';
 
     // Reply önizleme
@@ -4794,42 +4055,29 @@ function renderChat(){
         grouped[emoji].push(user);
       });
       reactHTML=`<div class="reactions">${Object.entries(grouped).map(([emoji,users])=>
-        `<div class="reaction-chip ${users.includes(ME.user_id)?'mine':''}" data-act="toggleReaction" data-a="${escHtml(m.id)}" data-a2="${escHtml(emoji)}">${escHtml(emoji)}<span>${users.length}</span></div>`
+        `<div class="reaction-chip ${users.includes(ME.user_id)?'mine':''}" data-act="toggleReaction" data-a="${m.id}" data-a2="${escHtml(emoji)}">${emoji}<span>${users.length}</span></div>`
       ).join('')}</div>`;
     }
 
-    // Okundu/teslim bilgisi — sadece kendi mesajlarında göster
-    // 🛡️ [YENİ — Delivered State] Üç durumlu tik: ✓ (gönderildi — DC send()
-    // başarılı ama karşı tarafın ALDIĞI KANITLANMADI), ✓✓ gri (delivered —
-    // karşı taraf application-level ACK ile aldığını doğruladı), ✓✓ renkli
-    // (read — karşı taraf gerçekten görüntüledi). "Sent" durumu, mesajın
-    // sadece kendi tarayıcımızdan çıktığını gösterir — karşı tarafa
-    // ulaştığını ASLA garanti etmez; bu yüzden yanlış bir güven hissi
-    // vermemek için "delivered" onayı gelene kadar tek ✓'de kalır.
+    // Okundu bilgisi — sadece kendi mesajlarında göster
     let ticksHTML='';
     if(me){
       if(chatType==='private'){
         const isRead=!!(m.readBy&&m.readBy.includes(chatId));
-        const isDelivered=isRead || !!(m.deliveredTo&&m.deliveredTo.includes(chatId));
-        const cls = isRead?'read':(isDelivered?'delivered':'');
-        const mark = isDelivered ? '✓✓' : '✓';
-        const title = isRead ? 'Okundu' : (isDelivered ? 'İletildi' : 'Gönderildi');
-        ticksHTML=`<span class="ticks ${cls}" title="${title}">${mark}</span>`;
+        ticksHTML=`<span class="ticks ${isRead?'read':''}">${isRead?'✓✓':'✓'}</span>`;
       } else if(chatType==='group'){
         const readers=(m.readBy||[]).filter(u=>u!==ME.user_id);
-        const delivered=(m.deliveredTo||[]).filter(u=>u!==ME.user_id);
-        if(readers.length>0) ticksHTML=`<span class="ticks read" title="${escHtml(readers.join(', '))} okudu">✓✓ ${readers.length}</span>`;
-        else if(delivered.length>0) ticksHTML=`<span class="ticks delivered" title="${delivered.length} kişiye iletildi">✓✓ ${delivered.length}</span>`;
-        else ticksHTML=`<span class="ticks" title="Gönderildi">✓</span>`;
+        if(readers.length>0) ticksHTML=`<span class="ticks read" title="${readers.join(', ')} okudu">✓✓ ${readers.length}</span>`;
+        else ticksHTML=`<span class="ticks">✓</span>`;
       }
     }
 
     // Action butonları
     const actionsHTML=`<div class="msg-actions">
-      <button class="ma-btn" data-act="startReply" data-a="${escHtml(m.id)}" title="Yanıtla">↩</button>
-      <button class="ma-btn" data-act="openReactPicker" data-a="${escHtml(m.id)}" data-self="2" title="Reaksiyon">😊</button>
-      ${me?`<button class="ma-btn" data-act="editMsg" data-a="${escHtml(m.id)}" title="Düzenle">✏️</button>
-      <button class="ma-btn" data-act="deleteMsg" data-a="${escHtml(m.id)}" title="Sil" style="color:var(--danger)">🗑️</button>`:''}
+      <button class="ma-btn" data-act="startReply" data-a="${m.id}" title="Yanıtla">↩</button>
+      <button class="ma-btn" data-act="openReactPicker" data-a="${m.id}" data-self="2" title="Reaksiyon">😊</button>
+      ${me?`<button class="ma-btn" data-act="editMsg" data-a="${m.id}" title="Düzenle">✏️</button>
+      <button class="ma-btn" data-act="deleteMsg" data-a="${m.id}" title="Sil" style="color:var(--danger)">🗑️</button>`:''}
     </div>`;
 
     // 🛡️ [YENİ] İmza VAR ama doğrulanamadıysa (m._sigVerified===false) —
@@ -4840,7 +4088,7 @@ function renderChat(){
     const sigWarnHTML = (!me && m._sigVerified===false)
       ? `<span class="mi" style="color:var(--danger);font-weight:700" title="Bu mesajın imzası, ${escHtml(m.from||'gönderenin')} için bilinen kimlik anahtarıyla eşleşmiyor. İçerik yolda değiştirilmiş olabilir.">⚠️ İmza doğrulanamadı</span>`
       : '';
-    return`<div class="msg-wrap ${me?'me-wrap':''}" data-id="${escHtml(m.id)}" data-ctx-act="showMsgCtx" data-ctx-a="${escHtml(m.id)}" data-ctx-a2="${escHtml(m.from||'')}">
+    return`<div class="msg-wrap ${me?'me-wrap':''}" data-id="${m.id}" data-ctx-act="showMsgCtx" data-ctx-a="${escHtml(m.id)}" data-ctx-a2="${escHtml(m.from||'')}">
       <div class="msg-col">
         ${actionsHTML}
         <div class="msg ${me?'me':'ot'}">
@@ -4849,7 +4097,7 @@ function renderChat(){
           ${sigWarnHTML}
           ${contentHTML}
           ${reactHTML}
-          <span class="mi">${escHtml(m.time||'')}${vanishBadge}${ticksHTML}</span>
+          <span class="mi">${m.time||''}${vanishBadge}${ticksHTML}</span>
         </div>
       </div>
     </div>`;
@@ -4876,30 +4124,14 @@ function escHtml(t){
   // &, <, >, " kaçırılıyordu. Şu an tüm öznitelikler çift tırnakla
   // yazıldığı için doğrudan istismar edilebilir değildi, ama savunma
   // derinliği (defense-in-depth) için eklendi.
-  // 🛡️ [SEC FIX] String coercion — escHtml artık sayı/undefined/null gibi
-  // string olmayan değerlerle çağrıldığında TypeError fırlatıp tüm render
-  // zincirini kırmak yerine güvenle kaçırıyor (mesaj meta alanları artık
-  // doğrulanmış olsa da, eski kayıtlı verilerle uyumluluk için zorunlu).
-  t = String(t ?? '');
   return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 // 🛡️ [HIGH-06] Avatar URL dogrulaması — javascript:, data:text, vbscript: reddedilir
-// 🛡️ [YENİ — Denetim Raporu Bulgu #3 Fix] Önceden HERHANGİ bir https://
-// URL'si avatar/görsel olarak kabul ediliyordu (data:image/ yanında).
-// Kötü niyetli bir eş, kendi sunucusuna işaret eden benzersiz bir https
-// URL'sini "avatar" veya gelen resim mesajı olarak gönderip, alıcı
-// istemcinin bu görseli otomatik yüklemesini bir İZLEME PİKSELİ gibi
-// kullanarak alıcının IP adresini/User-Agent'ını/açık olduğu zamanı
-// öğrenebilirdi (GIF'ler için zaten _TRUSTED_GIF_HOSTS ile kapatılmıştı,
-// ama avatar/resim mesajı yolu açık kalmıştı). Gerçek avatar/resim
-// yükleme akışı ZATEN HER ZAMAN data:image/... üretiyor (bkz.
-// $('avatarInput').onchange / $('groupAvatarInput').onchange —
-// canvas.toDataURL() kullanıyorlar) — yani https:// desteğinin hiçbir
-// meşru kullanım senaryosu yok, kaldırılması hiçbir özelliği bozmuyor.
 function sanitizeAvatarUrl(url){
   if(!url||typeof url!=='string') return null;
   if(url.startsWith('data:image/')&&url.length<2_000_000) return url;
+  if(/^https:\/\//.test(url)) return url;
   return null;
 }
 
@@ -4941,25 +4173,8 @@ function sanitizeGifUrl(url){
 // şema (javascript:, vbscript:, http(s):, blob: vb.) burada meşru değildir.
 function sanitizeFileDataUrl(url){
   if(!url||typeof url!=='string') return null;
-  if(!url.startsWith('data:')) return null;
-  if(url.length>=20_000_000) return null;
-  // 🛡️ [YENİ — Denetim Raporu Bulgu #6 Fix] Önceden yalnızca "data:" öneki
-  // ve uzunluk kontrol ediliyordu — data:text/html veya
-  // data:image/svg+xml gibi, açılınca SCRIPT ÇALIŞTIRABİLEN MIME türleri
-  // de kabul ediliyordu. Bu değer bir <a href download> bağlantısına
-  // yazılıyor; `download` özniteliği çoğu tarayıcıda doğrudan navigasyonu
-  // engellese de, sağ-tık > "Bağlantıyı yeni sekmede aç" gibi yollarla bu
-  // atlanabilir ve data: URL'si (izole bir origin'de de olsa) oynatılabilir/
-  // kimlik avı sayfası olarak render edilebilir. Gerçek bir dosya
-  // yüklemesinde script çalıştırabilecek bu türlere hiç ihtiyaç yok —
-  // burada bir İZİN LİSTESİ değil, dar bir ENGEL LİSTESİ kullanıyoruz ki
-  // kullanıcıların gönderebildiği meşru dosya türleri (pdf, zip, mp3,
-  // mp4, docx, vb.) kısıtlanmasın.
-  const mimeMatch = /^data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+)/.exec(url);
-  const mime = (mimeMatch ? mimeMatch[1] : '').toLowerCase();
-  const BLOCKED_MIME = ['text/html','image/svg+xml','application/xhtml+xml','application/xml','text/xml'];
-  if(BLOCKED_MIME.includes(mime)) return null;
-  return url;
+  if(url.startsWith('data:')&&url.length<20_000_000) return url;
+  return null;
 }
 
 // 🛡️ [HIGH-06] Avatar elementini guvenli sek. set et — innerHTML KULLANILMAZ
@@ -5035,7 +4250,7 @@ window.openGroupModal=function(){
       :`<span style="width:8px;height:8px;border-radius:50%;background:#6b7280;display:inline-block;flex-shrink:0"></span>`;
     const offlineNote=online?'':` <span style="font-size:10px;color:#6b7280">(Çevrimdışı)</span>`;
     return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text)">
-      <input type="checkbox" value="${escHtml(f)}" class="gcb"> ${statusDot} ${escHtml(f)}${offlineNote}</label>`;
+      <input type="checkbox" value="${f}" class="gcb"> ${statusDot} ${f}${offlineNote}</label>`;
   }).join('');
   $('groupModal').classList.remove('hidden');
 };
@@ -5087,10 +4302,16 @@ function cleanCall(){
   _stopSpeakLoop();
   iceQ=[];
 }
+function _tapRemoteForCaptions(userId, stream){
+  try{
+    if(window.OpenChatEdgeAI && stream) window.OpenChatEdgeAI.attachRemoteStream(userId, stream);
+  }catch(e){}
+}
 function onTrack(e){
   const s=e.streams[0];
   if(!s)return;
   const remoteUser=activeChatId||chatId;
+  _tapRemoteForCaptions(remoteUser, s);
   if(s.getVideoTracks().length>0){
     // Video track geldi — karşı tarafın avatar kartını bul ve video ile değiştir
     const setRemoteVideo=(user_id)=>{
@@ -5669,7 +4890,7 @@ window.openPeerVolMenu=function(e, user_id){
   menu.innerHTML=`
     <div class="pvm-title">
       <span id="pvm-icon">${volIcon}</span>
-      <span>${escHtml(user_id)}</span>
+      <span>${user_id}</span>
     </div>
     <div class="pvm-row">
       <button class="pvm-stepper" data-act="_uiPvmStepDown" data-a="${escHtml(user_id)}">−</button>
@@ -5931,6 +5152,7 @@ function endCall(reason){
   for(const k of Object.keys(peerVolumes)) delete peerVolumes[k];
   closePeerVolMenu();
   // Aktif arama bitti — sidebar güncelle
+  try{ window.OpenChatEdgeAI && window.OpenChatEdgeAI.onCallEnded(); }catch(e){}
   _stopGroupCallBroadcast();
 }
 
@@ -6215,14 +5437,6 @@ const _sessionFiles = new Map(); // msgId → dataURL / URL
 // uygulanıyor. ~10MB dosya, base64'te ~13.7MB olur; güvenlik payı için üst
 // sınır 15MB karakter olarak belirlendi.
 const MAX_INCOMING_FILE_CHARS = 15_000_000;
-// 🛡️ [YENİ-SEC] Gelen mesaj METNİ için önceden HİÇBİR uzunluk sınırı
-// yoktu — kötü niyetli/ele geçirilmiş bir peer, devasa boyutta bir `text`
-// alanı göndererek alıcının tarayıcısını (DOM render + localStorage
-// yazma sırasında) donmaya/çökmeye zorlayabilirdi (DoS). Giden mesaj
-// input'unda da bir üst sınır olmadığı için, normal kullanımı hiç
-// etkilemeyecek kadar cömert ama DoS-ölçekli payload'ları engelleyecek
-// kadar düşük bir değer seçildi.
-const MAX_INCOMING_TEXT_CHARS = 20_000;
 
 // ══════════════════════════════════════════════════════════════════
 //  🎙️ SES İŞLEME — Temiz Yaklaşım
@@ -6588,10 +5802,10 @@ function updateParticipantsGrid(){
     // toggleVideo() kendi kamera önizlemesini hiçbir yere ekleyemiyordu
     // (document.getElementById('myCallAv') null dönüyordu, sessizce atlanıyordu).
     const avIdAttr=isSelf?' id="myCallAv"':'';
-    return `<div class="part-card${isSmall?' part-card-sm':''}" id="pcard_${escHtml(u)}"${ctxAttr}>
+    return `<div class="part-card${isSmall?' part-card-sm':''}" id="pcard_${u}"${ctxAttr}>
       <div class="part-av"${avIdAttr} style="width:${avSize}px;height:${avSize}px;font-size:${fontSize}px">${avHTML}</div>
-      <span class="part-name">${isSelf?'Sen':escHtml(u)}<span class="part-speak-icon">🎙️</span></span>
-      <div class="part-vol-bar"><div class="part-vol-fill" id="pvf_${escHtml(u)}"></div></div>
+      <span class="part-name">${isSelf?'Sen':u}<span class="part-speak-icon">🎙️</span></span>
+      <div class="part-vol-bar"><div class="part-vol-fill" id="pvf_${u}"></div></div>
       ${muteBadge}${deafBadge}${volTxt}${volBtn}
     </div>`;
   }).join('');
@@ -6690,6 +5904,7 @@ async function broadcastGroupCallOffer(targetUser){
   gpc.ontrack=e=>{
     const s=e.streams[0];if(!s)return;
     groupCallPeers[targetUser].stream=s;
+    _tapRemoteForCaptions(targetUser, s);
     // ── Bug fix: sağır moddayken yeni kişinin sesini hemen kapat ──
     if(isDeafened){
       s.getAudioTracks().forEach(t=>{t.enabled=false;});
@@ -6766,16 +5981,10 @@ const _patchedGroupCallSignals=async(d)=>{
   if(d.type==='grp_offer'&&d.to===ME.user_id){
     // 🛡️ [YENİ-SEC] rtc_offer ile aynı gerekçeyle — grup arama teklifleri de
     // kimlik doğrulamasından geçmeden işlenmiyor.
-    // 🛡️ [Bulgu #1] rtc_offer ile aynı gerekçeyle — grup arama teklifleri
-    // de kimlik doğrulamasından geçmeden işlenmiyor. rejected → engelle,
-    // unverified → izin ver (Model A, diğer noktalarla tutarlı).
     const _grpVerified = await _ensurePeerVerified(d.from);
-    if(_grpVerified.status==='rejected'){
-      console.warn('[SEC] Doğrulanamayan/reddedilen kimlikten gelen grp_offer reddedildi:', d.from);
+    if(!_grpVerified){
+      console.warn('[SEC] Doğrulanamayan kimlikten gelen grp_offer reddedildi:', d.from);
       return;
-    }
-    if(_grpVerified.status==='unverified'){
-      console.warn('[SEC][UNVERIFIED] grp_offer doğrulanmamış kimlikten kabul ediliyor (Model A):', d.from);
     }
     // Duplikat grp_offer koruma — aynı from'dan 3 saniye içinde tekrar gelirse ignore
     const _grpKey='grpOfferDedup_'+d.from+'_'+d.groupId;
@@ -6888,52 +6097,6 @@ const _patchedGroupCallSignals=async(d)=>{
         console.warn('[SEC] e2e-doğrulanmamış group_update reddedildi (bootstrap anahtarıyla "from" güvenilemez):', d.from, 'groupId=', d.groupId);
         return;
       }
-      // 🛡️ [YENİ — Replay Koruması #7] Eski/tekrar oynatılmış bir güncelleme mi?
-      // 🛡️ [ZEHİRLEME DÜZELTMESİ] Anahtar artık groupId+gönderenId birleşik —
-      // bu göndericinin akışını sadece KENDİSİ etkileyebilir, başka bir
-      // göndericinin (ör. onu kicklemeye çalışan başka bir admin'in) akışını
-      // asla zehirleyemez.
-      if(!_isFreshGroupPacket(d.groupId+'|'+d.from, d.ts, _lastGroupStateTs)){
-        console.warn('[SEC] Eski/replay group_update reddedildi:', d.from, 'groupId=', d.groupId, 'ts=', d.ts);
-        return;
-      }
-      // 🛡️ [SEC] Uygulanacak alanların şekil doğrulaması. Önceden name/
-      // members/admins/avatar HIÇ doğrulanmadan g.name/g.members'e
-      // yazılıyordu; üye adı yerine HTML içeren string gönderip üye
-      // listesi render'ında stored-XSS yapılabiliyordu (ayrıca devasa
-      // dizi/objeler localStorage'ı şişirip DoS oluşturuyordu). Meşru
-      // admin istemcileri her zaman whitelist biçimli kullanıcı adları
-      // gönderdiği için bu kontrol meşru trafiği etkilemez.
-      if(d.name!==undefined && d.name!==null &&
-         (typeof d.name!=='string' || !d.name.trim() || d.name.length>64)){
-        console.warn('[SEC] group_update: geçersiz grup adı reddedildi:', d.from);
-        return;
-      }
-      if(d.members!==undefined && d.members!==null){
-        if(!Array.isArray(d.members) || d.members.length>500){
-          console.warn('[SEC] group_update: geçersiz members alanı reddedildi:', d.from);
-          return;
-        }
-        d.members=d.members.filter(u=>typeof u==='string'&&isWhitelisted(u));
-        if(!d.members.length){ console.warn('[SEC] group_update: boş members reddedildi:', d.from); return; }
-      }
-      if(d.admins!==undefined && d.admins!==null){
-        if(!Array.isArray(d.admins) || d.admins.length>100){
-          console.warn('[SEC] group_update: geçersiz admins alanı reddedildi:', d.from);
-          return;
-        }
-        d.admins=d.admins.filter(u=>typeof u==='string'&&isWhitelisted(u));
-      }
-      if(d.newAdmin!==undefined && d.newAdmin!==null &&
-         (typeof d.newAdmin!=='string' || !isWhitelisted(d.newAdmin))){
-        console.warn('[SEC] group_update: geçersiz newAdmin reddedildi:', d.from);
-        return;
-      }
-      if(d.avatar!==undefined && d.avatar!==null &&
-         (typeof d.avatar!=='string' || d.avatar.length>2_000_000)){
-        console.warn('[SEC] group_update: geçersiz avatar reddedildi:', d.from);
-        return;
-      }
       // 🛡️ [SAST-1 FIX] Yetki kontrolü: önceden hiç yoktu — herhangi bir
       // üye (veya groupId'yi bilen biri) sahte group_update göndererek
       // kendini admin yapabiliyor, başkalarını üyelikten/yöneticilikten
@@ -6949,10 +6112,6 @@ const _patchedGroupCallSignals=async(d)=>{
         return;
       }
       const oldName=g.name;
-      // 🛡️ [YENİ — Replay Koruması #7] Başarıyla uygulanan paketin zaman
-      // damgasını kaydet — bundan eski/eşit bir paket bir daha kabul edilmez.
-      // Anahtar groupId+gönderenId birleşik (bkz. yukarıdaki not).
-      _lastGroupStateTs[d.groupId+'|'+d.from] = d.ts;
       if(d.name)g.name=d.name;
       if(d.avatar)g.avatar=d.avatar;
       if(d.members)g.members=d.members;
@@ -6993,13 +6152,6 @@ const _patchedGroupCallSignals=async(d)=>{
         console.warn('[SEC] e2e-doğrulanmamış group_kick reddedildi:', d.from, 'groupId=', d.groupId);
         return;
       }
-      // 🛡️ [YENİ — Replay Koruması #7] Eski/tekrar oynatılmış bir kick paketi mi?
-      // Bu, "kicklenip sonra yeniden eklenen" birinin eski kick paketiyle
-      // tekrar dışlanmasını engeller.
-      if(!_isFreshGroupPacket(d.groupId+'|'+d.from, d.ts, _lastGroupKickTs)){
-        console.warn('[SEC] Eski/replay group_kick reddedildi:', d.from, 'groupId=', d.groupId, 'ts=', d.ts);
-        return;
-      }
       // 🛡️ [SAST-1 FIX] Yetki kontrolü: önceden hiç yoktu — herhangi bir
       // üye (hatta groupId'yi bilen, üye olmayan biri) sahte group_kick
       // göndererek grubu yerel DB'den sildirebiliyordu. Artık gönderen
@@ -7009,7 +6161,6 @@ const _patchedGroupCallSignals=async(d)=>{
         console.warn('[SEC] Yetkisiz group_kick reddedildi:', d.from, 'groupId=', d.groupId);
         return;
       }
-      _lastGroupKickTs[d.groupId+'|'+d.from] = d.ts;
       delete db.groups[d.groupId];
       delete db.messages['g_'+d.groupId];
       saveDB(db);
@@ -7061,12 +6212,7 @@ handleSig=async(d)=>{
   }
   // ── Aktif grup araması — Discord tarzı sidebar göstergesi ──
   if(d.type==='grp_call_active'&&d.groupId){
-    // 🛡️ [SEC] members dizi değilse (string/obje) banner çizimi
-    // .filter()'ta TypeError ile kırılıyordu — diziye normalize edilir.
-    const _cm=Array.isArray(d.members)
-      ? d.members.filter(u=>typeof u==='string'&&isWhitelisted(u))
-      : (d.from?[d.from]:[]);
-    activeGroupCalls[d.groupId]={members:_cm,ts:Date.now()};
+    activeGroupCalls[d.groupId]={members:d.members||[d.from],ts:Date.now()};
     if(chatId===d.groupId) updateChatCallBanner(d.groupId);
     updateFriends(); // sidebar'ı güncelle
     return;
@@ -7225,6 +6371,7 @@ async function _joinGroupPeer(d){
   gpc.ontrack=e=>{
     const s=e.streams[0];if(!s)return;
     groupCallPeers[d.from].stream=s;
+    _tapRemoteForCaptions(d.from, s);
     // ── Bug fix: sağır moddayken yeni kişinin sesini hemen kapat ──
     if(isDeafened){
       s.getAudioTracks().forEach(t=>{t.enabled=false;});
@@ -7639,7 +6786,7 @@ window.openGroupDetail=(gid)=>{
     <div class="gdp-section">Üye Ekle</div>
     <div style="display:flex;gap:8px;margin-bottom:8px">
       <select id="gdpAddSelect" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);font-size:13px;background:var(--panel);color:var(--text)">
-        ${notInGroup.map(f=>`<option value="${escHtml(f)}">${escHtml(f)}</option>`).join('')}
+        ${notInGroup.map(f=>`<option value="${f}">${f}</option>`).join('')}
       </select>
       <button data-act="addMemberToGroup" style="padding:8px 14px;font-size:13px">Ekle</button>
     </div>`:'';
@@ -7667,7 +6814,7 @@ window.openGroupDetail=(gid)=>{
         ${avHTML}<span class="sdot status-dot" style="position:absolute;bottom:0;right:0;width:10px;height:10px;border:2px solid var(--panel);background:${on?(({available:'#10b981',busy:'#ef4444',dnd:'#7c3aed',away:'#f59e0b'})[peerStatuses[m]||'available']||'#10b981'):'#6b7280'}"></span>
       </div>
       <div style="flex:1">
-        <span style="font-size:13px;font-weight:600">${escHtml(m)}</span>${badge}${selfBadge}
+        <span style="font-size:13px;font-weight:600">${m}</span>${badge}${selfBadge}
         <div style="font-size:11px;color:var(--muted)">${on?'Çevrimiçi':'Çevrimdışı'}</div>
       </div>
       <div style="display:flex;gap:2px;flex-wrap:wrap;justify-content:flex-end">${promoteBtn}${demoteBtn}${kickBtn}</div>
@@ -8182,7 +7329,7 @@ function _renderCurrentCustomStatus(){
   if(!el) return;
   const {emoji,text}=myCustomStatus;
   if(!emoji&&!text){ el.innerHTML='<span style="opacity:.4;font-size:11px">Özel durum yok — yukarıdan ekle</span>'; return; }
-  el.innerHTML=`${emoji?`<span>${escHtml(emoji)}</span>`:''}${text?`<span style="color:var(--text)">${escHtml(text)}</span>`:''}
+  el.innerHTML=`${emoji?`<span>${emoji}</span>`:''}${text?`<span style="color:var(--text)">${escHtml(text)}</span>`:''}
     <span style="font-size:10px;opacity:.5;margin-left:4px" data-act="clearCustomStatus" data-stop="1">✕</span>`;
 }
 window.clearCustomStatus=function(e){
@@ -8494,8 +7641,8 @@ window.showMsgCtx=(e,msgId,fromUser)=>{
       <div style="padding:8px 16px 4px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
         👁️ Görüldü (${readers.length}/${g.members.length-1})
       </div>
-      ${readers.length?readers.map(u=>`<div class="cxi" style="cursor:default;font-size:12px">✅ ${escHtml(u)}</div>`).join(''):'<div style="padding:4px 16px;font-size:12px;color:var(--muted)">Henüz kimse görmedi</div>'}
-      ${notRead.length?`<div style="padding:2px 16px 4px;font-size:11px;color:var(--muted)">⏳ ${escHtml(notRead.join(', '))}</div>`:''}
+      ${readers.length?readers.map(u=>`<div class="cxi" style="cursor:default;font-size:12px">✅ ${u}</div>`).join(''):'<div style="padding:4px 16px;font-size:12px;color:var(--muted)">Henüz kimse görmedi</div>'}
+      ${notRead.length?`<div style="padding:2px 16px 4px;font-size:11px;color:var(--muted)">⏳ ${notRead.join(', ')}</div>`:''}
       <div style="height:1px;background:var(--border);margin:4px 0"></div>`;
   }
 
@@ -8559,7 +7706,7 @@ window.openReactPicker=(msgId,btn)=>{
   const r=btn.getBoundingClientRect();
   p.style.top=(r.top-52)+'px';
   p.style.left=Math.min(r.left-20,window.innerWidth-230)+'px';
-  p.innerHTML=emojis.map(e=>`<button class="react-pick-btn" data-act="_uiPickReact" data-a="${escHtml(msgId)}" data-a2="${e}">${e}</button>`).join('');
+  p.innerHTML=emojis.map(e=>`<button class="react-pick-btn" data-act="_uiPickReact" data-a="${msgId}" data-a2="${e}">${e}</button>`).join('');
   document.body.appendChild(p);
   setTimeout(()=>document.addEventListener('click',()=>p.remove(),{once:true}),50);
 };
@@ -8697,9 +7844,14 @@ document.addEventListener('click',e=>{
     $('emojiPicker')?.classList.remove('open');
 });
 
-// 🛡️ [KALDIRILDI — Denetim Raporu Bulgu #5] data-lp-url click delegation'ı
-// kaldırıldı — bu, yalnızca artık var olmayan link önizleme kartları
-// içindi.
+// 🛡️ [YENİ-H3] Link preview — güvenli event delegation
+// onclick attribute yoktur; data-lp-url http/https kontrol edildikten sonra açılır
+document.addEventListener('click', e => {
+  const card = e.target.closest('[data-lp-url]');
+  if(!card) return;
+  const u = card.dataset.lpUrl;
+  if(u && /^https?:\/\//i.test(u)) window.open(u, '_blank', 'noopener,noreferrer');
+});
 
 // ── MSG OPS + READ + SOUND SİNYALLERİ ────────────────────────────
 const _origHSfinal=handleSig;
@@ -8709,33 +7861,6 @@ handleSig=async(d)=>{
   if(!ME) return;
 
   // Yeni mesaj operasyonları
-  // 🛡️ [YENİ — Delivered State] "Sent → Delivered → Read" zincirinin orta
-  // halkası. DataChannel send() başarılı olsa bile karşı tarafa GERÇEKTEN
-  // ULAŞTIĞINI garanti etmiyordu — bu ACK, alıcının mesajı doğrulayıp
-  // yerel deposuna yazdığını (bkz. gönderim noktasındaki not) kanıtlıyor.
-  // 🛡️ e2e kimlik bağlama zorunlu — aksi halde bir yabancı, hiç
-  // ulaşmamış bir mesaj için sahte "teslim edildi" onayı üretebilirdi.
-  // Replay/zaman damgası koruması GEREKMİYOR: işlem idempotent (bir
-  // kullanıcıyı deliveredTo listesine eklemek tekrarlansa da zararsız) —
-  // eski bir ACK'in tekrar gelmesi sadece aynı sonucu doğrular, hiçbir
-  // durumu geri almaz/bozmaz.
-  if(d.type==='msg_delivered'&&d.to===ME.user_id){
-    if(!d._isE2E){ return; }
-    if(d.groupId && !_isGroupMember(d.groupId, d.from)){ return; }
-    const db=getDB();
-    const k=d.groupId?'g_'+d.groupId:[ME.user_id,d.from].sort().join('_');
-    const msg=(db.messages[k]||[]).find(m=>m.id===d.msgId);
-    // Sadece BİZİM gönderdiğimiz bir mesaj için delivered anlamlı.
-    if(msg && msg.from===ME.user_id){
-      if(!msg.deliveredTo) msg.deliveredTo=[];
-      if(!msg.deliveredTo.includes(d.from)){
-        msg.deliveredTo.push(d.from);
-        saveDB(db);
-        if(chatId===(d.groupId||d.from)) renderChat();
-      }
-    }
-    return;
-  }
   if(d.type==='msg_read'&&d.to===ME.user_id){
     const db=getDB();
     const k=[ME.user_id,d.from].sort().join('_');
@@ -8770,23 +7895,7 @@ handleSig=async(d)=>{
     // gerçek sahibi olmasa bile msg_edit göndererek değiştirebiliyordu. Artık
     // yalnızca mesajın gerçek göndereni (msg.from) kendi mesajını düzenleyebilir.
     if(msg && !d._isE2E) console.warn('[SEC] e2e-doğrulanmamış msg_edit reddedildi:', d.from);
-    else if(msg && d.groupId && !_isGroupMember(d.groupId, d.from)) console.warn('[SEC] Grup üyesi olmayan msg_edit reddedildi:', d.from);
-    // 🛡️ [YENİ — Replay Koruması #7-devam] Eski/tekrar oynatılmış bir
-    // düzenleme mi? (fonksiyon adı "grup" geçiyor ama parametre sadece bir
-    // map anahtarı — burada msgId ile de genel amaçlı çalışıyor.)
-    else if(msg && !_isFreshGroupPacket(d.msgId+'|'+d.from, d.ts, _lastMsgEditTs)) console.warn('[SEC] Eski/replay msg_edit reddedildi:', d.from, 'msgId=', d.msgId);
-    else if(msg && msg.from===d.from){
-      // 🛡️ [SEC] newText string değilse reddet; string ise private_msg ile
-      // aynı uzunluk sınırına kırp — aksi halde kısa mesaj + büyük msg_edit
-      // ile MAX_INCOMING_TEXT_CHARS sınırı bypass edilip localStorage
-      // şişirilebiliyordu. (String olmayan newText eskiden render'da
-      // escHtml'i patlatıp sohbet görünümünü kırıyordu.)
-      if(typeof d.newText!=='string'){ console.warn('[SEC] msg_edit: geçersiz newText reddedildi:', d.from); return; }
-      if(d.newText.length>MAX_INCOMING_TEXT_CHARS) d.newText=d.newText.slice(0,MAX_INCOMING_TEXT_CHARS)+'…';
-      msg.text=d.newText;msg.edited=true;saveDB(db);
-      _lastMsgEditTs[d.msgId+'|'+d.from] = d.ts;
-      if(chatId===(d.groupId||d.from))renderChat();
-    }
+    else if(msg && msg.from===d.from){msg.text=d.newText;msg.edited=true;saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
     else if(msg) console.warn('[SEC] Yetkisiz msg_edit reddedildi:', d.from, '(mesaj sahibi:', msg.from, ')');
     return;
   }
@@ -8798,7 +7907,6 @@ handleSig=async(d)=>{
     const msg=arr.find(m=>m.id===d.msgId);
     // 🛡️ [YENİ-SEC] Aynı e2e şartı msg_delete için de — bkz. msg_edit notu.
     if(msg && !d._isE2E) console.warn('[SEC] e2e-doğrulanmamış msg_delete reddedildi:', d.from);
-    else if(msg && d.groupId && !_isGroupMember(d.groupId, d.from)) console.warn('[SEC] Grup üyesi olmayan msg_delete reddedildi:', d.from);
     else if(msg && msg.from===d.from){msg.deleted=true;msg.text='';msg.file=null;msg.img=null;saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
     else if(msg) console.warn('[SEC] Yetkisiz msg_delete reddedildi:', d.from, '(mesaj sahibi:', msg.from, ')');
     return;
@@ -8811,29 +7919,13 @@ handleSig=async(d)=>{
     // slotuna yazılıyor (başkasının reaksiyonu ezilemiyor) ama `d.from`
     // güvenilir değilse biri BAŞKASI adına sahte reaksiyon bırakabilir —
     // bu yüzden burada da e2e kimliklendirme şartı aranıyor.
-    const _reactGroupOk = !d.groupId || _isGroupMember(d.groupId, d.from);
-    if(msg && d._isE2E && _reactGroupOk){
-      // 🛡️ [SEC] Emoji whitelist'siz saklanıyordu — saldırgan `emoji` alanına
-      // HTML koyup reaksiyon çipi render'ında stored-XSS yapılabiliyordu.
-      // Meşru emojiler (teknik olarak ZWJ/varyant seçicili çoklu kod
-      // noktası olsa bile) 32 karakteri asla aşmaz; daha uzun veya string
-      // olmayan değerler reddedilir.
-      if(d.emoji && (typeof d.emoji!=='string' || d.emoji.length>32)){ console.warn('[SEC] msg_react: geçersiz emoji reddedildi:', d.from); return; }
-      if(!msg.reactions)msg.reactions={};
-      if(d.emoji)msg.reactions[d.from]=d.emoji;else delete msg.reactions[d.from];
-      saveDB(db);if(chatId===(d.groupId||d.from))renderChat();
-    }
-    else if(msg) console.warn('[SEC] e2e-doğrulanmamış veya grup üyesi olmayan msg_react reddedildi:', d.from);
+    if(msg && d._isE2E){if(!msg.reactions)msg.reactions={};if(d.emoji)msg.reactions[d.from]=d.emoji;else delete msg.reactions[d.from];saveDB(db);if(chatId===(d.groupId||d.from))renderChat();}
+    else if(msg) console.warn('[SEC] e2e-doğrulanmamış msg_react reddedildi:', d.from);
     return;
   }
   if(d.type==='group_read'&&d.to===ME.user_id){
     const db=getDB();
     const k='g_'+d.groupId;
-    // 🛡️ [YENİ-SEC] Kicklenen biri okundu bilgisi sahtekarlığı yapamasın.
-    if(!_isGroupMember(d.groupId, d.from)){
-      console.warn('[SEC] Grup üyesi olmayan group_read reddedildi:', d.from);
-      return;
-    }
     if(db.messages[k]){
       let ch=false;
       db.messages[k].forEach(m=>{
@@ -9095,9 +8187,7 @@ if(saved){
   try{
     // 🛡️ [MED-03] Önce sessionStorage'dan şifreleme anahtarını geri yüklemeyi dene
     // (aynı sekmede F5/yenileme ise anahtar burada bulunur, şifre tekrar sorulmaz)
-    // 🛡️ [YENİ-SEC — HESAP İZOLASYONU] `saved` (sessionStorage'daki kullanıcı
-    // adı), bu noktada ME'den daha güvenilir — ME henüz set edilmemiş olabilir.
-    const keyRestored = await _tryRestoreEncKeyFromSession(saved.toLowerCase());
+    const keyRestored = await _tryRestoreEncKeyFromSession();
 
     const db=getDB();
     const user=db.users&&db.users[saved];
@@ -9336,7 +8426,7 @@ window.runGlobalSearch=q=>{
     <div class="gs-group">${g.chatType==='group'?'👥':''} ${escHtml(g.chatName)} (${g.items.length})</div>
     ${g.items.slice(0,5).map(m=>`
       <div class="gs-item" data-act="_uiGsSelChat" data-a="${escHtml(g.chatId)}" data-a2="${escHtml(g.chatType)}">
-        <div class="gs-item-name">${escHtml(m.from||'')} · ${escHtml(m.time||'')}</div>
+        <div class="gs-item-name">${escHtml(m.from||'')} · ${m.time||''}</div>
         <div class="gs-item-text">${highlight((m.text||'').substring(0,120))}</div>
       </div>`).join('')}
     ${g.items.length>5?`<div style="padding:6px 16px;font-size:11px;color:var(--muted)">+${g.items.length-5} sonuç daha...</div>`:''}
@@ -9348,20 +8438,87 @@ window.runGlobalSearch=q=>{
 // ══════════════════════════════════════════════════════════════════
 
 // ── YouTube video ID çıkar ──────────────────────────────────────
-// 🛡️ [KALDIRILDI — Denetim Raporu Bulgu #5] Link önizleme özelliği
-// tamamen kaldırıldı. Önceki hâlde her mesajdaki URL, kullanıcı hiçbir
-// şey yapmadan otomatik olarak www.youtube.com/oembed veya
-// api.allorigins.win (ve Google'ın favicon servisine) gönderiliyordu —
-// bu, mesajlarınızın içeriğinin (URL'ler) sizin sunucunuz DIŞINDA,
-// kontrolünüz olmayan 3. taraflara sızmasına yol açıyordu; ayrıca CSP'nin
-// connect-src'i zaten bu domainlere izin vermediği için özellik prod'da
-// hiçbir zaman çalışmıyordu (bkz. denetim notu). Hem ölü kod hem gizlilik
-// riski olduğu için extractYoutubeId/fetchYoutubeOEmbed/fetchLinkPreview/
-// enrichWithLinkPreview fonksiyonları ve bunlara bağlı render/sinyal kodu
-// (bkz. handleSig'teki 'link_preview_update' case'i ve _hookLinkPreview)
-// tümüyle kaldırıldı. Mesajlardaki URL'ler hâlâ tıklanabilir link olarak
-// gösteriliyor (bkz. yukarıdaki txt.replace) — sadece otomatik önizleme
-// kartı (ve arkasındaki 3. taraf isteği) yok.
+function extractYoutubeId(url){
+  const m = url.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+// ── oEmbed ile YouTube metadata çek (API key gerektirmez) ────────
+async function fetchYoutubeOEmbed(url){
+  try{
+    const oe = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, {signal: AbortSignal.timeout(5000)});
+    if(!oe.ok) return null;
+    return await oe.json();
+  }catch(e){ return null; }
+}
+
+const _lpCache={};
+
+async function fetchLinkPreview(url){
+  if(_lpCache[url]) return _lpCache[url];
+
+  let lp = null;
+
+  // ── YouTube: oEmbed + thumbnail direkt ─────────────────────────
+  const ytId = extractYoutubeId(url);
+  if(ytId){
+    const oe = await fetchYoutubeOEmbed(url);
+    lp = {
+      url,
+      type: 'youtube',
+      ytId,
+      title:   oe?.title  || 'YouTube Video',
+      author:  oe?.author_name || '',
+      thumb:   `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`,
+      domain:  'youtube.com',
+      favicon: 'https://www.youtube.com/favicon.ico',
+    };
+    _lpCache[url] = lp;
+    return lp;
+  }
+
+  // ── Genel site: allorigins proxy ────────────────────────────────
+  try{
+    const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+    const r = await fetch(proxy, {signal: AbortSignal.timeout(6000)});
+    if(!r.ok) return null;
+    const j = await r.json();
+    const html = j.contents || '';
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const g = (sel, attr) => { const el=doc.querySelector(sel); return el?(attr?el.getAttribute(attr):el.textContent?.trim()):null; };
+    const title  = g('meta[property="og:title"]','content') || g('meta[name="twitter:title"]','content') || g('title') || '';
+    const desc   = g('meta[property="og:description"]','content') || g('meta[name="description"]','content') || '';
+    const image  = g('meta[property="og:image"]','content') || g('meta[name="twitter:image"]','content') || null;
+    const domain = new URL(url).hostname.replace('www.','');
+    const favicon= `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+    lp = { url, type:'general', title:title.substring(0,120), desc:desc.substring(0,200), image, domain, favicon };
+    _lpCache[url] = lp;
+    return lp;
+  }catch(e){ return null; }
+}
+
+// ── Mesaj gönderildikten sonra URL varsa önizleme çek ────────────
+async function enrichWithLinkPreview(msgId, text, convKey){
+  const urlMatch = text.match(/https?:\/\/[^\s<>"]{10,}/);
+  if(!urlMatch) return;
+  const lp = await fetchLinkPreview(urlMatch[0]);
+  if(!lp || (!lp.title && lp.type !== 'youtube')) return;
+  const db = getDB();
+  const msgs = db.messages[convKey] || [];
+  const m = msgs.find(x => x.id === msgId);
+  if(m && !m.linkPreview){
+    m.linkPreview = lp;
+    saveDB(db);
+    // Alıcıya da link preview verisini gönder (broadcast)
+    const lpMsg = {type:'link_preview_update', msgId, convKey, lp};
+    if(chatType==='private') broadcast({...lpMsg, to:chatId, from:ME.user_id});
+    else{
+      const g=db.groups[chatId];
+      g&&g.members.forEach(mbr=>{ if(mbr!==ME.user_id) broadcast({...lpMsg, to:mbr, groupId:chatId, from:ME.user_id}); });
+    }
+    if(chatId&&(convKey===([ME.user_id,chatId].sort().join('_'))||convKey==='g_'+chatId)) renderChat();
+  }
+}
 
 // ══════════════════════════════════════════════════════════════════
 //  ③ ANKET / OYLAMA
@@ -9472,11 +8629,40 @@ handleSig=async(d)=>{
     }
     return;
   }
-  // 🛡️ [KALDIRILDI — Denetim Raporu Bulgu #5] 'link_preview_update' sinyal
-  // işleyicisi kaldırıldı — link önizleme özelliği tamamen sonlandırıldı.
-  // Eski (henüz güncellenmemiş) bir eş istemcisi hâlâ bu tipte bir paket
-  // gönderirse, aşağıdaki _origHSpollBefore(d) zincirine düşüp sessizce
-  // yok sayılır — hata oluşmaz.
+  // Link önizleme güncellemesi — gönderen taraf çekip alıcıya iletir
+  if(d.type==='link_preview_update'&&d.to===ME.user_id){
+    if(!d.lp||typeof d.lp!=='object'||!d.msgId) return;
+    const db=getDB();
+    const k=d.groupId?'g_'+d.groupId:[ME.user_id,d.from].sort().join('_');
+    const m=(db.messages[k]||[]).find(x=>x.id===d.msgId);
+    // 🛡️ [SAST-7 FIX] Önceden d.lp doğrulanmadan/sınırlandırılmadan kabul
+    // ediliyordu ve HERHANGİ bir msgId'ye iliştirilebiliyordu — yani bir
+    // saldırgan kendi göndermediği (örn. SİZİN attığınız) bir mesaja sahte/
+    // yanıltıcı başlık-açıklama-görsel ekleyebiliyordu. Artık: (a) önizleme
+    // SADECE mesajı gerçekten gönderen kişiden geliyorsa kabul edilir, (b)
+    // alanlar tip/uzunluk olarak sınırlandırılır, (c) url/image sanitizeLinkUrl
+    // ile (render zaten escHtml uyguluyor, bu savunma derinliği).
+    if(m && !m.linkPreview && m.from===d.from){
+      const raw=d.lp;
+      const safeLp={
+        url:    typeof raw.url==='string' ? raw.url.slice(0,500) : '',
+        type:   raw.type==='youtube' ? 'youtube' : 'general',
+        title:  typeof raw.title==='string' ? raw.title.slice(0,120) : '',
+        desc:   typeof raw.desc==='string'  ? raw.desc.slice(0,200)  : '',
+        domain: typeof raw.domain==='string'? raw.domain.slice(0,80) : '',
+        image:  typeof raw.image==='string' ? raw.image.slice(0,500): null,
+        favicon:typeof raw.favicon==='string'? raw.favicon.slice(0,500): null,
+        thumb:  typeof raw.thumb==='string' ? raw.thumb.slice(0,500) : undefined,
+        ytId:   typeof raw.ytId==='string'  ? raw.ytId.slice(0,32)  : undefined,
+        author: typeof raw.author==='string'? raw.author.slice(0,80): undefined,
+      };
+      if(!safeLp.title && safeLp.type!=='youtube') return; // render koşulu (lp.title) zaten bunu gerektiriyor
+      m.linkPreview=safeLp;
+      saveDB(db);
+      if(chatId&&(k===([ME.user_id,chatId].sort().join('_'))||k==='g_'+chatId)) renderChat();
+    }
+    return;
+  }
   await _origHSpollBefore(d);
 };
 
@@ -9822,9 +9008,26 @@ function buildStats(){
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 🛡️ [KALDIRILDI — Denetim Raporu Bulgu #5] _hookLinkPreview kaldırıldı —
-// mesaj gönderildikten sonra URL'i 3. taraf servislerine (YouTube oEmbed,
-// allorigins.win) gönderip önizleme çeken kod tamamen sonlandırıldı.
+const _origSBClick2=$('sendBtn').onclick;
+// Link preview'u gönderilen normal mesajlara ekle
+const _hookLinkPreview=()=>{
+  const origClick=$('sendBtn').onclick;
+  $('sendBtn').onclick=async()=>{
+    const text=$('msgInput').value.trim();
+    origClick&&origClick();
+    // Sadece normal (vanish olmayan) mesajlarda ve URL varsa
+    if(!_vanishMode&&text&&chatId&&/https?:\/\/[^\s]{10,}/.test(text)){
+      const k=chatType==='private'?[ME.user_id,chatId].sort().join('_'):'g_'+chatId;
+      const db=getDB();
+      const msgs=db.messages[k]||[];
+      // Son eklenen mesajın id'sini bul
+      const last=msgs[msgs.length-1];
+      if(last&&last.from===ME.user_id) enrichWithLinkPreview(last.id, text, k);
+    }
+  };
+};
+// sendBtn.onclick zinciri tamamlandıktan sonra hook'u ekle
+setTimeout(_hookLinkPreview, 100);
 
 // ══════════════════════════════════════════════════════════════════
 //  📱 MOBİL DRAWER — Sidebar aç/kapat
@@ -10288,7 +9491,7 @@ window._haptic = function(ms){
     img.addEventListener('error', done, {once:true});
   }
   function scan(root){
-    root.querySelectorAll && root.querySelectorAll('img.msg-img').forEach(watch);
+    root.querySelectorAll && root.querySelectorAll('img.msg-img, img.link-preview-thumb').forEach(watch);
   }
   const targets = ['chatMsgs'].map(id=>document.getElementById(id)).filter(Boolean);
   targets.forEach(t=>{
@@ -10296,7 +9499,7 @@ window._haptic = function(ms){
     new MutationObserver(muts=>{
       muts.forEach(m=>m.addedNodes.forEach(n=>{
         if(n.nodeType!==1) return;
-        if(n.matches && n.matches('img.msg-img')) watch(n);
+        if(n.matches && (n.matches('img.msg-img')||n.matches('img.link-preview-thumb'))) watch(n);
         scan(n);
       }));
     }).observe(t, {childList:true, subtree:true});
@@ -10367,14 +9570,6 @@ window._haptic = function(ms){
       case 'openImageViewer':   openImageViewer(a, a2); break;
       case 'openAvatarZoom':    openAvatarZoom(a, a2); break;
       case '_uiCallBack':       selChat(a,'private'); $('callBtn')?.click(); break;
-      // 🛡️ [YENİ — Denetim Raporu Bulgu #1] Davet modalı — CSP-güvenli
-      // event delegation (inline onclick DEĞİL).
-      case 'openInviteModal':      window.openInviteModal(a); break;
-      case 'closeInviteModal':     window.closeInviteModal(); break;
-      case 'switchInviteTab':      window._switchInviteTab(a); break;
-      case 'generateInviteForModal': window._generateInviteForModal(); break;
-      case 'copyInviteOutput':     window._copyInviteOutput(); break;
-      case 'acceptInviteFromModal': window._acceptInviteFromModal(); break;
       // ── Msg context menu ──
       case '_uiMsgCtxReply':   startReply(a); document.getElementById('msgCtxMenu')?.remove(); break;
       case '_uiMsgCtxReact':   openReactPicker(a, self==='2'?el:null); document.getElementById('msgCtxMenu')?.remove(); break;
@@ -10422,9 +9617,19 @@ window._haptic = function(ms){
     }
   });
 
-  // 🛡️ [KALDIRILDI — Denetim Raporu Bulgu #5] data-onerror 'hide'/'ytfallback'
-  // handler'ı kaldırıldı — bu iki mod da yalnızca artık var olmayan link
-  // önizleme görsellerinde kullanılıyordu.
+  // ── ERROR delegation (onerror yerine) ─────────────────────────
+  document.addEventListener('error', e=>{
+    const t = e.target;
+    if(t.tagName !== 'IMG') return;
+    const mode = t.getAttribute('data-onerror');
+    if(mode === 'hide'){
+      t.style.display='none';
+    } else if(mode === 'ytfallback'){
+      const ytId = t.getAttribute('data-ytid');
+      if(ytId) t.src=`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`;
+      else t.style.display='none';
+    }
+  }, true); // capture=true: error olayı bubble etmez
 
   // ── CHANGE/INPUT delegation (oninput yerine) ──────────────────
   document.addEventListener('input', e=>{
