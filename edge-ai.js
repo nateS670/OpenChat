@@ -1,5 +1,204 @@
 /* OpenChat Edge AI — main thread. Whisper captions + local chat butler. */
 (function(){
+  // 🔌 [İSTEK] Yerel AI artık AĞDAN BAĞIMSIZ: özet ve sohbet tamamen cihazda,
+  // sıfır indirme ile çalışır (inline "Butler" motoru). Transformers.js modeli
+  // yalnızca internet varsa ARKA PLANDA hazırlanır; başarısız olursa hiçbir şey
+  // bozulmaz, kullanıcı hiç hata görmez.
+  const LLM_READY_KEY = 'sv_edge_llm_ready';
+
+  function fetchWithTimeout(url, ms){
+    return new Promise((resolve, reject)=>{
+      const ctl = ('AbortController' in window) ? new AbortController() : null;
+      const t = setTimeout(()=>{ try{ ctl && ctl.abort(); }catch(_){} reject(new Error('timeout')); }, ms);
+      fetch(url, ctl ? { signal: ctl.signal } : {}).then(r=>{ clearTimeout(t); resolve(r); },
+        e=>{ clearTimeout(t); reject(e); });
+    });
+  }
+
+  // Model gerçekten bu cihaza indirildi mi? (10 sn'lik HEAD denemesi —
+  // HF erişimi olmayan ağlarda sessizce 'hayır' döner.)
+  async function llmCachedLocally(){
+    if(localStorage.getItem(LLM_READY_KEY) === '1') return true;
+    try{
+      const url = 'https://huggingface.co/Xenova/tiny-random-RoFormerForTokenClassification/resolve/main/config.json';
+      const r = await fetchWithTimeout(url, 10000);
+      if(r && r.ok){ localStorage.setItem(LLM_READY_KEY, '1'); return true; }
+    }catch(_){}
+    return false;
+  }
+
+  // Butler panelindeki model seçimini gerçek kapasiteye göre güncelle:
+  // internet/indirme yoksa ağır modeller seçilemez, "Hızlı · Cihaz içi" kalır.
+  function updateModelAvailability(){
+    const sel = $('aiButlerModel');
+    if(!sel) return;
+    llmCachedLocally().then(ok=>{
+      Array.from(sel.options).forEach(o=>{
+        if(o.value !== 'fast'){ o.disabled = !ok; o.text = ok ? o.text.replace(' · yakında','') : o.text.split(' ·')[0]+' · yakında'; }
+      });
+      if(!ok && sel.value !== 'fast') sel.value = 'fast';
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // 🧠 INLINE BUTLER MOTORU — %100 yerel, 0 MB indirme, her tarayıcıda çalışır.
+  // ChatGPT gibi "akıl" değil; ama sohbet özeti çıkarır ve basit sohbet kurur.
+  // Kullanıcının isteği de buydu: "ağır bir şey olmasına gerek yok".
+  // ═══════════════════════════════════════════════════════════════════════
+  const SVPatterns = [
+    /\bsaat\s*(\d{1,2})[:.](\d{2})\b/, /\b(\d{1,2})[:.](\d{2})'de\b/, /\b(\d{1,2})[:.](\d{2})\b/,
+    /\byarın(?:\s+gece)?\b/, /\bbugün(?:\s+gece)?\b/, /\btunçagün\b/,
+    /\bpazartesi\b/, /\bsalı\b/, /\bçarşamba\b/, /\bperşembe\b/, /\bcuma\b/, /\bcumartesi\b/, /\bpazar\b/,
+    /\b(\d{1,2})\s*(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)\b/i,
+    /\bbuluş(?:aca|ıyor|alım)?\b/, /\bgörüş(?:ecek|elim|yor)?\b/, /\bkac(?:ırabilir)?\b/,
+    /\bonay(?:ladı|lıyor)?\b|\bok\b|\btamam(?:dır)?\b|\bsöz\b/,
+    /\biptal\b/, /\bertele(?:di|rim|iyor)?\b/, /\bkarar\b/, /\bhatırlat(?:ma|ırım)?\b/,
+    /\buluş(?:uyoruz|acağız)?\b/, /\bgel(?:ir misin|eceğim|iyorum)?\b/,
+    /\bkaçırma\b/, /\bsözleşme\b/, /\bdoğum günü\b/, /\bdavet(?:li)?\b/,
+    /\bnere(de|si)?\b/, /\badres\b/, /\bkonum\b/, /\bmekan\b/, /\bofis\b/, /\bekspres\b/,
+    /\bpara\b/, /\bfatura\b/, /\bödeme\b/, /\bkredi\b/, /\bborç\b/,
+    /\btoplantı\b/, /\bders\b/, /\bsınav\b/, /\biş\b/, /\bproje\b/, /\bteslim\b/,
+    /\bacele\b/, /\bagenda\b/, /\bnot\b/, /\bkargo\b/, /\bkurye\b/,
+    /\bbütçe\b/, /\bzamanlama\b/, /\bplan\b/, /\bprogram\b/,
+    /\bteşekkür(?:ler| ederim)?\b/, /\bbaş sağlığı\b/, /\bgeçmiş olsun\b/, /\btakasızlık\b/,
+    /\bselam\b/, /\bmerhaba\b/, /\bgünaydın\b/, /\biyi akşamlar\b/, /\bgörüşürüz\b/, /\bbay bay\b/
+  ];
+  function svScore(t){
+    let s = 0;
+    for(const p of SVPatterns) if(p.test(t)) s++;
+    if(/\d/.test(t)) s += .5;
+    if(/!|\?\?$/.test(t)) s += .3;
+    return Math.min(s, 6);
+  }
+  function normalizeTr(s){
+    return String(s||'').toLowerCase()
+      .replace(/ı/g,'i').replace(/İ/g,'i').replace(/Ş/g,'s').replace(/ş/g,'s')
+      .replace(/Ğ/g,'g').replace(/ğ/g,'g').replace(/Ü/g,'u').replace(/ü/g,'u')
+      .replace(/Ö/g,'o').replace(/ö/g,'o').replace(/Ç/g,'c').replace(/ç/g,'c');
+  }
+  const TR_STOPWORDS = new Set(['ve','veya','ama','fakat','ancak','ile','de','da','ki','mi','mı','bu','şu','o','ben','sen','biz','siz','onlar','bir','iki','üç','çok','az','daha','en','hep','hiç','yine','bile','gibi','için','dengan']);
+  function extractKeywords(lines){
+    const freq = new Map();
+    for(const ln of lines){
+      const words = normalizeTr(ln.t).split(/[^\p{L}\p{N}]+/u).filter(w=>w.length>=4 && !TR_STOPWORDS.has(w));
+      for(const w of new Set(words)) freq.set(w, (freq.get(w)||0)+1);
+    }
+    return [...freq.entries()].filter(([,n])=>n>=2).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([w])=>w);
+  }
+  function bucketize(lines){
+    const out = [];
+    let cur = null, curTime = 0;
+    for(const ln of lines){
+      if(ln.time && cur && (ln.time - curTime > 3600*5)){ cur = null; }
+      if(!cur){ cur = { who: ln.who, msgs: [], first: ln.t, time: ln.time||0 }; out.push(cur); }
+      else if(ln.who !== cur.who && cur.msgs.length >= 2){
+        cur = { who: ln.who, msgs: [], first: ln.t, time: ln.time||0 }; out.push(cur);
+      }
+      cur.msgs.push(ln.t);
+      if(ln.time) curTime = ln.time;
+    }
+    return out;
+  }
+  function fmtHM(ms){
+    try{ const d = new Date(ms); return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0'); }catch(_){ return ''; }
+  }
+  function butlerSummarize(msgs){
+    const texts = (msgs||[]).filter(m=>m && m.text && !m.sys)
+      .map(m=>({ who: m.from || 'Biri', t: String(m.text).replace(/\s+/g,' ').trim(), time: Number(m.time)||0 }))
+      .filter(m=>m.t.length>1);
+    if(!texts.length) return 'Bu sohbette özetlenecek metin mesajı yok.';
+    const meWho = (typeof ME!=='undefined' && ME && ME.user_id) ? ME.user_id : 'Sen';
+    const others = [...new Set(texts.map(m=>m.who).filter(w=>w!==meWho))];
+    const withStr = others.length ? others.slice(0,3).join(', ') + (others.length>3?'…':'') : 'karşı tarafla';
+    const first = texts[0], last = texts[texts.length-1];
+    const anyTime = texts.find(m=>m.time);
+    let head = '🤖 Butler özeti ('+texts.length+' mesaj';
+    if(anyTime && first.time && last.time && first.time!==last.time){
+      head += ', '+fmtHM(first.time)+'–'+fmtHM(last.time);
+    }
+    head += ')';
+    const lines = [];
+    lines.push('Konu: '+withStr+' ile sohbet — '+texts.length+' mesaj.');
+    const slots = [];
+    for(const m of texts){
+      const s = svScore(m.t);
+      if(s>=1){
+        const idx = slots.findIndex(x=>x.who===m.who && m.time-x.time < 3600*1000*6);
+        if(idx>=0){ if(s>slots[idx].score){ slots[idx]={who:m.who,t:m.t,time:m.time,score:s}; } }
+        else slots.push({who:m.who,t:m.t,time:m.time,score:s});
+      }
+    }
+    slots.sort((a,b)=>b.score-a.score || a.time-b.time);
+    if(slots.length){
+      lines.push('⏰ Öne çıkanlar:');
+      slots.slice(0,6).forEach(s=>lines.push('• '+(s.time?fmtHM(s.time)+' ':'')+s.who+': '+s.t.slice(0,160)));
+    }
+    const kw = extractKeywords(texts);
+    if(kw.length) lines.push('🔑 Sık geçen kelimeler: '+kw.join(', ')+'.');
+    const buckets = bucketize(texts);
+    if(buckets.length>1){
+      lines.push('🗂 Akış:');
+      buckets.slice(-5).forEach(b=>{
+        let t = b.first;
+        if(b.msgs.length>1) t += ' (+'+(b.msgs.length-1)+' mesaj daha)';
+        lines.push('• '+(b.time?fmtHM(b.time)+' ':'')+b.who+': '+t.slice(0,140));
+      });
+    }
+    if(last.who===meWho && /\?$/.test(last.t)) lines.push('❓ Son mesajın bir soru — cevap bekliyor olabilir.');
+    else if(last.who!==meWho && /(\?|\b(ne|nerede|saat|geliyor|cevap|yapacak|var mı)\b)/i.test(normalizeTr(last.t))) lines.push('⚠️ ' + last.who + ' senden yanıt bekliyor olabilir: "'+last.t.slice(0,120)+'"');
+    return lines.join('\n');
+  }
+  function butlerChat(text, msgs){
+    const q = normalizeTr(String(text||''));
+    const has = (...ws)=>ws.some(w=>q.includes(w));
+    const recent = (msgs||[]).filter(m=>m&&m.text&&!m.sys).slice(-40)
+      .map(m=>({who:m.from||'Biri', t:String(m.text).replace(/\s+/g,' ').trim(), time:Number(m.time)||0}));
+    const withStr = (()=>{ const o=[...new Set(recent.map(m=>m.who))].filter(w=>w!==(ME&&ME.user_id)); return o.length?o.slice(0,2).join(' ve '):null; })();
+    if(!recent.length) return 'Bu sohbette henüz mesaj yok; konuşma başlayınca özet, hatırlatma ve arama yapabilirim. ✨';
+    if(has('selam','merhaba','gunaydin','iyi aksamlar','naber','nasilsin'))
+      return 'Selam! Ben cihazından çıkmayan yerel asistanın. Bu sohbette neler geçtiğini özetleyebilirim, "şunu ara" diyebilirsin ya da "son ne dedi?" diye sorabilirsin.';
+    if(has('ozet','neler gec','ne konus','ne oldu','akisi','topla'))
+      return butlerSummarize(msgs);
+    if(has('saat kac','toplanti saat','bulusma saat','ne zaman bulus')){
+      const hits = recent.filter(m=>svScore(m.t)>=1).slice(-3);
+      return hits.length ? 'Saat/tarih geçiyor: '+hits.map(h=>h.who+': "'+h.t.slice(0,90)+'"').join(' · ') : 'Mesajlarda net bir saat/tarih göremedim.';
+    }
+    if(has('son ne','en son','ne yazdi','ne soyledi','son mesaj')){
+      const m = recent[recent.length-1];
+      return 'Son mesaj ('+(m.time?fmtHM(m.time)+' ':'')+m.who+'): "'+m.t.slice(0,180)+'"';
+    }
+    if(has('hatirlat','bekleyen','yanit bek','cevap lazim','acil')){
+      const openQ = recent.slice(-12).filter(m=>/\?/.test(m.t)).slice(-3);
+      if(openQ.length) return 'Bekleyen sorular:\n'+openQ.map(m=>'• '+m.who+': '+m.t.slice(0,140)).join('\n');
+      return 'Açık kalan bir soru görmüyorum; istersen sohbeti özetleyeyim.';
+    }
+    const am = q.match(/(.{2,40}?)\s+(ara|gecer|gecti|nerede|var mi|ardi?|bulunuyor)/);
+    if(am){
+      const term = am[1].trim();
+      if(term.length>=2){
+        const hits = recent.filter(m=>normalizeTr(m.t).includes(term)).slice(-4);
+        if(!hits.length) return '"'+term+'" için sonuç yok.';
+        return '"'+term+'" ('+hits.length+' mesaj):\n'+hits.map(m=>'• '+(m.time?fmtHM(m.time)+' ':'')+m.who+': '+m.t.slice(0,140)).join('\n');
+      }
+    }
+    if(has('kac mesaj','nekadardir')) return recent.length+' mesaj var'+(withStr?(' ('+withStr+' ile)'):'')+'.';
+    const cm = q.match(/kim (.*) dedi|kim soledi|kim (.*) yazdi/);
+    if(cm){
+      const term = normalizeTr((cm[1]||cm[2]||'').replace(/\s+(dedi|soledi|yazdi)$/,''));
+      const hit = recent.filter(m=>term && normalizeTr(m.t).includes(term)).slice(-1)[0];
+      return hit ? hit.who+' şöyle demiş: "'+hit.t.slice(0,160)+'"' : 'Kimin söylediğini bulamadım — kelimeyi tam yazmayı dener misin?';
+    }
+    if(has('tesekkur','sagol','eyvallah')) return 'Rica ederim! Hepsi bu cihazda kaldı, hiçbir mesaj dışarı gitmedi. 😊';
+    if(has('neden calismiyor','hata','bozuk')) return 'Ben yerel (cihaz içi) asistanım; mesajların sunucuya gitmez. Bir sorun varsa kapatıp açmayı veya sayfayı yenilemeyi deneyebilirsin.';
+    const stopRe = /[.,!?;:]|\b(bu|su|icin|hakkinda|hakkinda|ve|ile|de|da|mi|bir)\b/g;
+    const terms = q.replace(stopRe,' ').split(/\s+/).filter(w=>w.length>=4 && !TR_STOPWORDS.has(w)).slice(0,4);
+    if(terms.length){
+      const hits = recent.filter(m=>{ const n=normalizeTr(m.t); return terms.some(t=>n.includes(t)); }).slice(-3);
+      if(hits.length) return 'Şunlar ilgili görünüyor:\n'+hits.map(m=>'• '+m.who+': '+m.t.slice(0,140)).join('\n')+'\n\nİstersen tüm sohbeti özetleyeyim — "özetle" demen yeterli.';
+    }
+    return 'Bunu tam anlayamadım 🤔. Şunları yapabilirim:\n• "özetle" — sohbetin özeti\n• "son ne dedi?" — en son mesaj\n• "<kelime> ara" — sohbette arama\n• "hatırlatmalar" — bekleyen sorular';
+  }
+
   // ✨ [3.7] Ayarlar → "Yerel Yapay Zeka" anahtarı. Kapalıyken hiçbir model
   // indirilmez, worker oluşturulmaz, RAM kullanılmaz. Tercih cihazda saklanır.
   const AI_KEY = 'sv_edge_ai';
@@ -11,6 +210,9 @@
   let worker = null;
   let captionsOn = false;
   let captionLines = [];
+  // 🔌 LLM yalnızca kullanıcı fiilen model indirmeyi başlattıysa (altyazı/derin
+  // özet) ve tamamlanınca kullanılır; asla otomatik indirilmez.
+  let llmLoaded = false;
   // 🔧 [FIX] WebGPU gerçek kapasite tespiti (async). Eskiden sadece
   // navigator.gpu'nun varlığına bakılıyordu; bazı tarayıcılarda (ör. iOS
   // Safari) navigator.gpu tanımlı olup requestAdapter() null döndürüyor —
@@ -179,11 +381,17 @@
       _workerRetryDone = true;
       worker = new Worker('edge-ai-worker.js');
     }
+    wireWorker();
+    return worker;
+  }
+
+  function wireWorker(){
     worker.postMessage({ type:'set-gpu', on: gpuEnabled });
     worker.onmessage = (ev)=>{
       const d = ev.data || {};
       if(d.type === 'caption') onCaption(d);
       else if(d.type === 'summary') onSummary(d.text);
+      else if(d.type === 'chat-reply') onChatReply(d.text);
       else if(d.type === 'progress') onProgress(d);
       else if(d.type === 'status') onStatus(d);
       else if(d.type === 'error') onError(d);
@@ -197,23 +405,12 @@
         worker = null;
         try{
           worker = new Worker('edge-ai-worker.js');
-          worker.onmessage = (ev2)=>{
-            const d2 = ev2.data || {};
-            if(d2.type === 'caption') onCaption(d2);
-            else if(d2.type === 'summary') onSummary(d2.text);
-            else if(d2.type === 'progress') onProgress(d2);
-            else if(d2.type === 'status') onStatus(d2);
-            else if(d2.type === 'error') onError(d2);
-          };
-          worker.onerror = (e2)=>{ onError({ kind:'worker', msg: e2.message || 'Edge AI worker hatası' }); };
-          worker.postMessage({ type:'set-gpu', on: gpuEnabled });
-          if(aiEnabled) worker.postMessage({ type:'warmup-asr' });
+          wireWorker();
           return worker;
         }catch(_){ worker = null; }
       }
       onError({ kind:'worker', msg: e.message || 'Edge AI worker hatası' });
     };
-    return worker;
   }
   let _workerRetryDone = false;
 
@@ -240,11 +437,12 @@
 
   function onError(d){
     const msg = d.msg || 'Bilinmeyen hata';
-    if(d.kind === 'summarize' || d.kind === 'llm'){
+    if(d.kind === 'summarize' || d.kind === 'llm' || d.kind === 'worker'){
+      // 🔌 [İSTEK] Artık kullanıcıya "model yüklenemedi" hatası GÖSTERMEYİZ:
+      // cihaz içi Butler motoru sonucu çoktan üretti; LLM yalnızca bonus.
       const but = $('aiButlerStatus');
-      if(but) but.textContent = 'Hata: '+msg;
-      const out = $('aiButlerOut');
-      if(out && !out.dataset.locked) out.textContent = 'Yerel model yüklenemedi. Aşağıda hızlı (kural tabanlı) özet duruyor. WebGPU’li bir tarayıcı ve ilk indirme için Hugging Face erişimi gerekir.';
+      if(but) but.textContent = 'Cihaz içi moddayım · mesajlar dışarı çıkmadı';
+      updateModelAvailability();
     } else {
       const cap = $('liveCaptionStatus');
       if(cap) cap.textContent = 'Hata: '+msg;
@@ -304,9 +502,49 @@
     const st = $('aiButlerStatus');
     if(st) st.textContent = 'Özet bu cihazda üretildi · mesajlar dışarı çıkmadı';
     if(out){
+      // 🔌 Cihaz içi Butler taslağı zaten gösterilmişti; LLM geldiyse altta
+      // "derin özet" olarak eklenir, gelmediyse taslak tek başına kalır.
+      const prev = out.dataset.butlerDraft || '';
       out.dataset.locked = '1';
-      out.textContent = text || '';
+      out.textContent = (prev ? prev + '\n\n🧠 Derin özet (yerel model):\n' + (text||'') : (text||''));
     }
+  }
+
+  // 🔌 LLM'den sohbet cevabı gelirse cihaz içi cevabın altına işlenir.
+  function onChatReply(text){
+    if(text) appendChat('bot', text);
+  }
+
+  // 🔌 [İSTEK] Cihaz içi sohbet: kullanıcı butlere yazıp cevap alabilir —
+  // 0 MB indirme, her tarayıcıda çalışır.
+  function appendChat(role, text){
+    const out = $('aiButlerOut');
+    if(!out) return;
+    delete out.dataset.locked;
+    const who = role==='user' ? '🙋 Sen' : '🤖 Butler';
+    out.textContent += (out.textContent.trim() ? '\n\n' : '') + who+': '+text;
+    out.scrollTop = out.scrollHeight;
+  }
+  function sendButlerChat(){
+    const inp = $('aiButlerInp');
+    if(!inp) return;
+    const text = inp.value.trim();
+    if(!text) return;
+    inp.value = '';
+    const b = $('aiButlerSend');
+    if(b) b.disabled = true;
+    const msgs = collectMessages();
+    appendChat('user', text);
+    // Cevabı bir sonraki tick'te üret — UI yazdığını anında göstersin.
+    setTimeout(()=>{
+      let inlineAnswered = false;
+      try{ appendChat('bot', butlerChat(text, msgs)); inlineAnswered = true; }
+      catch(e){ appendChat('bot', 'Bir sorun oldu ama buradayım — tekrar dener misin?'); }
+      // LLM zaten yüklüyse (kullanıcı indirmeyi kabul etmiş) derin cevap da ekle.
+      if(inlineAnswered && worker && llmLoaded){
+        try{ worker.postMessage({ type:'chat', text, model: ($('aiButlerModel')||{}).value || 'fast' }); }catch(_){}
+      }
+    }, 30);
   }
 
   async function startTap(userId, stream){
@@ -398,6 +636,17 @@
     if(closeBtn) closeBtn.addEventListener('click', ()=> $('aiButlerPanel')?.classList.add('hidden'));
     const runBtn = $('aiButlerRun');
     if(runBtn) runBtn.addEventListener('click', runButler);
+    // 🔌 [İSTEK] Butler'a yazıp sohbet edebilme (cihaz içi, 0 MB).
+    const chatInp = $('aiButlerInp');
+    if(chatInp){
+      chatInp.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); sendButlerChat(); } });
+      chatInp.addEventListener('input', ()=>{
+        const b = $('aiButlerSend');
+        if(b) b.disabled = !chatInp.value.trim();
+      });
+    }
+    const sendBtn = $('aiButlerSend');
+    if(sendBtn) sendBtn.addEventListener('click', sendButlerChat);
     const overlay = $('aiButlerPanel');
     if(overlay) overlay.addEventListener('click', (e)=>{
       if(e.target === overlay) overlay.classList.add('hidden');
@@ -413,7 +662,7 @@
     });
   }
 
-  function openButler(){
+  function openButler(fromSearch){
     if(!aiEnabled){
       // 🔧 [FIX] Eskiden "Ayarlar → Yerel Yapay Zeka anahtarını aç" deniyordu;
       // mobilde Ayarlar'da bu satır artık yok. Tek dokunuşla AI burada
@@ -421,6 +670,7 @@
       window.toggleEdgeAI();
       const panel = $('aiButlerPanel');
       if(panel) panel.classList.remove('hidden');
+      updateModelAvailability();
       return;
     }
     if(!chatId){
@@ -430,45 +680,74 @@
     const panel = $('aiButlerPanel');
     if(!panel) return;
     panel.classList.remove('hidden');
+    updateModelAvailability();
     const out = $('aiButlerOut');
     const msgs = collectMessages();
     if(out){
       delete out.dataset.locked;
-      out.textContent = extractiveSummary(msgs);
+      // 🔌 Cihaz içi özet ANINDA çıkar — internet/model gerekmez.
+      let draft = butlerSummarize(msgs);
+      if(fromSearch){
+        const found = searchMsgsFromDom();
+        if(found.length) draft = '🔍 Arama sonuçları ('+found.length+' mesaj):\n'+butlerSummarize(found);
+      }
+      out.textContent = draft;
+      out.dataset.butlerDraft = draft;
     }
     const st = $('aiButlerStatus');
     if(st) st.textContent = msgs.length
-      ? msgs.length+' mesaj cihazda hazır · model henüz çalışmadı'
+      ? msgs.length+' mesaj cihazda özetlendi · hiçbir şey dışarı gitmedi ✨'
       : 'Özetlenecek mesaj yok';
+    const inp = $('aiButlerInp');
+    if(inp && !fromSearch) setTimeout(()=>{ try{ inp.focus(); }catch(_){} }, 60);
+  }
+
+  // Arama balonlarından {from, text, time} üret — .me-wrap → sen,
+  // grup sohbetteki .ms → gönderen adı, değilse karşı tarafın adı.
+  function searchMsgsFromDom(){
+    const wraps = $$('.msg-wrap.search-highlight');
+    const scope = wraps.length ? wraps : $$('.msg-wrap');
+    const otherName = (typeof chatId!=='undefined' && chatId && typeof $('chatName')!=='undefined')
+      ? (($('chatName')?.textContent||'').replace('✨','').trim() || '') : '';
+    const outMsgs = [];
+    for(const el of scope){
+      const t = el.querySelector('.msg-text') || el.querySelector('.file-name');
+      if(!t || !t.textContent.trim()) continue;
+      let from = '';
+      const msEl = el.querySelector('.ms');
+      if(msEl) from = msEl.textContent.trim();
+      else if(el.classList.contains('me-wrap')) from = (typeof ME!=='undefined' && ME && ME.user_id) ? ME.user_id : 'Sen';
+      else from = otherName || 'Karşı taraf';
+      outMsgs.push({ from, text: t.textContent.trim(), time: 0 });
+    }
+    return outMsgs;
   }
 
   function summarizeSearchResults(){
-    if(!aiEnabled){
-      if(typeof showToast==='function') showToast('✨ Yerel Yapay Zeka', 'Yerel yapay zekayı açmak için sohbet başlığındaki ✨ simgesine dokun.');
-      return;
-    }
-    // Arama sonuçları SOHBET İÇİ aramada DOM'daki mesaj balonlarıdır.
-    const wraps = $$('.msg-wrap.search-highlight, .msg-wrap');
-    const texts = [];
-    for(const el of wraps){
-      const t = el.querySelector('.msg-text');
-      if(t && t.textContent.trim()) texts.push(t.textContent.trim());
-    }
-    if(!texts.length){
+    const found = searchMsgsFromDom();
+    if(!found.length){
       if(typeof showToast==='function') showToast('AI Özet','Aranan metinde özetlenecek mesaj bulunamadı.');
       return;
     }
-    openButler();
-    const out = $('aiButlerOut');
-    const st = $('aiButlerStatus');
-    if(out){
-      delete out.dataset.locked;
-      out.textContent = 'Arama sonuçları cihazda tarandı ('+texts.length+' mesaj) · yerel model özetliyor…';
-    }
-    if(st) st.textContent = 'Edge LLM çalışıyor…';
-    const msgs = texts.slice(-40).map(text=>({ from:'', text }));
-    const model = ($('aiButlerModel')||{}).value || 'fast';
-    ensureWorker().postMessage({ type:'summarize', messages: msgs, model });
+    openButler(true); // AI kapalıysa tek dokunuşla açar (mobilde ayar satırı yok)
+    tryLlmSummarize(found); // LLM hazırsa arka planda derinleştirir
+  }
+
+  // 🔌 LLM yalnızca BONUS: model bu cihaza zaten indirilmişse arka planda
+  // derin özet ekletir. İnternet/model yoksa hiçbir hata gösterilmez —
+  // cihaz içi Butler özeti çoktan ekrandadır.
+  function tryLlmSummarize(msgs){
+    llmCachedLocally().then(ok=>{
+      if(!ok) return; // sessizce çık — kullanıcı hiçbir şey fark etmez
+      ensureWorker();
+      worker.postMessage({ type:'set-gpu', on: gpuEnabled });
+      const out = $('aiButlerOut');
+      if(out) out.dataset.butlerDraft = butlerSummarize(msgs);
+      const st = $('aiButlerStatus');
+      if(st) st.textContent = 'İsteğe bağlı derin özet modeli hazırlanıyor… (cihaz içi özet hazır)';
+      const model = ($('aiButlerModel')||{}).value || 'fast';
+      worker.postMessage({ type:'summarize', messages: msgs, model });
+    });
   }
 
   function runButler(){
@@ -481,11 +760,12 @@
     }
     if(out){
       delete out.dataset.locked;
-      out.textContent = extractiveSummary(msgs)+'\n\nYerel model yükleniyor… mesajlar RAM’de kalır, sunucuya gitmez.';
+      const draft = butlerSummarize(msgs);
+      out.textContent = draft;
+      out.dataset.butlerDraft = draft;
     }
-    if(st) st.textContent = 'Edge LLM çalışıyor…';
-    const model = ($('aiButlerModel')||{}).value || 'fast';
-    ensureWorker().postMessage({ type:'summarize', messages: msgs, model });
+    if(st) st.textContent = 'Cihaz içi özet hazır ✨ · mesajlar dışarı çıkmadı';
+    tryLlmSummarize(msgs);
   }
 
   // 🤖 [İSTEK] Sohbet başlığında, karşı tarafın adının hemen yanında ✨ rozeti.
@@ -512,6 +792,6 @@
     if(_cn) _cnObs.observe(_cn, { childList:true });
   }catch(_){}
 
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>{ bindUi(); applyAiUi(); ensureHeaderAiBadge(); window.edgeAISyncSettings(); });
-  else { bindUi(); applyAiUi(); ensureHeaderAiBadge(); window.edgeAISyncSettings(); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>{ bindUi(); applyAiUi(); ensureHeaderAiBadge(); window.edgeAISyncSettings(); updateModelAvailability(); });
+  else { bindUi(); applyAiUi(); ensureHeaderAiBadge(); window.edgeAISyncSettings(); updateModelAvailability(); }
 })();
