@@ -11,6 +11,48 @@
   let worker = null;
   let captionsOn = false;
   let captionLines = [];
+  // 🔧 [FIX] WebGPU gerçek kapasite tespiti (async). Eskiden sadece
+  // navigator.gpu'nun varlığına bakılıyordu; bazı tarayıcılarda (ör. iOS
+  // Safari) navigator.gpu tanımlı olup requestAdapter() null döndürüyor —
+  // bu yüzden kullanıcı "GPU seçilemiyor / çalışmıyor" görüyordu.
+  let gpuAvailable = false;
+
+  async function detectWebgpu(){
+    try{
+      if(!navigator.gpu) return false;
+      const ad = await navigator.gpu.requestAdapter();
+      return !!ad;
+    }catch(_){ return false; }
+  }
+  detectWebgpu().then(ok=>{
+    gpuAvailable = ok;
+    if(!ok && gpuEnabled){
+      // Cihaz GPU desteklemiyor → tercih WASM'a düşürülür (model zaten
+      // worker içinde de wasm'a fallback yapıyor, artık UI da dürüst gösterir).
+      gpuEnabled = false;
+      localStorage.setItem(AI_GPU_KEY, '0');
+    }
+    window.edgeAISyncSettings();
+  });
+
+  function isMobileUi(){
+    try{ return window.matchMedia('(max-width:768px)').matches; }catch(_){ return false; }
+  }
+
+  function $$(sel){ return Array.prototype.slice.call(document.querySelectorAll(sel)); }
+
+  // 📱 [İSTEK] Mobilde Ayarlar panelinden AI seçenekleri kaldırılır.
+  // Masaüstünde gösterilir; ayrıca aiEnabled her zaman localStorage'dan
+  // okunduğu için eski kayıtlı tercihler (mobilde ayar görünmese bile) korunur.
+  function applyMobileSettings(){
+    const mobile = isMobileUi();
+    $$('#settingsPanel .sp-row, #settingsPanel .sp-sec').forEach(el=>{
+      const isAiRow = !!el.querySelector('#toggleEdgeAI, #toggleEdgeAIGpu') ||
+                      el.textContent.indexOf('Yapay Zeka') !== -1;
+      if(isAiRow) el.style.display = mobile ? 'none' : '';
+    });
+  }
+  window.addEventListener('resize', applyMobileSettings);
 
   function $(id){ return document.getElementById(id); }
 
@@ -24,14 +66,28 @@
     if(panel && !aiEnabled) panel.classList.add('hidden');
     const bar = $('liveCaptionBar');
     if(bar && !aiEnabled) bar.classList.add('hidden');
+    // 🤖 [İSTEK] Sohbet başlığında kişi adının hemen yanındaki ✨ rozeti ve
+    // mesaj arama çubuğundaki ✨ butonu — Yerel AI açıkken görünür olur.
+    $$('.sv-ai-header-btn').forEach(el=>{ el.style.display = aiEnabled ? '' : 'none'; });
+    $$('.sv-ai-search-btn').forEach(el=>{ el.style.display = aiEnabled ? '' : 'none'; });
   }
 
   // Ayarlar paneli her açıldığında app.js çağırır (toggleSettings).
   window.edgeAISyncSettings = function(){
+    applyMobileSettings();
     const a = $('toggleEdgeAI');
     const g = $('toggleEdgeAIGpu');
     if(a) a.checked = aiEnabled;
-    if(g){ g.checked = gpuEnabled; g.disabled = !aiEnabled; }
+    if(g){
+      g.checked = gpuEnabled;
+      g.disabled = !aiEnabled || !gpuAvailable;
+      const hint = $('edgeAIGpuHint');
+      if(hint){
+        if(!gpuAvailable) hint.textContent = 'Bu cihazda/tarayıcıda WebGPU kullanılamıyor — model otomatik olarak WASM (CPU) ile çalışır.';
+        else if(!aiEnabled) hint.textContent = 'Önce Yerel Yapay Zeka anahtarını aç.';
+        else hint.textContent = 'Hızlı ama daha çok bellek kullanır. Kapalıyken WASM (daha yavaş, daha az RAM) ile çalışır.';
+      }
+    }
   };
 
   function disableAi(){
@@ -45,8 +101,9 @@
   }
 
   window.toggleEdgeAI = function(){
-    const cb = $('toggleEdgeAI');
-    const on = !!(cb && cb.checked);
+    // 📱 Mobilde bu satır gizli; localStorage tek gerçek kaynak olsun diye
+    // DOM'daki checked yerine her zaman mevcut değerin tersi alınır.
+    const on = !aiEnabled;
     if(on){
       aiEnabled = true;
       localStorage.setItem(AI_KEY, '1');
@@ -60,8 +117,10 @@
   };
 
   window.toggleEdgeAIGpu = function(){
-    const cb = $('toggleEdgeAIGpu');
-    gpuEnabled = !!(cb && cb.checked);
+    // Mobilde satır gizli + WebGPU yoksa tıklama etkisiz olmasın diye
+    // DOM checked yerine mevcut değerin tersi alınır.
+    if(!gpuAvailable) return; // cihaz desteklemiyorsa seçim yapılamaz (WASM devam)
+    gpuEnabled = !gpuEnabled;
     localStorage.setItem(AI_GPU_KEY, gpuEnabled ? '1' : '0');
     // GPU değişimi yalnızca model yeniden yüklenirken etkili olur — bu yüzden
     // yüklü modeli bırakıp worker'ı tazeliyoruz (RAM hemen boşalır).
@@ -273,6 +332,15 @@
     if(overlay) overlay.addEventListener('click', (e)=>{
       if(e.target === overlay) overlay.classList.add('hidden');
     });
+
+    // 🤖 [İSTEK] Kişi adının yanındaki ✨ rozeti ve arama çubuğundaki ✨
+    // butonu — dinamik oluştukları için delegation ile bağlanır.
+    document.addEventListener('click', (e)=>{
+      const hdr = e.target.closest('.sv-ai-header-btn');
+      if(hdr){ openButler(); return; }
+      const srch = e.target.closest('.sv-ai-search-btn');
+      if(srch){ summarizeSearchResults(); }
+    });
   }
 
   function openButler(){
@@ -299,6 +367,35 @@
       : 'Özetlenecek mesaj yok';
   }
 
+  function summarizeSearchResults(){
+    if(!aiEnabled){
+      if(typeof showToast==='function') showToast('✨ Yerel Yapay Zeka', 'Yerel yapay zekayı açmak için sohbet başlığındaki ✨ simgesine dokun.');
+      return;
+    }
+    // Arama sonuçları SOHBET İÇİ aramada DOM'daki mesaj balonlarıdır.
+    const wraps = $$('.msg-wrap.search-highlight, .msg-wrap');
+    const texts = [];
+    for(const el of wraps){
+      const t = el.querySelector('.msg-text');
+      if(t && t.textContent.trim()) texts.push(t.textContent.trim());
+    }
+    if(!texts.length){
+      if(typeof showToast==='function') showToast('AI Özet','Aranan metinde özetlenecek mesaj bulunamadı.');
+      return;
+    }
+    openButler();
+    const out = $('aiButlerOut');
+    const st = $('aiButlerStatus');
+    if(out){
+      delete out.dataset.locked;
+      out.textContent = 'Arama sonuçları cihazda tarandı ('+texts.length+' mesaj) · yerel model özetliyor…';
+    }
+    if(st) st.textContent = 'Edge LLM çalışıyor…';
+    const msgs = texts.slice(-40).map(text=>({ from:'', text }));
+    const model = ($('aiButlerModel')||{}).value || 'fast';
+    ensureWorker().postMessage({ type:'summarize', messages: msgs, model });
+  }
+
   function runButler(){
     const msgs = collectMessages();
     const out = $('aiButlerOut');
@@ -316,6 +413,30 @@
     ensureWorker().postMessage({ type:'summarize', messages: msgs, model });
   }
 
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>{ bindUi(); applyAiUi(); window.edgeAISyncSettings(); });
-  else { bindUi(); applyAiUi(); window.edgeAISyncSettings(); }
+  // 🤖 [İSTEK] Sohbet başlığında, karşı tarafın adının hemen yanında ✨ rozeti.
+  // chatName app.js tarafından innerText ile yeniden yazıldığı için MutationObserver
+  // ile korunur; buton silinirse anında geri eklenir.
+  function ensureHeaderAiBadge(){
+    const name = $('chatName');
+    if(!name) return;
+    const badge = document.getElementById('chatNameAiBtn');
+    // innerText ataması içeriği düz metne çevirip butonu siler → geri ekle.
+    if(badge && name.contains(badge)) return;
+    const el = document.createElement('button');
+    el.id = 'chatNameAiBtn';
+    el.className = 'sv-ai-header-btn';
+    el.type = 'button';
+    el.title = 'Yerel Yapay Zeka — bu sohbeti cihazda özetle';
+    el.textContent = '✨';
+    el.style.display = aiEnabled ? '' : 'none';
+    name.appendChild(el);
+  }
+  try{
+    const _cnObs = new MutationObserver(()=> ensureHeaderAiBadge());
+    const _cn = $('chatName');
+    if(_cn) _cnObs.observe(_cn, { childList:true });
+  }catch(_){}
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>{ bindUi(); applyAiUi(); ensureHeaderAiBadge(); window.edgeAISyncSettings(); });
+  else { bindUi(); applyAiUi(); ensureHeaderAiBadge(); window.edgeAISyncSettings(); }
 })();

@@ -843,7 +843,20 @@ html.dark .inp-tools{border-bottom-color:rgba(255,255,255,.07)}
     transform:translateY(20px) scale(1)!important;
   }
   #settingsPanel.open{transform:translateY(0) scale(1)!important}
+  /* 📱 [İSTEK] Mobil UI'da Ayarlar panelinden AI seçenekleri kaldırıldı.
+     (Bu satırlara ai-settings-only sınıfı verildi; edge-ai.js de JS ile gizler.) */
+  #settingsPanel .ai-settings-only{display:none!important}
 }
+
+/* 🤖 Sohbet başlığında kişi adı yanındaki ✨ rozeti + arama çubuğu ✨ butonu */
+#chatName{display:inline-flex;align-items:center;gap:6px}
+#chatNameAiBtn,.sv-ai-header-btn{
+  background:rgba(99,102,241,.14);border:1px solid rgba(99,102,241,.35);
+  color:var(--text);border-radius:999px;font-size:12px;line-height:1;
+  padding:3px 7px;cursor:pointer;min-width:auto;transition:.15s;vertical-align:middle;
+}
+#chatNameAiBtn:hover,.sv-ai-header-btn:hover{background:rgba(99,102,241,.28)}
+.sv-ai-search-btn{flex-shrink:0}
 .sp-head{padding:16px 20px;font-weight:700;font-size:15px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;color:var(--text)}
 .sp-sec{padding:12px 20px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
 .sp-row{padding:10px 20px;display:flex;justify-content:space-between;align-items:center;font-size:13px;border-bottom:1px solid var(--border);color:var(--text)}
