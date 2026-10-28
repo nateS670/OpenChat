@@ -1201,6 +1201,25 @@ html:not(.dark) .toast{background:#334155}
 }
 @keyframes welcomeOut{to{opacity:0;transform:translate(-50%,-50%) scale(1.18)}}
 @keyframes welcomeRing{from{transform:scale(.4);opacity:.55}to{transform:scale(2.1);opacity:0}}
+/* ✨ [3.7] Zenginleştirilmiş karşılama: iki halka, parıltı, dönen ışın,
+   sıralı harf animasyonu ve etraftan yukarı süzülen parçacıklar. */
+@keyframes welcomeRing2{0%{transform:scale(.3);opacity:.45}70%{opacity:.18}100%{transform:scale(3);opacity:0}}
+@keyframes welcomeGlow{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:.9;transform:scale(1.12)}}
+@keyframes welcomeSpin{to{transform:rotate(360deg)}}
+@keyframes welcomeLetter{
+  0%{opacity:0;transform:translateY(10px) scale(.8)}
+  100%{opacity:1;transform:none}
+}
+@keyframes welcomeSpark{
+  0%{opacity:0;transform:translate(0,0) scale(.4)}
+  35%{opacity:1}
+  100%{opacity:0;transform:translate(var(--dx),var(--dy)) scale(1.15)}
+}
+@keyframes welcomeFloat{
+  0%{opacity:0;transform:translateY(40px) scale(.6)}
+  15%{opacity:.85}
+  100%{opacity:0;transform:translateY(-140px) scale(1)}
+}
 
 #authScreen.sv-auth-out{animation:authExit .32s ease-in forwards;pointer-events:none}
 #mainApp.sv-app-enter{animation:appEnter .55s cubic-bezier(.22,1,.36,1) both}
@@ -1208,17 +1227,57 @@ html:not(.dark) .toast{background:#334155}
   position:fixed;inset:0;z-index:9600;display:flex;align-items:center;justify-content:center;
   pointer-events:none;
   /* Arka planı hafifçe karart ki alttaki uygulama metni rozetin içinden geçmesin */
-  background:radial-gradient(circle at 50% 50%,rgba(255,123,123,.22),rgba(0,0,0,.55) 45%,rgba(0,0,0,.55));
+  background:radial-gradient(circle at 50% 50%,rgba(255,123,123,.18),rgba(0,0,0,.88) 30%,rgba(0,0,0,.93));
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
   animation:welcomeOut .45s ease-in .95s forwards;
 }
 #welcomeBurst .wb-card{
   position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   display:flex;flex-direction:column;align-items:center;gap:10px;
-  animation:welcomePop .5s cubic-bezier(.34,1.56,.64,1) both;
+  animation:welcomeCardIn .5s cubic-bezier(.34,1.56,.64,1) both;
 }
+@keyframes welcomeCardIn{
+  0%{opacity:0;transform:translate(-50%,-50%) scale(.72)}
+  55%{opacity:1;transform:translate(-50%,-50%) scale(1.05)}
+  100%{opacity:1;transform:translate(-50%,-50%) scale(1)}
+}
+/* .wb-av ve .wb-hi, .wb-card'ın flex çocukları — KENDİ animasyonları olmamalı:
+   aksi hâlde transform animasyonu onları kendi (0,0) köşesinden ölçekleyip
+   kartın dışına kaydırıyordu (screenshot'ta avatar sol üstte kalmıştı).
+   Ölçek/pop efekti artık kart üzerinde. */
 #welcomeBurst .wb-ring{
   position:absolute;left:50%;top:50%;width:150px;height:150px;margin:-75px 0 0 -75px;
   border-radius:50%;border:2px solid var(--primary);animation:welcomeRing .9s ease-out both;
+}
+#welcomeBurst .wb-ring2{
+  position:absolute;left:50%;top:50%;width:150px;height:150px;margin:-75px 0 0 -75px;
+  border-radius:50%;border:1px solid rgba(255,123,123,.7);animation:welcomeRing2 1.15s ease-out .18s both;
+}
+#welcomeBurst .wb-glow{
+  position:absolute;left:50%;top:50%;width:190px;height:190px;margin:-95px 0 0 -95px;
+  border-radius:50%;background:radial-gradient(circle,rgba(255,123,123,.42),transparent 68%);
+  animation:welcomeGlow 1.3s ease-in-out both;
+}
+#welcomeBurst .wb-beam{
+  position:absolute;left:50%;top:50%;width:260px;height:260px;margin:-130px 0 0 -130px;
+  border-radius:50%;
+  background:conic-gradient(from 0deg,transparent 0deg,rgba(255,123,123,.35) 30deg,transparent 70deg,transparent 180deg,rgba(255,123,123,.25) 210deg,transparent 250deg);
+  mask:radial-gradient(circle,transparent 42%,#000 46%,#000 62%,transparent 70%);
+  -webkit-mask:radial-gradient(circle,transparent 42%,#000 46%,#000 62%,transparent 70%);
+  animation:welcomeSpin 2.2s linear both;
+}
+#welcomeBurst .wb-av{animation:none}
+#welcomeBurst .wb-letter{display:inline-block;animation:welcomeLetter .34s cubic-bezier(.34,1.56,.64,1) both}
+#welcomeBurst .wb-spark{
+  position:absolute;left:50%;top:50%;width:6px;height:6px;border-radius:50%;
+  background:var(--primary);box-shadow:0 0 10px rgba(255,123,123,.9);
+  margin:-3px 0 0 -3px; /* merkezden saçılsın — sol üst köşeden değil */
+  animation:welcomeSpark .85s cubic-bezier(.22,1,.36,1) both;
+}
+#welcomeBurst .wb-float{
+  position:absolute;bottom:0;width:5px;height:5px;border-radius:50%;
+  background:rgba(255,123,123,.75);box-shadow:0 0 8px rgba(255,123,123,.6);
+  animation:welcomeFloat 1.5s ease-out both;
 }
 #welcomeBurst .wb-av{
   width:96px;height:96px;border-radius:50%;background:var(--primary);color:#fff;
@@ -1226,9 +1285,12 @@ html:not(.dark) .toast{background:#334155}
   box-shadow:0 14px 40px rgba(255,60,60,.45);overflow:hidden;
 }
 #welcomeBurst .wb-av img{width:100%;height:100%;object-fit:cover}
-#welcomeBurst .wb-hi{font-size:15px;font-weight:700;color:var(--text);background:var(--panel);padding:6px 16px;border-radius:20px;box-shadow:var(--sh);white-space:nowrap}
+#welcomeBurst .wb-hi{font-size:15px;font-weight:700;color:var(--text);background:var(--panel);padding:6px 16px;border-radius:20px;box-shadow:var(--sh);white-space:nowrap;min-width:150px;text-align:center;box-sizing:border-box}
 @media(prefers-reduced-motion:reduce){
-  #authScreen.sv-auth-out,#mainApp.sv-app-enter,#welcomeBurst,#welcomeBurst .wb-card,#welcomeBurst .wb-ring{animation:none!important}
+  #authScreen.sv-auth-out,#mainApp.sv-app-enter,#welcomeBurst,#welcomeBurst .wb-card,
+  #welcomeBurst .wb-ring,#welcomeBurst .wb-ring2,#welcomeBurst .wb-glow,
+  #welcomeBurst .wb-beam,#welcomeBurst .wb-av,#welcomeBurst .wb-letter,
+  #welcomeBurst .wb-spark,#welcomeBurst .wb-float{animation:none!important}
 }
 
 /* Dosya mesajı */
@@ -1905,6 +1967,21 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
       <option value="tr">Türkçe</option>
     </select>
   </div>
+  <div class="sp-sec">Yapay Zeka</div>
+  <div class="sp-row">
+    <span>✨ Yerel Yapay Zeka</span>
+    <label class="toggle"><input type="checkbox" id="toggleEdgeAI" onchange="toggleEdgeAI()"><span class="tslider"></span></label>
+  </div>
+  <div style="padding:0 20px 12px;font-size:11.5px;line-height:1.5;color:var(--muted)">
+    Canlı altyazı ve AI Chat Butler. Kapalıyken model hiç indirilmez / RAM kullanmaz.
+  </div>
+  <div class="sp-row">
+    <span>🖥️ GPU hızlandırma (WebGPU)</span>
+    <label class="toggle"><input type="checkbox" id="toggleEdgeAIGpu" onchange="toggleEdgeAIGpu()"><span class="tslider"></span></label>
+  </div>
+  <div style="padding:0 20px 12px;font-size:11.5px;line-height:1.5;color:var(--muted)">
+    Hızlı ama daha çok bellek kullanır. Kapalıyken WASM (daha yavaş, daha az RAM) ile çalışır.
+  </div>
   <div class="sp-sec">Hesap</div>
   <div class="sp-row" style="cursor:pointer" onclick="document.getElementById('avatarInput').click()">
     <span>🖼️ Profil Fotoğrafını Değiştir</span>
@@ -2473,7 +2550,7 @@ html.dark #firstLoginBanner{background:rgba(245,158,11,.12);border-color:rgba(24
   </div>
 </div>
 
-<script src="i18n.js" integrity="sha384-D8BlgMAmlTdUn1TdKvKMG9HtoTl2c5+mzhUHtPsvZ6nY9RyRAoPvq8P2LgOVo/s+" crossorigin="anonymous"></script>
+<script src="i18n.js" integrity="sha384-7IBiRIh1ZA4pQ0Ua5fOpMsubbIyiijYxclWCcSGo8a4vV/J0RGPrFT5zYGin4SmF" crossorigin="anonymous"></script>
 <script src="app.js"></script>
 <script src="edge-ai.js"></script>
 </body></html>
