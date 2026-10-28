@@ -83,8 +83,13 @@ function _playWelcomeTransition(){
   burst.id = 'welcomeBurst';
   const card = document.createElement('div');
   card.className = 'wb-card';
-  const ring = document.createElement('div');
-  ring.className = 'wb-ring';
+
+  // Halkalar + parıltı + dönen ışın (hepsi CSS animasyonu, JS sadece iskelet)
+  const glow = document.createElement('div'); glow.className = 'wb-glow';
+  const beam = document.createElement('div'); beam.className = 'wb-beam';
+  const ring = document.createElement('div'); ring.className = 'wb-ring';
+  const ring2 = document.createElement('div'); ring2.className = 'wb-ring2';
+
   const av = document.createElement('div');
   av.className = 'wb-av';
   const name = String((ME && ME.user_id) || '').trim();
@@ -96,15 +101,58 @@ function _playWelcomeTransition(){
   } else {
     av.textContent = (name[0] || '?').toUpperCase();
   }
+
+  // Karşılama yazısı: her harf sırayla gelir ("H" → "Ho" → "Hoş" …).
+  // Parçalara bölündüğü için i18n sözlüğüne bağımlı değil; sadece görsel.
   const hi = document.createElement('div');
   hi.className = 'wb-hi';
-  // Tam cümle kullanılmıyor: i18n sözlüğü "Hoş Geldin" kelime sınırı
-  // mantığıyla çalışıyor, parçalanmış cümleyi güvenle çeviremez.
-  hi.textContent = (name || 'openchat') + ' · Hoş geldin';
-  card.appendChild(ring); card.appendChild(av); card.appendChild(hi);
+  const label = 'Hoş geldin';
+  [...label].forEach((ch, i)=>{
+    const sp = document.createElement('span');
+    sp.className = 'wb-letter';
+    sp.textContent = ch === ' ' ? '\u00A0' : ch;
+    sp.style.animationDelay = (0.42 + i * 0.045).toFixed(3) + 's';
+    hi.appendChild(sp);
+  });
+  if(name){
+    const who = document.createElement('span');
+    who.className = 'wb-letter';
+    who.style.cssText = 'margin-left:6px;opacity:.75;font-weight:600';
+    who.textContent = '· ' + name;
+    who.style.animationDelay = (0.42 + label.length * 0.045).toFixed(3) + 's';
+    hi.appendChild(who);
+  }
+
+  // Avatardan dışarı doğru saçılan parıltılar
+  const sparks = 10;
+  for(let i = 0; i < sparks; i++){
+    const sp = document.createElement('span');
+    sp.className = 'wb-spark';
+    const ang = (i / sparks) * Math.PI * 2 + Math.random() * 0.4;
+    const dist = 70 + Math.random() * 55;
+    sp.style.setProperty('--dx', (Math.cos(ang) * dist).toFixed(1) + 'px');
+    sp.style.setProperty('--dy', (Math.sin(ang) * dist).toFixed(1) + 'px');
+    sp.style.animationDelay = (0.18 + Math.random() * 0.16).toFixed(3) + 's';
+    sp.style.width = sp.style.height = (4 + Math.round(Math.random() * 4)) + 'px';
+    card.appendChild(sp);
+  }
+
+  // Ekranın altından yukarı süzülen tozlar
+  for(let i = 0; i < 12; i++){
+    const fl = document.createElement('span');
+    fl.className = 'wb-float';
+    fl.style.left = (8 + Math.random() * 84).toFixed(1) + '%';
+    fl.style.animationDelay = (0.15 + Math.random() * 0.7).toFixed(2) + 's';
+    fl.style.width = fl.style.height = (3 + Math.round(Math.random() * 4)) + 'px';
+    burst.appendChild(fl);
+  }
+
+  card.appendChild(glow); card.appendChild(beam);
+  card.appendChild(ring); card.appendChild(ring2);
+  card.appendChild(av); card.appendChild(hi);
   burst.appendChild(card);
   document.body.appendChild(burst);
-  setTimeout(()=>{ try{ burst.remove(); }catch(e){} }, 1500);
+  setTimeout(()=>{ try{ burst.remove(); }catch(e){} }, 1650);
 }
 
 // authScreen→mainApp geçişi yapan HER yer bunu kullanır.
@@ -158,6 +206,9 @@ const CHANGELOG_HTML = `
     <li>🔒 Yapay zeka tamamen cihaz içi: mesajlar ve ses hiçbir sunucuya gitmez, sadece model dosyaları indirilir ve önbelleğe alınır (Transformers.js)</li>
     <li>⚙️ Otomatik geri düşme: WebGPU açılamazsa otomatik WASM'a, Phi-3 yüklenemezse Qwen2.5'e geçilir; model indirme yüzdesi canlı gösterilir</li>
     <li>🧹 Arama bitince altyazı otomatik kapanır, ses tamponları ve model işçisi temizlenir</li>
+    <li>⚙️ Yeni: Ayarlar → Yerel Yapay Zeka anahtarı — AI tamamen kapatılıp açılabilir; kapalıyken model indirilmez, worker açılmaz, RAM kullanılmaz</li>
+    <li>🖥️ Yeni: Ayarlar → GPU hızlandırma (WebGPU) anahtarı — varsayılan kapalı (daha az bellek); açınca model GPU'da çalışıp hızlanır</li>
+    <li>🔔 Bağlantı/yapılandırma hatalarında toast spam'i giderildi: tek bildirim + üstel geri çekilme (4s→60s), internet dönünce otomatik yeniden bağlanma</li>
     <li>✨ Giriş/kayıt sonrası karşılama animasyonu — ekran yumuşakça oturur, avatarın ortada büyüyerek kısa bir "Hoş geldin" gösterir (hareket azaltma ayarına saygılı)</li>
   </ul>
 </div>
@@ -1476,7 +1527,12 @@ async function loadServerConfig(){
     return await _serverConfigPromise;
   }catch(e){
     _serverConfigPromise = null; // sıradaki çağrı tekrar denesin
-    console.error('[SEC] Sunucu yapılandırması (/api/config) alınamadı:', e);
+    // ✨ [3.7] Bu hata her yeniden denemede oluşuyor — konsolu doldurmasın diye
+    // yalnızca ilk başarısızlıkta loglanıyor (asıl kullanıcı bildirimi connectNetwork'te).
+    if(!loadServerConfig._loggedOnce){
+      loadServerConfig._loggedOnce = true;
+      console.error('[SEC] Sunucu yapılandırması (/api/config) alınamadı:', e);
+    }
     throw e;
   }
 }
@@ -1563,6 +1619,8 @@ window.toggleSettings=()=>{
   $('settingsPanel').classList.toggle('open');
   const cb=$('toggleDark');
   if(cb) cb.checked=document.documentElement.classList.contains('dark');
+  // ✨ [3.7] AI anahtarları Edge AI modülünden senkronlanır
+  if(typeof window.edgeAISyncSettings==='function') window.edgeAISyncSettings();
 };
 
 // Apply saved theme on load
@@ -2121,9 +2179,34 @@ function saveAccount(name){
 
 // ── MQTT ─────────────────────────────────────────────────────────
 let reconnTmr=null;
+// ✨ [3.7 FIX] Yapılandırma/bağlantı hataları artık SPAM'lenmiyor.
+// Önceden /api/config alınamadığında her yeniden denemede (4 sn'de bir)
+// yeni bir toast basılıyordu; toast kuyruğu dolup ekran "Sunucu ayarları
+// alınamadı" yazısıyla kaplanıyordu. Artık: aynı hata için en fazla 60
+// saniyede bir toast + üstel geri çekilme (4s → 8s → 16s … en fazla 60s)
+// + jitter. Bağlantı bir kez kurulunca sayaç sıfırlanır.
+let _netFailStreak = 0;
+let _netLastErrAt = 0;
+const _NET_BACKOFF_MAX = 60000;
+function _netBackoffMs(){
+  const exp = Math.min(_NET_BACKOFF_MAX, 4000 * Math.pow(2, Math.max(0, _netFailStreak - 1)));
+  return exp + Math.round(Math.random() * 800); // jitter — aynı anda bağlanmayalım
+}
+function _netFailToast(title, body){
+  const now = Date.now();
+  if(now - _netLastErrAt < 60000) return; // son uyarı 60 sn'den yeni — sessizce bekle
+  _netLastErrAt = now;
+  if(typeof showToast==='function') showToast(title, body);
+}
+// Kullanıcı ağa geri döndüğünde backoff'u sıfırla ve hemen bağlanmayı dene.
+window.addEventListener('online', ()=>{
+  _netFailStreak = 0; _netLastErrAt = 0;
+  clearTimeout(reconnTmr); reconnTmr = null;
+  if(ME && !(mq && mq.connected)) connectNetwork();
+});
 async function connectNetwork(){
   if(mq){try{mq.end(true)}catch(e){} mq=null}
-  clearTimeout(reconnTmr);
+  clearTimeout(reconnTmr); reconnTmr = null;
   setNet('connecting');
 
   // 🛡️ [HIGH-02]/[MED-01] Broker adresi, MQTT kimlik bilgileri ve topic
@@ -2136,7 +2219,8 @@ async function connectNetwork(){
     cfg = await loadServerConfig();
   }catch(e){
     setNet('offline');
-    if(typeof showToast==='function') showToast('⚠️ Yapılandırma Hatası','Sunucu ayarları alınamadı, tekrar denenecek.');
+    _netFailStreak++;
+    _netFailToast('⚠️ Yapılandırma Hatası','Sunucu ayarları alınamadı. Otomatik olarak yeniden denenecek.');
     schedRec();
     return;
   }
@@ -2146,6 +2230,7 @@ async function connectNetwork(){
     _obfTopic = await deriveObfuscatedTopic();
   }catch(e){
     setNet('offline');
+    _netFailStreak++;
     schedRec();
     return;
   }
@@ -2157,7 +2242,8 @@ async function connectNetwork(){
   if(typeof mqtt === 'undefined'){
     console.error('[MQTT] mqtt kütüphanesi yüklenemedi — CDN erişimi veya SRI hash hatası olabilir.');
     setNet('offline');
-    if(typeof showToast==='function') showToast('⚠️ Bağlantı Hatası','MQTT kütüphanesi yüklenemedi. Sayfa yenileyin.');
+    _netFailStreak++;
+    _netFailToast('⚠️ Bağlantı Hatası','MQTT kütüphanesi yüklenemedi. Sayfa yenileyin.');
     schedRec();
     return;
   }
@@ -2178,6 +2264,7 @@ async function connectNetwork(){
   mq=mqtt.connect(cfg.mqttBroker, mqttOpts);
   mq.on('connect',()=>{
     setNet('online');
+    _netFailStreak = 0; // bağlantı kuruldu — backoff sıfırlandı
     mq.subscribe(_obfTopic,{qos:1}); // QoS 1 — sinyal paketleri kaybolmasın
     // MQTT artık SADECE sinyal kanalı — presence + DC offer/answer/ICE + offline fallback
     // Gerçek mesajlar: WebRTC DataChannel (P2P, broker görmez)
@@ -2233,13 +2320,14 @@ async function connectNetwork(){
 function schedRec(){
   clearTimeout(reconnTmr);
   if(mq&&mq.connected)return;
+  if(reconnTmr)return; // zaten bekleyen bir deneme var — üst üste zamanlama
   // 🛡️ Reconnect rate limit — DDoS broker koruması
   if(!_reconnectLimiter.canReconnect()){
-    // Fazla bağlantı denemesi → 30 saniye bekle
-    reconnTmr=setTimeout(connectNetwork, 30000);
+    // Limit aşıldı — daha uzun bekle (en az 30s, backoff ile)
+    reconnTmr=setTimeout(connectNetwork, Math.max(30000, _netBackoffMs()));
     return;
   }
-  reconnTmr=setTimeout(connectNetwork,4000);
+  reconnTmr=setTimeout(connectNetwork, _netBackoffMs());
 }
 // ── Stabilite: bağlantı bekçisi ──
 setInterval(()=>{
