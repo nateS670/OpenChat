@@ -107,17 +107,21 @@
       .map(m=>({ who: m.from || 'Biri', t: String(m.text).replace(/\s+/g,' ').trim(), time: Number(m.time)||0 }))
       .filter(m=>m.t.length>1);
     if(!texts.length) return 'Bu sohbette özetlenecek metin mesajı yok.';
+    // 🔌 Başlık: 📤 Sohbete gönder butonu bu bloğu tanıyıp temiz göndersin.
     const meWho = (typeof ME!=='undefined' && ME && ME.user_id) ? ME.user_id : 'Sen';
     const others = [...new Set(texts.map(m=>m.who).filter(w=>w!==meWho))];
     const withStr = others.length ? others.slice(0,3).join(', ') + (others.length>3?'…':'') : 'karşı tarafla';
     const first = texts[0], last = texts[texts.length-1];
     const anyTime = texts.find(m=>m.time);
-    let head = '🤖 Butler özeti ('+texts.length+' mesaj';
+    let head = '🤖 Butler: özet ('+texts.length+' mesaj';
     if(anyTime && first.time && last.time && first.time!==last.time){
       head += ', '+fmtHM(first.time)+'–'+fmtHM(last.time);
     }
     head += ')';
     const lines = [];
+    // 🔌 İlk satır '🤖 Butler: …' formatında: 📤 Sohbete gönder butonu bu
+    // bloğu tanır ve temiz gönderebilir.
+    lines.push(head);
     lines.push('Konu: '+withStr+' ile sohbet — '+texts.length+' mesaj.');
     const slots = [];
     for(const m of texts){
@@ -151,14 +155,41 @@
   function butlerChat(text, msgs){
     const q = normalizeTr(String(text||''));
     const has = (...ws)=>ws.some(w=>q.includes(w));
+    // 🔌 [İSTEK] "yaz: <mesaj>" / "gönder: <mesaj>" komutu HER ŞEYDEN ÖNCE:
+    // kullanıcı AI panelinden doğrudan karşı tarafa mesaj yazabilsin.
+    {
+      const wm0 = String(text||'').match(/^\s*(?:sunu\s+|bunu\s+)?(?:mesaj\s+olarak\s+)?(?:yaz|gonder|gönder)\s*[:\-]\s*(.{2,})/i);
+      if(wm0){
+        const payload = wm0[1].trim();
+        queueSendToChat(payload);
+        return '📤 Sohbete yazılıyor: "'+payload.slice(0,80)+'" — gönder butonuna bastığında karşı tarafa ulaşır.';
+      }
+    }
     const recent = (msgs||[]).filter(m=>m&&m.text&&!m.sys).slice(-40)
       .map(m=>({who:m.from||'Biri', t:String(m.text).replace(/\s+/g,' ').trim(), time:Number(m.time)||0}));
     const withStr = (()=>{ const o=[...new Set(recent.map(m=>m.who))].filter(w=>w!==(ME&&ME.user_id)); return o.length?o.slice(0,2).join(' ve '):null; })();
-    if(!recent.length) return 'Bu sohbette henüz mesaj yok; konuşma başlayınca özet, hatırlatma ve arama yapabilirim. ✨';
-    if(has('selam','merhaba','gunaydin','iyi aksamlar','naber','nasilsin'))
+    // 🔌 [İSTEK] Cevaplar bağlama göre değişsin: aynı soru tekrar gelirse
+    // farklı biçimde yanıtla, önceki AI cevaplarına referans verebil.
+    const asked = botCtx.filter(c=>c.role==='user').length;
+    const normQ = q.replace(/\s+/g,' ').trim();
+    const repeat = botCtx.some(c=>c.role==='user' && c.q === normQ);
+    if(!recent.length){
+      if(botCtx.length) return 'Hâlâ bu sohbette mesaj yok 😅 — konuşma başlayınca özet, arama ve hatırlatma yapabileceğim.';
+      return 'Bu sohbette henüz mesaj yok; konuşma başlayınca özet, hatırlatma ve arama yapabilirim. ✨';
+    }
+    if(has('selam','merhaba','gunaydin','iyi aksamlar','naber','nasilsin')){
+      if(asked>0) return 'Tekrar selam! 👋 Bu sohbet '+recent.length+' mesaj; istersen özetini çıkarayım ya da "son ne dedi?" diye sorabilirsin.';
       return 'Selam! Ben cihazından çıkmayan yerel asistanın. Bu sohbette neler geçtiğini özetleyebilirim, "şunu ara" diyebilirsin ya da "son ne dedi?" diye sorabilirsin.';
-    if(has('ozet','neler gec','ne konus','ne oldu','akisi','topla'))
-      return butlerSummarize(msgs);
+    }
+    if(has('tesekkur','sagol','eyvallah')) return asked>0 ? 'Ne demek, buradayım. 😊' : 'Rica ederim! Hepsi bu cihazda kaldı, hiçbir mesaj dışarı gitmedi. 😊';
+    if(has('ozet','neler gec','ne konus','ne oldu','akisi','topla')){
+      const s = butlerSummarize(msgs);
+      if(!repeat) return s;
+      // Aynı soru tekrarlandı: aynısını yapıştırma, farklı açıdan özetle.
+      botCount++;
+      const last3 = recent.slice(-3).map(m=>m.who+': '+m.t.slice(0,70));
+      return 'Sohbeti az önce özetledim 🙂 — kısaca son durum: '+last3.join(' · ')+'. Farklı bir açı istersen: "hatırlatmalar", "saat kaçta" veya "<kelime> ara".';
+    }
     if(has('saat kac','toplanti saat','bulusma saat','ne zaman bulus')){
       const hits = recent.filter(m=>svScore(m.t)>=1).slice(-3);
       return hits.length ? 'Saat/tarih geçiyor: '+hits.map(h=>h.who+': "'+h.t.slice(0,90)+'"').join(' · ') : 'Mesajlarda net bir saat/tarih göremedim.';
@@ -182,6 +213,12 @@
       }
     }
     if(has('kac mesaj','nekadardir')) return recent.length+' mesaj var'+(withStr?(' ('+withStr+' ile)'):'')+'.';
+    if(has('sohbete yaz','mesaj olarak gonder','ai cevabini gonder')){
+      const lastBotMsg = [...botCtx].reverse().find(c=>c.role==='bot');
+      const payload = lastBotMsg ? lastBotMsg.t : butlerSummarize(msgs);
+      queueSendToChat(payload);
+      return '📤 Son AI cevabım karşı tarafa gönderiliyor.';
+    }
     const cm = q.match(/kim (.*) dedi|kim soledi|kim (.*) yazdi/);
     if(cm){
       const term = normalizeTr((cm[1]||cm[2]||'').replace(/\s+(dedi|soledi|yazdi)$/,''));
@@ -202,10 +239,39 @@
     const terms = q.replace(stopRe,' ').split(/\s+/).filter(w=>w.length>=4 && !TR_STOPWORDS.has(w)).slice(0,4);
     if(terms.length){
       const hits = recent.filter(m=>{ const n=normalizeTr(m.t); return terms.some(t=>n.includes(t)); }).slice(-3);
-      if(hits.length) return 'Şunlar ilgili görünüyor:\n'+hits.map(m=>'• '+m.who+': '+m.t.slice(0,140)).join('\n')+'\n\nİstersen tüm sohbeti özetleyeyim — "özetle" demen yeterli.';
+      if(hits.length){ botCount++; return vary('Şunlar ilgili görünüyor:\n'+hits.map(m=>'• '+m.who+': '+m.t.slice(0,140)).join('\n')+'\n\nİstersen tüm sohbeti özetleyeyim — "özetle" demen yeterli.'); }
     }
-    return 'Bunu tam anlayamadım 🤔. Şunları yapabilirim:\n• "özetle" — sohbetin özeti\n• "son ne dedi?" — en son mesaj\n• "<kelime> ara" — sohbette arama\n• "hatırlatmalar" — bekleyen sorular';
+    // 🔌 [İSTEK] Rastgele yazılan mesajlara da bağlamsal, tekrar etmeyen cevaplar:
+    // kullanıcı AI'a normal mesaj gibi yazabilsin ("tamam", "anlat", "peki"…).
+    if(has('tamam','peki','amk','ok','olur')){ if(asked>0){ botCount++; return vary('Tamamdır, buradayım. Başka bir şey sorun ya da "özetle" deyin.'); } return 'Anlaşıldı! İstersen "özetle", "son ne dedi?" ya da "<kelime> ara" diyebilirsin.'; }
+    if(has('ne demek','acikla','anlat','devam et','daha fazla')){
+      const lastBotMsg = [...botCtx].reverse().find(c=>c.role==='bot');
+      if(lastBotMsg) return 'Az önce şuna değinmiştim: "'+lastBotMsg.t.slice(0,120)+'"\nDevamı için somut soru sorabilirsin: kim, ne zaman, hangi karar?';
+      return 'Detaylandırayım: bu sohbette '+recent.length+' mesaj var; en önemlilerini "özetle" komutuyla sıralarım.';
+    }
+    if(q.endsWith('mi') || q.endsWith('mı') || /\?$/.test(String(text||''))){
+      const guess = terms.length ? recent.filter(m=>normalizeTr(m.t).includes(terms[0])).slice(-1)[0] : null;
+      if(guess) return 'Mesajlardan çıkardığım: '+guess.who+' demiş ki "'+guess.t.slice(0,140)+'". Net bir cevap göremedim ama benzerleri yukarıda.';
+      return 'Bu sorunun cevabını mesajlarda net bulamadım 🤔. "özetle" veya "<kelime> ara" dener misin?';
+    }
+    botCount++;
+    return vary('Bunu tam anlayamadım 🤔. Şunları yapabilirim:\n• "özetle" — sohbetin özeti\n• "son ne dedi?" — en son mesaj\n• "<kelime> ara" — sohbette arama\n• "hatırlatmalar" — bekleyen sorular');
   }
+
+  // 🔌 [İSTEK] Cihaz içi BUTLER SOHBET GEÇMİŞİ: AI'a yazdığın mesajlar ve
+  // verilen cevaplar (yalnızca bu sekmede, localStorage'a yazmadan) hatırlanır.
+  // Böylece butler tekrar eden sorularda aynısını demez; bağlama göre cevap verir.
+  let botCount = 0;
+  const botCtx = [];
+  const VARY_PREFIX = ['Ekleyeyim:','Kısaca:','Not:','Hatırlatayım:','Bir de şöyle:'];
+  function vary(reply){
+    if(botCount >= 1 && reply.length > 40){
+      const p = VARY_PREFIX[(botCount-2) % VARY_PREFIX.length];
+      return p+' '+reply.charAt(0).toLowerCase()+reply.slice(1);
+    }
+    return reply;
+  }
+  function resetButlerCtx(){ botCount = 0; botCtx.length = 0; }
 
   // ✨ [3.7] Ayarlar → "Yerel Yapay Zeka" anahtarı. Kapalıyken hiçbir model
   // indirilmez, worker oluşturulmaz, RAM kullanılmaz. Tercih cihazda saklanır.
@@ -222,6 +288,10 @@
   // altyazı butonuna tekrar basana kadar sessiz kalınır (konsol "Failed to
   // fetch" döngüsünün kökü buydu).
   let asrFailedOnce = false;
+  // 🔧 [FIX] Whisper indirmesini KULLANICI onayladığında kilidi sıfırla —
+  // eskiden ilk ağ hatasından sonra butona kaç kez basılırsa basılsın model
+  // hiç denenmiyordu ("transkript ai modeli indirilemedi" kalıcı oluyordu).
+  let asrRetryArmed = false;
   // 🔌 LLM yalnızca kullanıcı fiilen model indirmeyi başlattıysa (altyazı/derin
   // özet) ve tamamlanınca kullanılır; asla otomatik indirilmez.
   let llmLoaded = false;
@@ -404,6 +474,7 @@
       if(d.type === 'caption') onCaption(d);
       else if(d.type === 'summary') onSummary(d.text);
       else if(d.type === 'chat-reply') onChatReply(d.text);
+      else if(d.type === 'chat-skip'){ /* LLM yok: cihaz içi cevap zaten verildi */ }
       else if(d.type === 'progress') onProgress(d);
       else if(d.type === 'status') onStatus(d);
       else if(d.type === 'error') onError(d);
@@ -460,7 +531,7 @@
       const cap = $('liveCaptionStatus');
       if(cap){
         cap.textContent = asrFailedOnce
-          ? 'Altyazı modeli indirilemedi (internet/HF erişimi yok) · AI özet ve sohbet yine de cihazda çalışır'
+          ? 'Altyazı modeli indirilemedi (internet/HF erişimi sorunu) · AI özet ve sohbet yine de cihazda çalışır · butona tekrar basınca yeniden denenir'
           : 'Altyazı hatası: '+msg;
       }
       return;
@@ -501,6 +572,7 @@
       text: String(m.text).replace(/\s+/g,' ').trim()
     })).filter(m=>m.text.length>1);
     if(!texts.length) return 'Bu sohbette özetlenecek metin mesajı yok.';
+    // 🔌 Başlık: 📤 Sohbete gönder butonu bu bloğu tanıyıp temiz göndersin.
     const cues = /yarın|bugün|saat|buluş|gel|geç|iptal|onay|karar|toplant|mekan|nerede|\d{1,2}[:.]\d{2}|pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar/i;
     const scored = texts.map((m,i)=>{
       let s = Math.min(m.text.length, 180)/180;
@@ -518,11 +590,17 @@
     const db = getDB();
     const k = chatType==='private' ? [ME.user_id, chatId].sort().join('_') : 'g_'+chatId;
     const msgs = db.messages[k] || [];
-    return msgs.filter(m=>!m.sys && m.text).map(m=>({
-      from: m.from || ME.user_id,
-      text: m.text,
-      time: m.time || ''
-    })).slice(-120);
+    return msgs.filter(m=>!m.sys && m.text).map(m=>{
+      let t = m.time || '';
+      // 🔧 [FIX] Uygulamada time "HH:MM" DİZİSİ; özet saatleri hep boş
+      // kalıyordu. Bugüne göre epoch ms'e çevir (amaç sadece HH:MM gösterimi).
+      if(typeof t === 'string'){
+        const mm = t.match(/^(\d{1,2}):(\d{2})/);
+        if(mm){ const d = new Date(); d.setHours(+mm[1], +mm[2], 0, 0); t = d.getTime(); }
+        else { const p = Date.parse(t); t = isNaN(p) ? 0 : p; }
+      }
+      return { from: m.from || ME.user_id, text: m.text, time: Number(t)||0 };
+    }).slice(-120);
   }
 
   function onSummary(text){
@@ -594,11 +672,16 @@
     if(b) b.disabled = true;
     const msgs = collectMessages();
     appendChat('user', text);
+    botCtx.push({ role:'user', q: normalizeTr(text).replace(/\s+/g,' ').trim(), t: text });
     // Cevabı bir sonraki tick'te üret — UI yazdığını anında göstersin.
     setTimeout(()=>{
       let inlineAnswered = false;
-      try{ appendChat('bot', butlerChat(text, msgs)); inlineAnswered = true; }
-      catch(e){ appendChat('bot', 'Bir sorun oldu ama buradayım — tekrar dener misin?'); }
+      let ans = '';
+      try{ ans = butlerChat(text, msgs); appendChat('bot', ans); inlineAnswered = true; }
+      catch(e){ ans = 'Bir sorun oldu ama buradayım — tekrar dener misin?'; appendChat('bot', ans); }
+      botCtx.push({ role:'bot', t: ans });
+      if(botCtx.length > 40) botCtx.splice(0, botCtx.length-40);
+      botCount++; // vary() çeşitlendirmesi her AI yanıtında ilerlesin
       // LLM zaten yüklüyse (kullanıcı indirmeyi kabul etmiş) derin cevap da ekle.
       if(inlineAnswered && worker && llmLoaded){
         try{ worker.postMessage({ type:'chat', text, model: ($('aiButlerModel')||{}).value || 'fast' }); }catch(_){}
@@ -646,6 +729,7 @@
       return;
     }
     captionsOn = !!on;
+    if(on && asrFailedOnce){ asrFailedOnce = false; asrRetryArmed = true; }
     const bar = $('liveCaptionBar');
     const btn = $('liveCaptionBtn');
     if(bar) bar.classList.toggle('hidden', !captionsOn);
@@ -661,13 +745,14 @@
       return;
     }
     ensureWorker();
-    if(asrFailedOnce){
-      // Daha önce indirme başarısız oldu — kullanıcı tekrar denemeden sessiz kal.
+    if(asrFailedOnce && !asrRetryArmed){
+      // Kullanıcı henüz "tekrar dene" demedi — sessiz kal (konsol döngüsü yok).
       const cap = $('liveCaptionStatus');
-      if(cap) cap.textContent = 'Altyazı modeli indirilemedi · internet erişimini kontrol edip butona tekrar bas';
+      if(cap) cap.textContent = 'Altyazı modeli indirilemedi · butona tekrar basınca yeniden denenir';
       setCapLoading(false);
     } else {
-      worker.postMessage({ type:'warmup-asr' });
+      asrRetryArmed = false;
+      worker.postMessage({ type:'warmup-asr', retry:true });
     }
     worker.postMessage({ type:'set-translate', mode: ($('liveCaptionMode')||{}).value || 'off' });
     for(const [uid, stream] of pending){
@@ -754,6 +839,7 @@
     updateModelAvailability();
     const out = $('aiButlerOut');
     const msgs = collectMessages();
+    resetButlerCtx(); // yeni sohbet/bu açılış: AI geçmişi temiz başlasın
     if(out){
       delete out.dataset.locked;
       // 🔌 Cihaz içi özet ANINDA çıkar — internet/model gerekmez.
@@ -789,7 +875,13 @@
       if(msEl) from = msEl.textContent.trim();
       else if(el.classList.contains('me-wrap')) from = (typeof ME!=='undefined' && ME && ME.user_id) ? ME.user_id : 'Sen';
       else from = otherName || 'Karşı taraf';
-      outMsgs.push({ from, text: t.textContent.trim(), time: 0 });
+      let tm = 0;
+      const te = el.querySelector('.msg-time, .time, .msg-meta .t');
+      if(te){
+        const mm = String(te.textContent).match(/(\d{1,2}):(\d{2})/);
+        if(mm){ const d = new Date(); d.setHours(+mm[1], +mm[2], 0, 0); tm = d.getTime(); }
+      }
+      outMsgs.push({ from, text: t.textContent.trim(), time: tm });
     }
     return outMsgs;
   }
