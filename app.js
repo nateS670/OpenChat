@@ -3646,7 +3646,7 @@ function updateFriends(){
       const av=safeRawAv?`<img src="${safeRawAv}" style="width:100%;height:100%;object-fit:cover;">`:escHtml(f.charAt(0).toUpperCase());
       const isTypingToMe=_typingUsers.has(f);
       const typingBubble=isTypingToMe?`<span style="display:inline-flex;align-items:center;gap:2px;background:var(--sec);border-radius:8px;padding:1px 5px;font-size:10px;color:var(--primary);margin-left:4px"><span class="ta"><span></span><span></span><span></span></span></span>`:'';
-      return `<div class="li-swipe" data-swipe-kind="friend">
+      return `<div class="li-swipe li-noswipe" data-swipe-kind="friend">
         <div class="li ${chatId===f?'on':''}" data-act="selChat" data-a="${escHtml(f)}" data-a2="private" data-ctx-act="showCtx" data-ctx-a="${escHtml(f)}">
           <div style="display:flex;align-items:center;flex:1;min-width:0">
             <div class="av2" style="position:relative">${av}<span class="sdot status-dot" style="background:${stColor[st]}"></span></div>
@@ -3654,7 +3654,6 @@ function updateFriends(){
           </div>
           <button data-act="showCtx" data-a="${escHtml(f)}" data-stop="1" data-pass-event="1" style="background:none;border:none;color:var(--muted);padding:4px 6px;font-size:16px;min-width:auto;cursor:pointer;flex-shrink:0">⋮</button>
         </div>
-        <div class="li-swipe-actions"><button class="li-swipe-btn" data-act="rmFriend" data-a="${escHtml(f)}" title="Arkadaşlıktan çıkar">🗑️</button></div>
       </div>`;
     });
 
@@ -9522,7 +9521,7 @@ window._haptic = function(ms){
   }
 
   document.addEventListener('touchstart', e=>{
-    const wrap=e.target.closest('.li-swipe');
+    const wrap=e.target.closest('.li-swipe:not(.li-noswipe)');
     if(!wrap){ closeOpened(); return; }
     if(wrap!==opened) closeOpened();
     curEl=wrap; startX=e.touches[0].clientX; startY=e.touches[0].clientY; curX=0;
@@ -9781,4 +9780,15 @@ window._haptic = function(ms){
       if(window.ME && window.innerWidth<=768) openMobileSidebar();
     },200);
   });
+})();
+
+
+// 📱 Mobil arama arayüzü: tarayıcı çubukları açılıp kapanınca gerçek görünür
+// yüksekliği CSS değişkenine yaz (butonlar ekranın altına kaymasın).
+(()=>{
+  const vv=window.visualViewport;
+  const set=()=>document.documentElement.style.setProperty('--vvh',(vv?vv.height:window.innerHeight)+'px');
+  set();
+  if(vv){ vv.addEventListener('resize',set); vv.addEventListener('scroll',set); }
+  window.addEventListener('resize',set);
 })();
