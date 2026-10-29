@@ -18,7 +18,7 @@ let _decryptedMsgCache = {}; // bellekteki çözülmüş mesajlar — getDB()/sa
 // hâli — render senkron olduğu için (crypto.subtle her zaman async) dosya
 // içeriği burada bellekte tutulur; localStorage'a HER ZAMAN şifreli yazılır.
 let _decryptedFileCache = new Map();
-const APP_VERSION = '3.7.0';
+const APP_VERSION = '3.8.0';
 const SES_KEY = 'shareview_ultra_session_v6';
 
 // ══════════════════════════════════════════════════════════════════
@@ -43,6 +43,18 @@ const TERMS_HTML = `
 <p><strong>Sorumluluk Reddi:</strong> Yukarıdaki teknik çalışma prensipleri, P2P mimarisinin doğal sonucudur ve merkezi olmayan bir sistem tercih etmenin getirdiği bilinen ödünleşimlerdir. Platform "olduğu gibi" sunulmaktadır; kesintisiz iletişim veya mesaj teslimatı garanti edilmez.</p>
 `;
 
+const TERMS_HTML_EN = `
+<p><strong>OpenChat</strong> is a privacy-focused platform with no central server, database or logs; it runs entirely on direct user-to-user (P2P) communication. To use it, you need to accept the following technical conditions that come with how the system works:</p>
+<p><strong>Privacy and No Central Storage:</strong> Your messages, voice/video calls and files are not stored on any central server. When you close the tab or end the session, the live data on your device is permanently erased and cannot be recovered.</p>
+<p><strong>Offline Messaging Limit:</strong> Communication is established directly between two devices. If the other side is offline or the connection drops, the messages you send may not be delivered or may be lost.</p>
+<p><strong>Background Notifications and Connection:</strong> On mobile devices, if the browser is sent to the background or the screen locks, the P2P connection may drop and instant call or message notifications may not arrive.</p>
+<p><strong>Performance and System Load:</strong> In multi-person group calls or high-quality streams, the encryption and data-processing load is carried directly by your device's processor (CPU/GPU) and your internet bandwidth.</p>
+<p><strong>Connection Drops:</strong> The connection may drop on an IP change (e.g. switching from Wi-Fi to mobile data) or behind strict network firewalls (NAT). In such cases the session may need to be renewed.</p>
+<p><strong>Authentication Limit — First Contact With New People:</strong> OpenChat generates a unique identity key for each user and compares these keys with the people you are connected to (fingerprint verification) to secure your later conversations. However, when you contact <strong>someone you do not know at all</strong> for the first time, the platform cannot on its own guarantee that the other party is who they claim to be — this is a common, known limit of all end-to-end encrypted P2P systems that have no central identity authority.</p>
+<p style="color:var(--primary);font-weight:600">→ Before starting an important or sensitive conversation, compare the identity fingerprint on the chat screen with the other person over a voice or face-to-face channel. If it does not match, end the conversation and report it to us.</p>
+<p><strong>Disclaimer:</strong> The technical principles above are a natural consequence of the P2P architecture and are the known trade-offs of choosing a decentralized system. The platform is provided "as is"; uninterrupted communication or message delivery is not guaranteed.</p>
+`;
+
 function _needsTermsAcceptance(user){
   return !user || user.termsAcceptedVersion !== TERMS_VERSION;
 }
@@ -53,7 +65,7 @@ function showTermsModal(){
     const body  = $('termsBody');
     const cb    = $('termsCheckbox');
     const btn   = $('termsAcceptBtn');
-    body.innerHTML = TERMS_HTML;
+    body.innerHTML = (window.SV_LANG === 'en') ? TERMS_HTML_EN : TERMS_HTML;
     cb.checked = false;
     btn.disabled = true;
     modal.classList.remove('hidden');
@@ -207,17 +219,20 @@ async function revealApp(){
 // ══════════════════════════════════════════════════════════════════
 const CHANGELOG_HTML = `
 <div style="margin-bottom:18px">
-  <div style="font-weight:800;color:var(--primary);font-size:14px;margin-bottom:6px">Sürüm 3.7</div>
+  <div style="font-weight:800;color:var(--primary);font-size:14px;margin-bottom:6px">Sürüm 3.8</div>
   <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px">
-    <li>🎙️ Yeni: Canlı altyazı — aramalarda konuşulanlar Whisper Tiny ile tarayıcının içinde yazıya dökülür (WebGPU varsa hızlandırılır, yoksa WASM)</li>
-    <li>🌍 Yeni: Altyazı çeviri modları — konuşulan dil, İngilizceye çeviri (Whisper) veya yerel LLM ile Türkçeye çeviri; arama sırasında canlı değiştirilebilir</li>
-    <li>🔊 Altyazı için karşı tarafın sesi ayrı bir AudioWorklet ile yakalanır — hoparlöre hiç yönlendirilmez, çift ses/echo oluşmaz</li>
-    <li>✨ Yeni: AI Chat Butler — sohbeti cihazda özetler (Qwen2.5 0.5B hızlı, Phi-3 Mini güçlü); model henüz yüklenmemişse anında kural tabanlı özet gösterilir</li>
-    <li>🔒 Yapay zeka tamamen cihaz içi: mesajlar ve ses hiçbir sunucuya gitmez, sadece model dosyaları indirilir ve önbelleğe alınır (Transformers.js)</li>
-    <li>⚙️ Otomatik geri düşme: WebGPU açılamazsa otomatik WASM'a, Phi-3 yüklenemezse Qwen2.5'e geçilir; model indirme yüzdesi canlı gösterilir</li>
-    <li>🧹 Arama bitince altyazı otomatik kapanır, ses tamponları ve model işçisi temizlenir</li>
-    <li>⚙️ Yeni: Ayarlar → Yerel Yapay Zeka anahtarı — AI tamamen kapatılıp açılabilir; kapalıyken model indirilmez, worker açılmaz, RAM kullanılmaz</li>
-    <li>🖥️ Yeni: Ayarlar → GPU hızlandırma (WebGPU) anahtarı — varsayılan kapalı (daha az bellek); açınca model GPU'da çalışıp hızlanır</li>
+    <li>🎨 Yeni: Giriş ekranı baştan tasarlandı — masaüstünde canlı sohbet önizlemeli yeni karşılama sahnesi, cam efektli özellik kartları, yenilenen form ve buton</li>
+    <li>🌐 Giriş/kayıt formuna TR / EN dil seçici geri geldi (kayıt şartları penceresinde de var); seçilen dilde kayıt şartları gösterilir ve forma tema düğmesi eklendi</li>
+    <li>🖥️ Yeni: Ana menü (masaüstü) yenilendi — koyu yan çubuk, daha büyük başlık ve yuvarlak sohbet kartları, selam veren karşılama panosu ve hızlı eylem kartları</li>
+    <li>📝 Yeni: Ayarlar → Sohbet Özeti — açınca sohbet başlığında 📝 butonu çıkar; mesaj sayısı, kim ne kadar yazdı, öne çıkan satırlar, linkler ve cevap bekleyen soruları gösterir ve kopyalanabilir</li>
+    <li>🔒 Sohbet Özeti basit kurallarla, tamamen cihazında çalışır; kapalıyken hiçbir şey çalışmaz, dışarıdan dosya indirilmez</li>
+    <li>🧹 Deneysel model tabanlı özellikler kaldırıldı; uygulama artık dışarıdan model dosyası indirmiyor (daha hafif, daha güvenli ve daha dar bir CSP)</li>
+    <li>🐛 Masaüstünde yan çubuğun altındaki Ayarlar düğmesinin ekran dışında kalması düzeltildi</li>
+  </ul>
+</div>
+<div style="margin-bottom:18px;opacity:.6">
+  <div style="font-weight:800;color:var(--primary);font-size:14px;margin-bottom:6px">Sürüm 3.7 <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;background:var(--sec);color:var(--muted);padding:2px 7px;border-radius:8px;margin-left:6px;vertical-align:middle">Eski sürüm</span></div>
+  <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px">
     <li>🔔 Bağlantı/yapılandırma hatalarında toast spam'i giderildi: tek bildirim + üstel geri çekilme (4s→60s), internet dönünce otomatik yeniden bağlanma</li>
     <li>✨ Giriş/kayıt sonrası karşılama animasyonu — ekran yumuşakça oturur, avatarın ortada büyüyerek kısa bir "Hoş geldin" gösterir (hareket azaltma ayarına saygılı)</li>
   </ul>
@@ -1583,10 +1598,12 @@ function applyTheme(dark){
   if(dark){
     document.documentElement.classList.add('dark');
     $('themeIcon').textContent='☀️';
+    { const ab=$('authThemeBtn'); if(ab) ab.textContent='☀️'; }
     $('themeLabel').textContent='Açık';
   } else {
     document.documentElement.classList.remove('dark');
     $('themeIcon').textContent='🌙';
+    { const ab=$('authThemeBtn'); if(ab) ab.textContent='🌙'; }
     $('themeLabel').textContent='Koyu';
   }
 }
@@ -1630,9 +1647,12 @@ window.toggleSettings=()=>{
   $('settingsPanel').classList.toggle('open');
   const cb=$('toggleDark');
   if(cb) cb.checked=document.documentElement.classList.contains('dark');
-  // ✨ [3.7] AI anahtarları Edge AI modülünden senkronlanır
-  if(typeof window.edgeAISyncSettings==='function') window.edgeAISyncSettings();
+  // 📝 Sohbet Özeti anahtarı ayarlardan senkronlanır
+  if(typeof window.svSummarySyncSettings==='function') window.svSummarySyncSettings();
 };
+
+// 🎨 [3.8] Giriş ekranındaki tema düğmesi
+(()=>{ const b=$('authThemeBtn'); if(b) b.addEventListener('click',()=>window.toggleDarkMode()); })();
 
 // Apply saved theme on load
 (()=>{
@@ -3486,8 +3506,29 @@ $('authUsername').addEventListener('keypress',e=>{if(e.key==='Enter')$('authPass
 $('authPassword').addEventListener('keypress',e=>{if(e.key==='Enter')$('authBtn').click();});
 
 // ── UI ────────────────────────────────────────────────────────────
+// 🎨 [3.8] Masaüstü karşılama panosu: saate göre selam + kullanıcı adı
+function _updateWelcome(){
+  const g=$('esGreet'), n=$('esName');
+  if(!g||!n||!ME) return;
+  const en=(window.SV_LANG==='en'), hr=new Date().getHours();
+  const k = hr>=5&&hr<12 ? 0 : hr>=12&&hr<18 ? 1 : hr>=18&&hr<23 ? 2 : 3;
+  g.textContent = (en ? ['Good morning','Good afternoon','Good evening','Good night'] : ['Günaydın','İyi günler','İyi akşamlar','İyi geceler'])[k];
+  n.textContent = ME.user_id;
+}
+// Karşılama kartları — inline onclick yok (CSP), addEventListener ile bağlanır
+(()=>{
+  const on=(id,fn)=>{ const b=$(id); if(b) b.addEventListener('click',()=>{ if(!ME) return; fn(); }); };
+  on('esAddFriend',()=>dnrSwitch('requests'));
+  on('esNewGroup', ()=>openGroupModal());
+  on('esSearch',   ()=>openGlobalSearch());
+  on('esNews',     ()=>openChangelog());
+  on('esSettings', ()=>toggleSettings());
+  on('esTheme',    ()=>toggleDarkMode());
+})();
+
 function updateUI(){
   if(!ME)return;
+  _updateWelcome();
   const db=getDB(),me=db.users[ME.user_id.toLowerCase()];
   // Legacy myName (sidebar status row'da gösterilir)
   const myNameEl=$('myName');
@@ -4401,16 +4442,10 @@ function cleanCall(){
   _stopSpeakLoop();
   iceQ=[];
 }
-function _tapRemoteForCaptions(userId, stream){
-  try{
-    if(window.OpenChatEdgeAI && stream) window.OpenChatEdgeAI.attachRemoteStream(userId, stream);
-  }catch(e){}
-}
 function onTrack(e){
   const s=e.streams[0];
   if(!s)return;
   const remoteUser=activeChatId||chatId;
-  _tapRemoteForCaptions(remoteUser, s);
   if(s.getVideoTracks().length>0){
     // Video track geldi — karşı tarafın avatar kartını bul ve video ile değiştir
     const setRemoteVideo=(user_id)=>{
@@ -5251,7 +5286,6 @@ function endCall(reason){
   for(const k of Object.keys(peerVolumes)) delete peerVolumes[k];
   closePeerVolMenu();
   // Aktif arama bitti — sidebar güncelle
-  try{ window.OpenChatEdgeAI && window.OpenChatEdgeAI.onCallEnded(); }catch(e){}
   _stopGroupCallBroadcast();
 }
 
@@ -6003,7 +6037,6 @@ async function broadcastGroupCallOffer(targetUser){
   gpc.ontrack=e=>{
     const s=e.streams[0];if(!s)return;
     groupCallPeers[targetUser].stream=s;
-    _tapRemoteForCaptions(targetUser, s);
     // ── Bug fix: sağır moddayken yeni kişinin sesini hemen kapat ──
     if(isDeafened){
       s.getAudioTracks().forEach(t=>{t.enabled=false;});
@@ -6470,7 +6503,6 @@ async function _joinGroupPeer(d){
   gpc.ontrack=e=>{
     const s=e.streams[0];if(!s)return;
     groupCallPeers[d.from].stream=s;
-    _tapRemoteForCaptions(d.from, s);
     // ── Bug fix: sağır moddayken yeni kişinin sesini hemen kapat ──
     if(isDeafened){
       s.getAudioTracks().forEach(t=>{t.enabled=false;});
