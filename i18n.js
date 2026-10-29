@@ -28,11 +28,41 @@
 
   document.documentElement.lang = window.SV_LANG === 'tr' ? 'tr' : 'en';
 
+  // 🌐 Giriş/kayıt ekranındaki TR | EN düğmeleri ([data-sv-lang]) — Ayarlar'daki
+  // açılır liste ile aynı setSvLang'i kullanır. Dil değişince sayfa yenilendiği
+  // için yazılmış kullanıcı adı (şifre ASLA değil) oturum belleğinde taşınır.
+  function bindLangButtons(){
+    document.querySelectorAll('[data-sv-lang]').forEach(b=>{
+      const l = b.getAttribute('data-sv-lang');
+      b.setAttribute('aria-pressed', l === window.SV_LANG ? 'true' : 'false');
+      if(b._svBound) return;
+      b._svBound = true;
+      b.addEventListener('click', ()=>{
+        if(l === window.SV_LANG) return;
+        try{
+          const u = document.getElementById('authUsername');
+          if(u && u.value) sessionStorage.setItem('sv_auth_user_keep', u.value);
+        }catch(_){}
+        setSvLang(l);
+      });
+    });
+    try{
+      const keep = sessionStorage.getItem('sv_auth_user_keep');
+      if(keep){
+        sessionStorage.removeItem('sv_auth_user_keep');
+        const u = document.getElementById('authUsername');
+        if(u && !u.value) u.value = keep;
+      }
+    }catch(_){}
+  }
+
+
   if(window.SV_LANG === 'tr'){
     // Native language — nothing to translate, skip building the
     // (fairly large) regex engine entirely. Still make sure the
     // Settings dropdown reflects the current choice.
     const syncTr = ()=>{
+      bindLangButtons();
       const sel=document.getElementById('langSelect');
       if(sel){
         sel.value='tr';
@@ -50,6 +80,40 @@
   // shorter fragment like "Yeni". Keys are case-sensitive, exact
   // Turkish substrings as they appear in the source.
   const DICT = {
+    // ── Login (3.8 yeni tasarım) ──────────────────────────────────
+    "Mesajların,": "Your messages,",
+    "Sesli & görüntülü arama": "Voice & video calls",
+    "sadece senin.": "yours alone.",
+    "uçtan uca şifreli": "end-to-end encrypted",
+    "Toplantı 15:00'te, hazır mısın?": "Meeting at 3 PM, are you ready?",
+    "Hazırım ✅ linki gönderiyorum": "I'm ready ✅ sending the link",
+    // ── Terms modal ───────────────────────────────────────────────
+    "📋 Kullanım Şartları ve Sistem Bilgilendirmesi": "📋 Terms of Use & System Notice",
+    "Devam etmeden önce lütfen okuyun.": "Please read before continuing.",
+    "Yukarıdaki teknik çalışma prensiplerini, platformun kısıtlamalarını ve sorumluluk reddini okudum, anladım ve kabul ediyorum.": "I have read, understood and accept the technical principles above, the platform's limitations and the disclaimer.",
+    "Kayıt Ol / Devam Et": "Sign Up / Continue",
+    // ── Ana menü karşılama panosu (3.8) ───────────────────────────
+    "Uçtan uca şifreli · Doğrudan P2P": "End-to-end encrypted · Direct P2P",
+    "Mesajlaşmak için soldan bir sohbet seç ya da aşağıdan başla.": "Pick a chat on the left or get started below.",
+    "Arkadaş ekle": "Add a friend",
+    "Totem koduyla yeni bir kişi bul": "Find someone new with their Totem code",
+    "Grup oluştur": "Create a group",
+    "Birden fazla kişiyle birlikte konuş": "Talk with several people at once",
+    "Mesajlarda ara": "Search messages",
+    "Tüm sohbetlerde kelime bul": "Find a word across all chats",
+    "Sürüm 3.8'de neler değişti": "What changed in version 3.8",
+    "Tema, dil ve sohbet özeti": "Theme, language and chat summary",
+    "Tema": "Theme",
+    "Açık / koyu görünüm arasında geç": "Switch between light and dark",
+    "Sunucuda mesaj saklanmaz": "No messages stored on servers",
+    "Doğrudan P2P bağlantı": "Direct P2P connection",
+    "Sekme kapanınca silinir": "Wiped when the tab closes",
+    // ── Sohbet Özeti ──────────────────────────────────────────────
+    "Sohbet Özeti": "Chat Summary",
+    "Açınca sohbet başlığında 📝 butonu çıkar: mesaj sayısı, öne çıkan satırlar, linkler ve cevap bekleyen sorular. Basit kural tabanlıdır, tamamen cihazında çalışır.": "When on, a 📝 button appears in the chat header: message count, highlighted lines, links and unanswered questions. Simple rule-based, runs entirely on your device.",
+    "Cihazında hesaplanır · mesajların hiçbir yere gitmez": "Computed on your device · your messages never leave it",
+    "↻ Yenile": "↻ Refresh",
+    "Kopyala": "Copy",
     // ── Auth / Login ──────────────────────────────────────────────
     "Hoş Geldin": "Welcome",
     "Hesabınla giriş yap veya yeni hesap oluştur": "Sign in to your account or create a new one",
@@ -425,67 +489,30 @@
     "\" için kimlik doğrulanamadı, bağlantı reddedildi.": "\" could not be verified, connection rejected.",
     "— atlandı": "— skipped",
 
-    // ── Edge AI (in-browser Whisper + local LLM) ──────────────────
-    "Canlı Altyazı (Whisper Tiny, tarayıcı içi)": "Live Captions (Whisper Tiny, in-browser)",
-    "Karşı taraf konuşunca altyazı burada akar.": "Captions from the other person appear here.",
-    "Whisper Tiny · tarayıcı içi · sunucusuz": "Whisper Tiny · in-browser · serverless",
-    "Konuşulan dil (transkripsiyon)": "Spoken language (transcription)",
-    "İngilizceye çevir (Whisper)": "Translate to English (Whisper)",
-    "Türkçeye çevir (yerel LLM)": "Translate to Turkish (local LLM)",
-    "Altyazı / çeviri": "Captions / translation",
-    "AI Chat Butler — sohbeti cihazda özetle": "AI Chat Butler — summarize this chat on-device",
-    "Mesajlar tarayıcı RAM'inde kalır": "Messages stay in browser RAM",
-    "Uçtan uca şifre kırılmaz: özet buluta gitmez. Transformers.js + WebGPU ile Qwen2.5-0.5B (hızlı) veya Phi-3 Mini (daha güçlü, büyük indirme) bu cihazda çalışır.": "E2E encryption stays intact: the summary never goes to the cloud. Transformers.js + WebGPU run Qwen2.5-0.5B (fast) or Phi-3 Mini (stronger, large download) on this device.",
-    "Hızlı · Qwen2.5 0.5B": "Fast · Qwen2.5 0.5B",
-    "Güçlü · Phi-3 Mini (WebGPU)": "Strong · Phi-3 Mini (WebGPU)",
-    "Özetle": "Summarize",
-    "Önce bir sohbet aç.": "Open a chat first.",
-    "Bu sohbette özetlenecek metin mesajı yok.": "No text messages to summarize in this chat.",
-    "Hızlı taslak (cihaz içi, model öncesi):": "Quick draft (on-device, before the model):",
-    "Özetlenecek metin yok.": "Nothing to summarize.",
-    "mesaj cihazda hazır · model henüz çalışmadı": "messages ready on-device · model has not run yet",
-    "Yerel model yükleniyor… mesajlar RAM’de kalır, sunucuya gitmez.": "Loading the local model… messages stay in RAM and never hit a server.",
-    "Edge LLM çalışıyor…": "Edge LLM is running…",
-    "Özet bu cihazda üretildi · mesajlar dışarı çıkmadı": "Summary produced on this device · messages never left",
-    "Özetlenecek metin mesajı yok.": "No text messages to summarize.",
-    "Özet üretilemedi.": "Couldn't produce a summary.",
-    "Whisper Tiny yükleniyor": "Loading Whisper Tiny",
-    "Whisper Tiny hazır · tarayıcı içi": "Whisper Tiny ready · in-browser",
 
     // ── Changelog / What's New modal ─────────────────────────────
     "Yenilikler": "What's New",
+    "Sürüm 3.8": "Version 3.8",
+    "🎨 Yeni: Giriş ekranı baştan tasarlandı — masaüstünde canlı sohbet önizlemeli yeni karşılama sahnesi, cam efektli özellik kartları, yenilenen form ve buton": "🎨 New: The login screen was redesigned from scratch — on desktop a new welcome stage with a live chat preview, glass-effect feature cards, and a refreshed form and button",
+    "🌐 Giriş/kayıt formuna TR / EN dil seçici geri geldi (kayıt şartları penceresinde de var); seçilen dilde kayıt şartları gösterilir ve forma tema düğmesi eklendi": "🌐 The TR / EN language switch is back on the login/sign-up form (and in the terms window); the terms are shown in the chosen language, and a theme button was added to the form",
+    "🖥️ Yeni: Ana menü (masaüstü) yenilendi — koyu yan çubuk, daha büyük başlık ve yuvarlak sohbet kartları, selam veren karşılama panosu ve hızlı eylem kartları": "🖥️ New: The main menu (desktop) was refreshed — dark side rail, larger heading and rounded chat cards, a greeting welcome board and quick-action cards",
+    "📝 Yeni: Ayarlar → Sohbet Özeti — açınca sohbet başlığında 📝 butonu çıkar; mesaj sayısı, kim ne kadar yazdı, öne çıkan satırlar, linkler ve cevap bekleyen soruları gösterir ve kopyalanabilir": "📝 New: Settings → Chat Summary — when on, a 📝 button appears in the chat header; it shows message count, who wrote how much, highlighted lines, links and unanswered questions, and can be copied",
+    "🔒 Sohbet Özeti basit kurallarla, tamamen cihazında çalışır; kapalıyken hiçbir şey çalışmaz, dışarıdan dosya indirilmez": "🔒 Chat Summary uses simple rules and runs entirely on your device; when off nothing runs, and no files are downloaded from outside",
+    "🧹 Deneysel model tabanlı özellikler kaldırıldı; uygulama artık dışarıdan model dosyası indirmiyor (daha hafif, daha güvenli ve daha dar bir CSP)": "🧹 Experimental model-based features were removed; the app no longer downloads model files from outside (lighter, safer and a tighter CSP)",
+    "🐛 Masaüstünde yan çubuğun altındaki Ayarlar düğmesinin ekran dışında kalması düzeltildi": "🐛 Fixed the Settings button at the bottom of the desktop side rail being cut off-screen",
     "Sürüm 3.7": "Version 3.7",
     "Sürüm 3.6": "Version 3.6",
     "Eski sürüm": "Old version",
-    "Yapay Zeka": "Artificial Intelligence",
-    "✨ Yerel Yapay Zeka": "✨ On-device AI",
-    "Canlı altyazı ve AI Chat Butler. Kapalıyken model hiç indirilmez / RAM kullanmaz.": "Live captions and AI Chat Butler. When off, no model is downloaded and no RAM is used.",
-    "🖥️ GPU hızlandırma (WebGPU)": "🖥️ GPU acceleration (WebGPU)",
     "Hızlı ama daha çok bellek kullanır. Kapalıyken WASM (daha yavaş, daha az RAM) ile çalışır.": "Faster but uses more memory. When off, it runs on WASM (slower, less RAM).",
-    "Ayarlar → Yerel Yapay Zeka anahtarını aç.": "Turn on Settings → On-device AI first.",
     "Sunucu ayarları alınamadı. Otomatik olarak yeniden denenecek.": "Server settings could not be loaded. Retrying automatically.",
-    "⚙️ Yeni: Ayarlar → Yerel Yapay Zeka anahtarı — AI tamamen kapatılıp açılabilir; kapalıyken model indirilmez, worker açılmaz, RAM kullanılmaz": "⚙️ New: Settings → On-device AI switch — the AI can be turned off entirely; when off, no model is downloaded, no worker starts and no RAM is used",
-    "🖥️ Yeni: Ayarlar → GPU hızlandırma (WebGPU) anahtarı — varsayılan kapalı (daha az bellek); açınca model GPU'da çalışıp hızlanır": "🖥️ New: Settings → GPU acceleration (WebGPU) switch — off by default (less memory); when on, the model runs on the GPU and is faster",
     "🔔 Bağlantı/yapılandırma hatalarında toast spam'i giderildi: tek bildirim + üstel geri çekilme (4s→60s), internet dönünce otomatik yeniden bağlanma": "🔔 Fixed notification spam on connection/config errors: one notification + exponential backoff (4s→60s), auto-reconnect when the network returns",
     "✨ Giriş/kayıt sonrası karşılama animasyonu — ekran yumuşakça oturur, avatarın ortada büyüyerek kısa bir \"Hoş geldin\" gösterir (hareket azaltma ayarına saygılı)": "✨ Welcome animation after sign-in/sign-up — the screen settles in smoothly and your avatar pops up with a short \"Welcome\" (respects reduced-motion)",
-    "🎙️ Yeni: Canlı altyazı — aramalarda konuşulanlar Whisper Tiny ile tarayıcının içinde yazıya dökülür (WebGPU varsa hızlandırılır, yoksa WASM)": "🎙️ New: Live captions — speech in calls is transcribed inside the browser with Whisper Tiny (accelerated by WebGPU when available, otherwise WASM)",
-    "🌍 Yeni: Altyazı çeviri modları — konuşulan dil, İngilizceye çeviri (Whisper) veya yerel LLM ile Türkçeye çeviri; arama sırasında canlı değiştirilebilir": "🌍 New: Caption translation modes — spoken language, translate to English (Whisper) or to Turkish with a local LLM; switchable during the call",
-    "🔊 Altyazı için karşı tarafın sesi ayrı bir AudioWorklet ile yakalanır — hoparlöre hiç yönlendirilmez, çift ses/echo oluşmaz": "🔊 For captions the remote audio is tapped through a separate AudioWorklet — never routed to the speakers, so no double audio or echo",
-    "✨ Yeni: AI Chat Butler — sohbeti cihazda özetler (Qwen2.5 0.5B hızlı, Phi-3 Mini güçlü); model henüz yüklenmemişse anında kural tabanlı özet gösterilir": "✨ New: AI Chat Butler — summarizes the chat on-device (Qwen2.5 0.5B for speed, Phi-3 Mini for quality); a rule-based draft appears instantly while the model loads",
-    "🔒 Yapay zeka tamamen cihaz içi: mesajlar ve ses hiçbir sunucuya gitmez, sadece model dosyaları indirilir ve önbelleğe alınır (Transformers.js)": "🔒 The AI runs fully on-device: messages and audio never reach a server, only the model files are downloaded and cached (Transformers.js)",
-    "⚙️ Otomatik geri düşme: WebGPU açılamazsa otomatik WASM'a, Phi-3 yüklenemezse Qwen2.5'e geçilir; model indirme yüzdesi canlı gösterilir": "⚙️ Automatic fallback: switches to WASM if WebGPU fails and to Qwen2.5 if Phi-3 can't load; model download progress is shown live",
-    "🧹 Arama bitince altyazı otomatik kapanır, ses tamponları ve model işçisi temizlenir": "🧹 Captions stop automatically when a call ends; audio buffers and the model worker are cleaned up",
     "🔒 Kapsamlı güvenlik sıkılaştırması: mesaj bazlı imzalama, DataChannel/e2e kimlik sahteciliği koruması, grup yönetici yetki kontrolleri": "🔒 Extensive security hardening: per-message signing, DataChannel/e2e identity spoofing protection, group admin permission checks",
     "🛡️ CSP (Content Security Policy) sıkılaştırıldı; eksik güvenlik başlıkları ve SRI eklendi": "🛡️ Tightened the Content Security Policy; added missing security headers and SRI",
     "📋 Yeni: Kayıt/giriş sırasında kullanım şartları ve sistem bilgilendirme onayı": "📋 New: Terms of use and system notice acceptance during sign-up/sign-in",
     "🖥️ Nav rail: gruplar arası boşluk ve ince ayırıcılar eklendi, ayarlar ikonu hizalaması düzeltildi": "🖥️ Nav rail: added spacing and thin dividers between groups, fixed settings icon alignment",
     "📶 Bağlantı göstergesine üzerine gelince detaylı P2P/sinyal durumu gösteren tooltip eklendi": "📶 Added a tooltip on the connection indicator showing detailed P2P/signal status",
     "📞 Grup aramalarında bazı katılımcılara yeni gelen kişinin görünmemesi/duyulmaması sorunu giderildi": "📞 Fixed new joiners sometimes not being seen/heard by some participants in group calls",
-
-    // ── Status strings produced by the Edge AI worker ─────────────
-    "Model indiriliyor ·": "Downloading model ·",
-    "Bilinmeyen hata": "Unknown error",
-    "Edge AI worker hatası": "Edge AI worker error",
 
     // ── Misc labels seen in HTML frame ────────────────────────────
     "İptal": "Cancel",
@@ -551,6 +578,7 @@
   }
 
   function syncLangSelect(){
+    bindLangButtons();
     const sel = document.getElementById('langSelect');
     if(sel && !sel._svBound){
       sel._svBound = true;
