@@ -1,4 +1,4 @@
-🚀 **OpenChat**
+🚀 **OpenChat 3.8 Beta**
 
 OpenChat is a modern, Peer-to-Peer (P2P), and End-to-End Encrypted (E2EE) WebRTC messaging application built around a serverless architecture with no centralized message database.
 
@@ -192,7 +192,7 @@ Contributions, security reviews, improvements, and forks are welcome.
 
 OpenChat is licensed under the **MIT** License.
 
-<img width="1917" height="907" alt="image" src="https://github.com/user-attachments/assets/090ad59c-24b7-4cab-8140-4740a6a000c6" />
+<img width="1917" height="907" alt="image" src="https://github.com/user-attachments/assets/423f57e5-459a-430c-bde3-448c1848c2e5" />
 
-<img width="1917" height="906" alt="image" src="https://github.com/user-attachments/assets/df15321b-869d-447d-9f24-9681d0b8e5f0" />
+<img width="1917" height="907" alt="image" src="https://github.com/user-attachments/assets/6a7a8422-e966-4abb-85c6-26ef25787e30" />
 
