@@ -1714,7 +1714,7 @@ html:not(.dark) .gs-item.active{background:rgba(255,123,123,.10)}
      katılımcı kartları + kontrol butonları arasında sıkışıklık/taşma
      olmasın diye. Asıl "butonlar kayıyor" sorunu yukarıdaki 100dvh
      düzeltmesiyle çözüldü, bu sadece küçük ekranlarda ekstra nefes payı. */
-  .call-ui{padding:24px 16px calc(20px + env(safe-area-inset-bottom))!important}
+  .call-ui{height:var(--vvh,100dvh)!important;padding:24px 16px calc(64px + env(safe-area-inset-bottom))!important}
   .call-ctrl{gap:10px!important}
   .call-ctrl button{min-width:52px!important;height:52px!important;font-size:19px!important}
   #endCallBtn{min-width:60px!important;height:60px!important}
@@ -1918,25 +1918,32 @@ html.dark .af-lang-b[aria-pressed="true"]{color:#1A0505!important}
 .es-dash{display:none}
 .es-classic{display:flex;flex-direction:column;align-items:center}
 @media(min-width:769px){
-  /* — Nav rail: koyu "mürekkep" sütun — */
+  /* — Nav rail: açık temada açık, koyu temada koyu — */
   #desktopNavRail{
-    height:auto!important;align-self:stretch;width:78px;padding:16px 0 14px;border-right:none;
-    background:linear-gradient(180deg,#240909 0%,#170505 60%,#110303 100%);
-    box-shadow:inset -1px 0 0 rgba(255,255,255,.05);
+    height:auto!important;align-self:stretch;width:78px;padding:16px 0 14px;border-right:1px solid var(--border);
+    background:linear-gradient(180deg,#FFF1F1 0%,#FFE0E0 100%);
   }
-  html.dark #desktopNavRail{background:linear-gradient(180deg,#0e0e0e,#080808);box-shadow:inset -1px 0 0 rgba(255,255,255,.06)}
+  html.dark #desktopNavRail{background:linear-gradient(180deg,#0e0e0e,#080808);border-right:none;box-shadow:inset -1px 0 0 rgba(255,255,255,.06)}
   #desktopNavRail .dnr-logo{width:48px;height:48px;border-radius:15px!important;margin-bottom:18px;background:linear-gradient(135deg,#FF9B9B,#FF5A5A)!important;box-shadow:0 8px 22px rgba(255,90,90,.35)}
   #desktopNavRail .dnr-logo svg rect,#desktopNavRail .dnr-logo svg polygon{fill:#1A0505!important}
   #desktopNavRail .dnr-logo svg circle{fill:#FF9B9B!important}
-  #desktopNavRail .dnr-item{width:50px;height:50px;border-radius:15px;color:rgba(255,226,226,.6);margin-bottom:4px}
-  #desktopNavRail .dnr-item:hover{background:rgba(255,255,255,.08);color:#fff;transform:none}
-  #desktopNavRail .dnr-item.active{background:rgba(255,123,123,.2);color:#fff;box-shadow:inset 0 0 0 1px rgba(255,123,123,.35)}
-  #desktopNavRail .dnr-item.active::before{content:"";position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:4px;height:24px;border-radius:0 4px 4px 0;background:#FF7B7B}
-  #desktopNavRail .dnr-badge{border-color:#170505;background:#FF4D4D}
-  #desktopNavRail .dnr-divider{background:rgba(255,255,255,.08);width:28px}
-  #desktopNavRail .dnr-bottom{border-top:1px solid rgba(255,255,255,.08);padding-top:10px}
-  #desktopNavRail .dnr-net-label{color:rgba(255,226,226,.55)}
-  #desktopNavRail .dnr-online-dot{border-color:#170505}
+  #desktopNavRail .dnr-item{width:50px;height:50px;border-radius:15px;color:var(--muted);margin-bottom:4px}
+  #desktopNavRail .dnr-item:hover{background:rgba(45,20,20,.08);color:var(--text);transform:none}
+  #desktopNavRail .dnr-item.active{background:rgba(255,123,123,.35);color:var(--text);box-shadow:inset 0 0 0 1px rgba(45,20,20,.12)}
+  #desktopNavRail .dnr-item.active::before{content:"";position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:4px;height:24px;border-radius:0 4px 4px 0;background:var(--primary)}
+  html.dark #desktopNavRail .dnr-item{color:rgba(255,226,226,.6)}
+  html.dark #desktopNavRail .dnr-item:hover{background:rgba(255,255,255,.08);color:#fff}
+  html.dark #desktopNavRail .dnr-item.active{background:rgba(255,123,123,.2);color:#fff;box-shadow:inset 0 0 0 1px rgba(255,123,123,.35)}
+  html.dark #desktopNavRail .dnr-item.active::before{background:#FF7B7B}
+  #desktopNavRail .dnr-badge{border-color:#FFE8E8;background:#FF4D4D}
+  html.dark #desktopNavRail .dnr-badge{border-color:#080808}
+  #desktopNavRail .dnr-divider{background:var(--border);width:28px}
+  #desktopNavRail .dnr-bottom{border-top:1px solid var(--border);padding-top:10px}
+  html.dark #desktopNavRail .dnr-divider{background:rgba(255,255,255,.08)}
+  html.dark #desktopNavRail .dnr-bottom{border-top-color:rgba(255,255,255,.08)}
+  html.dark #desktopNavRail .dnr-net-label{color:rgba(255,226,226,.55)}
+  #desktopNavRail .dnr-online-dot{border-color:#FFE8E8}
+  html.dark #desktopNavRail .dnr-online-dot{border-color:#080808}
   #desktopNavRail .dnr-av{background:linear-gradient(135deg,#FF9B9B,#FF5A5A);color:#1A0505}
   @media(max-height:820px){
     #desktopNavRail{padding-top:10px}
