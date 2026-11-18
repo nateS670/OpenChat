@@ -85,6 +85,7 @@
     "Sesli & görüntülü arama": "Voice & video calls",
     "sadece senin.": "yours alone.",
     "uçtan uca şifreli": "end-to-end encrypted",
+    "Ayşe": "Ayse",
     "Toplantı 15:00'te, hazır mısın?": "Meeting at 3 PM, are you ready?",
     "Hazırım ✅ linki gönderiyorum": "I'm ready ✅ sending the link",
     // ── Terms modal ───────────────────────────────────────────────
