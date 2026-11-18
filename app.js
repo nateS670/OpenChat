@@ -18,7 +18,7 @@ let _decryptedMsgCache = {}; // bellekteki çözülmüş mesajlar — getDB()/sa
 // hâli — render senkron olduğu için (crypto.subtle her zaman async) dosya
 // içeriği burada bellekte tutulur; localStorage'a HER ZAMAN şifreli yazılır.
 let _decryptedFileCache = new Map();
-const APP_VERSION = '3.8.0';
+const APP_VERSION = '3.8.1';
 const SES_KEY = 'shareview_ultra_session_v6';
 
 // ══════════════════════════════════════════════════════════════════
@@ -218,6 +218,17 @@ async function revealApp(){
 // (şu an için sadece nav rail'den elle açılıyor, otomatik açılmıyor).
 // ══════════════════════════════════════════════════════════════════
 const CHANGELOG_HTML = `
+<div style="margin-bottom:18px">
+  <div style="font-weight:800;color:var(--primary);font-size:14px;margin-bottom:6px">Sürüm 3.8.1</div>
+  <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px">
+    <li>📞 Düzeltme: Bir arkadaşınla İLK kez arama yaparken aramanın bağlanmaması giderildi (arama kabul edilmeden önce gelen bağlantı adayları artık kaybolmuyor, kimlik doğrulaması bekleniyor)</li>
+    <li>📷 Düzeltme: Görüntülü aramada kamera görüntüsü karşıya gitmiyordu / eksik geliyordu — artık iki yönde de gidiyor ve profil kutusunda tam kadraj görünüyor</li>
+    <li>🖥️ Düzeltme: Ekran paylaşımı artık kişinin profil kutusunda değil, ayrı büyük bir ekranda açılıyor ve tam ekrana alınabiliyor (profil kutusu yalnızca kamera için)</li>
+    <li>🎬 Düzeltme: GIF'ler sayfa yenilenince veya bazen "GIF" yazısı olarak görünüyordu — artık kalıcı ve yüklenemezse bağlantıya dönüşüyor; Giphy sayfa bağlantıları otomatik çevriliyor</li>
+    <li>📝 Düzeltme: Eksik olan chat-summary.js eklendi (404 / MIME hatası giderildi), Sohbet Özeti çalışıyor</li>
+    <li>🌐 İngilizce giriş ekranında "Ayşe" → "Ayse"</li>
+  </ul>
+</div>
 <div style="margin-bottom:18px">
   <div style="font-weight:800;color:var(--primary);font-size:14px;margin-bottom:6px">Sürüm 3.8</div>
   <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px">
@@ -1663,6 +1674,7 @@ window.toggleSettings=()=>{
 // ── STATE ─────────────────────────────────────────────────────────
 let mq=null, ME=null, chatId=null, chatType=null;
 let pc=null, ls=null, iceQ=[], callIv=null, screenOwner=null;
+var _remoteVideoTracks={}; // [3.8.1] user_id -> {track, stream} (karşıdan gelen video)
 const _typingUsers=new Set(); // tracks who is currently typing to ME
 const _typingTimers={}; // per-user auto-clear timers for stuck "typing" indicator
 let activeChatId=null, activeChatType=null; // Aramanın başladığı sohbet
@@ -2784,7 +2796,7 @@ async function handleSig(d){
     // Sadece false (imza VAR ama geçersiz) durumunda UI'da uyarı gösterilir.
     d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg);
     // Gelen dosya/gif verisini oturum belleğine kaydet
-    if(d.msg.fileData&&d.msg.fileData&&!d.msg.fileData.startsWith('__')){
+    if(d.msg.fileData&&d.msg.fileData&&!d.msg.fileData.startsWith('__')&&!_isPersistentGifMsg(d.msg)){
       // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
       if(d.msg.fileData.length>MAX_INCOMING_FILE_CHARS){
         console.warn('[SEC] Aşırı büyük dosya payload\'ı reddedildi:', d.from, d.msg.fileData.length);
@@ -2835,7 +2847,7 @@ async function handleSig(d){
     // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/null (bkz. _verifyMessageSig).
     d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg);
     // Gelen dosya/gif verisini oturum belleğine kaydet
-    if(d.msg.fileData&&!d.msg.fileData.startsWith('__')){
+    if(d.msg.fileData&&!d.msg.fileData.startsWith('__')&&!_isPersistentGifMsg(d.msg)){
       // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
       if(d.msg.fileData.length>MAX_INCOMING_FILE_CHARS){
         console.warn('[SEC] Aşırı büyük dosya payload\'ı reddedildi (grup):', d.from, d.msg.fileData.length);
@@ -2886,7 +2898,14 @@ async function handleSig(d){
     // presence'ı henüz alınmamış biri) sahte bir arama teklifi göndererek
     // arama modalını açtırabilir, SDP/ICE alışverişini tetikleyebilir ve
     // olası bir IP-sızıntısı/rahatsız etme (harassment) vektörü oluşturabilirdi.
-    const _rtcVerified = await _ensurePeerVerified(d.from);
+    let _rtcVerified = await _ensurePeerVerified(d.from);
+    // 🐛 [3.8.1] İlk aramada karşı tarafın kimlikli presence'ı henüz ulaşmamış
+    // olabiliyordu; teklif sessizce atılıyor, arayan sonsuza kadar çalıyordu.
+    // Presence'ın gelmesi için kısa süre (en çok ~10 sn) bekliyoruz.
+    for(let _i=0; !_rtcVerified && _i<20; _i++){
+      await new Promise(r=>setTimeout(r,500));
+      _rtcVerified = await _ensurePeerVerified(d.from);
+    }
     if(!_rtcVerified){
       console.warn('[SEC] Doğrulanamayan kimlikten gelen rtc_offer reddedildi:', d.from);
       return;
@@ -2949,7 +2968,11 @@ async function handleSig(d){
     $('screenInd').classList.remove('hidden');
     $('screenBtn').disabled=true;
     $('screenBtn').title='İzleniyor...';
-    // remoteVideo zaten ontrack ile dolacak, sadece göster
+    // [3.8.1] Ekran paylaşımı profil kutusunda değil, büyük sahnede açılır.
+    // Video track zaten geldiyse sahneye taşı, henüz gelmediyse onTrack halleder.
+    _detachRemoteCam(d.from);
+    const _rec=_remoteVideoTracks[d.from];
+    if(_rec) _showScreenStage(_rec.stream);
     $('audioPh').classList.add('hidden');
     showToast('Ekran Paylaşımı',`${d.from} ekranını paylaşıyor.`);
   }
@@ -2958,21 +2981,10 @@ async function handleSig(d){
     $('screenInd').classList.add('hidden');
     $('screenBtn').disabled=false;
     $('screenBtn').title='Ekran Paylaş';
-    // Video dondurma sorununu çöz — srcObject'i null'a çek, sonra tekrar audio'ya dön
-    const rv=$('remoteVideo');
-    rv.pause();
-    rv.srcObject=null;
-    rv.classList.add('hidden');
-    $('audioPh').classList.remove('hidden');
-    // Aktif ses akışını geri yükle — aramadaysa audio stream'i yeniden bağla
-    const audioConn = pc || Object.values(groupCallPeers||{})[0]?.pc;
-    if(audioConn){
-      audioConn.getReceivers().forEach(r=>{
-        if(r.track&&r.track.kind==='audio'&&r.track.readyState==='live'){
-          const a=new Audio();a.srcObject=new MediaStream([r.track]);a.play().catch(()=>{});
-        }
-      });
-    }
+    // [3.8.1] Sahneyi kapat; paylaşan kişi kamerasını geri açtıysa (unmute) profil kutusuna döner.
+    _hideScreenStage();
+    $('audioPh').classList.add('hidden');
+    _attachRemoteCam(d.from);
   }
 }
 
@@ -4108,8 +4120,8 @@ function renderChat(){
     } else if(m.fileType==='gif'){
       // 🛡️ [ÇOK KRİTİK FIX] Aynı şema doğrulaması GIF'ler için de uygulanıyor.
       const safeGif = sanitizeGifUrl(fileData);
-      if(safeGif) contentHTML=`<img class="msg-gif" src="${escHtml(safeGif)}" alt="GIF" referrerpolicy="no-referrer">`;
-      else contentHTML=`<span class="msg-text">🎬 GIF</span>`;
+      if(safeGif) contentHTML=`<img class="msg-gif" src="${escHtml(safeGif)}" alt="GIF" referrerpolicy="no-referrer" loading="lazy">`;
+      else contentHTML=`<span class="msg-text">🎬 GIF (artık yüklenemiyor)</span>`;
     } else if(m.fileType==='file'){
       const ext=(m.fileName||'').split('.').pop().toLowerCase();
       const icon={'pdf':'📄','doc':'📝','docx':'📝','txt':'📄','zip':'🗜️','mp3':'🎵','mp4':'🎬','mov':'🎬'}[ext]||'📎';
@@ -4290,6 +4302,35 @@ const _TRUSTED_GIF_HOSTS = [
   'media0.giphy.com','media1.giphy.com','media2.giphy.com','media3.giphy.com','media4.giphy.com',
   'i.imgur.com','imgur.com',
 ];
+// 🐛 [3.8.1] Kullanıcılar çoğunlukla GIF'in SAYFA adresini yapıştırıyor (giphy.com/gifs/...,
+// imgur.com/xyz) — bunlar <img> ile yüklenmez, "GIF" alt metni yazı olarak kalırdı.
+// Giphy/Imgur sayfa adreslerini doğrudan görsel adresine çeviriyoruz. Tenor sayfa
+// adreslerinden (tenor.com/view/...) görsel adresi türetilemez → null döner.
+function normalizeGifUrl(raw){
+  if(!raw||typeof raw!=='string') return null;
+  let url=raw.trim();
+  if(url.startsWith('data:image/')) return url;
+  let u; try{ u=new URL(url); }catch(e){ return null; }
+  if(u.protocol!=='https:') return null;
+  const host=u.hostname.toLowerCase().replace(/^www\./,'');
+  if(host==='giphy.com'){
+    const m=u.pathname.match(/^\/(?:gifs|stickers|clips|embed)\/(?:[^/]*-)?([A-Za-z0-9]+)\/?$/);
+    if(m) return `https://media.giphy.com/media/${m[1]}/giphy.gif`;
+    return null;
+  }
+  if(host==='imgur.com'){
+    const m=u.pathname.match(/^\/(?:a\/|gallery\/)?([A-Za-z0-9]{5,8})\/?$/);
+    if(m && !/^\/(?:a|gallery)\//.test(u.pathname)) return `https://i.imgur.com/${m[1]}.gif`;
+    return null;
+  }
+  if(host==='i.imgur.com') return url.replace(/\.gifv(\?.*)?$/i,'.gif');
+  if(host==='tenor.com'){ return /\.(gif|webp)$/i.test(u.pathname)?url:null; }
+  return url;
+}
+// Kalıcı saklanabilir (küçük, güvenilir) GIF bağlantısı mı? — oturum belleğine çevrilmez
+function _isPersistentGifMsg(msg){
+  return !!(msg&&msg.fileType==='gif'&&typeof msg.fileData==='string'&&!msg.fileData.startsWith('data:')&&msg.fileData.length<2048&&sanitizeGifUrl(msg.fileData));
+}
 function sanitizeGifUrl(url){
   if(!url||typeof url!=='string') return null;
   if(url.startsWith('data:image/')&&url.length<2_000_000) return url;
@@ -4439,39 +4480,109 @@ function cleanCall(){
   }
   // 3.1: Speaking detection temizle
   _stopSpeakLoop();
+  // [3.8.1] Karşı taraf video/ekran paylaşımı temizliği
+  try{ if(window._remoteSysAudio){window._remoteSysAudio.pause();window._remoteSysAudio.srcObject=null;window._remoteSysAudio=null;} }catch(e){}
+  try{ for(const k of Object.keys(_remoteVideoTracks)) delete _remoteVideoTracks[k]; }catch(e){}
+  try{ _hideScreenStage(); }catch(e){}
   iceQ=[];
 }
+// ══════════════════════════════════════════════════════════════════
+// 🎥 [3.8.1] Karşıdan gelen video: kamera → profil kutusu, ekran paylaşımı → büyük sahne
+// ══════════════════════════════════════════════════════════════════
+
+function _remoteVideoStreamOf(e){
+  // replaceTrack ile eklenen track'ler msid/stream taşımayabilir (e.streams boş) —
+  // eskiden bu durumda video sessizce yok sayılıyordu.
+  return new MediaStream([e.track]);
+}
+
+function _isScreenFrom(user_id){ return !!(screenOwner && screenOwner!==ME.user_id && screenOwner===user_id); }
+
+function _showScreenStage(stream){
+  const rv=$('remoteVideo'); if(!rv) return;
+  rv.srcObject=stream;
+  rv.muted=true; // ses ayrı <audio> ile çalıyor
+  rv.classList.remove('hidden'); rv.classList.add('screen-stage');
+  $('callUI')?.classList.add('has-screen');
+  rv.play?.().catch(()=>{});
+}
+function _hideScreenStage(){
+  const rv=$('remoteVideo'); if(!rv) return;
+  try{ if(document.fullscreenElement===rv) document.exitFullscreen(); }catch(e){}
+  rv.classList.remove('fullscreen-mode');
+  try{rv.pause();}catch(e){}
+  rv.srcObject=null;
+  rv.classList.add('hidden'); rv.classList.remove('screen-stage');
+  $('callUI')?.classList.remove('has-screen');
+}
+
+// Kamerayı kişinin profil kutusuna koy (kutu yoksa false döner)
+function _attachRemoteCam(user_id){
+  const rec=_remoteVideoTracks[user_id];
+  if(!rec) return false;
+  const av=document.getElementById(`pcard_${user_id}`)?.querySelector('.part-av');
+  if(!av) return false;
+  // Henüz kare gelmediyse (muted) avatar kalsın — siyah kutu görünmesin
+  if(rec.track.muted || rec.track.readyState!=='live') return false;
+  av.classList.add('has-video');
+  let vid=av.querySelector('video.remote-feed');
+  if(!vid){
+    vid=document.createElement('video');
+    vid.className='remote-feed';
+    vid.autoplay=true; vid.playsInline=true; vid.muted=true; // ses ayrı <audio> ile
+    vid.ondblclick=()=>{ if(vid.requestFullscreen) vid.requestFullscreen().catch(()=>{}); };
+    av.innerHTML='';
+    av.appendChild(vid);
+  }
+  if(vid.srcObject!==rec.stream) vid.srcObject=rec.stream;
+  vid.play?.().catch(()=>{});
+  return true;
+}
+function _detachRemoteCam(user_id){
+  const av=document.getElementById(`pcard_${user_id}`)?.querySelector('.part-av');
+  if(av && av.classList.contains('has-video')){
+    const v=av.querySelector('video.remote-feed'); if(v) v.srcObject=null;
+    _restoreAvatar(av,user_id,false);
+  }
+}
+
+function _handleRemoteVideoTrack(user_id, e){
+  const stream=_remoteVideoStreamOf(e);
+  const track=e.track;
+  _remoteVideoTracks[user_id]={track,stream};
+  const refresh=()=>{
+    if(_remoteVideoTracks[user_id]?.track!==track) return;
+    if(_isScreenFrom(user_id)){ _detachRemoteCam(user_id); _showScreenStage(stream); }
+    else if(!_attachRemoteCam(user_id)) { if(track.muted) _detachRemoteCam(user_id); }
+  };
+  track.onunmute=refresh;
+  track.onmute=()=>{ if(!_isScreenFrom(user_id)) _detachRemoteCam(user_id); };
+  track.onended=()=>{
+    if(_remoteVideoTracks[user_id]?.track===track) delete _remoteVideoTracks[user_id];
+    _detachRemoteCam(user_id);
+    if(_isScreenFrom(user_id)) _hideScreenStage();
+  };
+  refresh();
+  $('audioPh')?.classList.add('hidden');
+}
+
 function onTrack(e){
-  const s=e.streams[0];
-  if(!s)return;
   const remoteUser=activeChatId||chatId;
-  if(s.getVideoTracks().length>0){
-    // Video track geldi — karşı tarafın avatar kartını bul ve video ile değiştir
-    const setRemoteVideo=(user_id)=>{
-      const card=document.getElementById(`pcard_${user_id}`);
-      const av=card?.querySelector('.part-av');
-      if(!av) return;
-      av.classList.add('has-video');
-      let vid=av.querySelector('video.remote-feed');
-      if(!vid){
-        vid=document.createElement('video');
-        vid.className='remote-feed';
-        vid.autoplay=true;vid.playsInline=true;vid.muted=false;
-        vid.ondblclick=toggleVideoFullscreen;
-        av.innerHTML='';
-        av.appendChild(vid);
-      }
-      vid.srcObject=s;
-      // Track bitince (karşı taraf kamerayı kapattı) avatarı geri getir
-      s.getVideoTracks().forEach(t=>{
-        t.onended=()=>{ vid.srcObject=null; _restoreAvatar(av,user_id,false); };
-      });
-      const rv=$('remoteVideo');
-      if(rv){rv.srcObject=s;}
-    };
-    if(remoteUser) setRemoteVideo(remoteUser);
-    $('audioPh').classList.add('hidden');
-  } else {
+  if(e.track.kind==='video'){
+    if(remoteUser) _handleRemoteVideoTrack(remoteUser, e);
+    return;
+  }
+  const s=(e.streams&&e.streams[0])||new MediaStream([e.track]);
+  // Zaten bir ses akışı çalıyorsa (örn. ekran paylaşımının sistem sesi) sesi bozma —
+  // ayrı bir <audio> ile çal.
+  if(window._remoteAudio){
+    try{ if(window._remoteSysAudio){window._remoteSysAudio.pause();window._remoteSysAudio.srcObject=null;} }catch(_){}
+    const sa=new Audio(); sa.srcObject=new MediaStream([e.track]);
+    sa.play().catch(()=>{});
+    window._remoteSysAudio=sa;
+    return;
+  }
+  {
     // Önceki audio varsa önce durdur
     if(window._remoteAudio){try{window._remoteAudio.pause();window._remoteAudio.srcObject=null;}catch(e){}}
     const a=new Audio();
@@ -4766,6 +4877,7 @@ $('screenBtn').onclick=async()=>{
       try{
         const vSnd=conn.getSenders().find(s=>s.track&&s.track.kind==='video');
         if(vSnd) await vSnd.replaceTrack(null);
+        await _restoreCamAfterScreen([conn]);
         // Sistem ses sender'ı varsa kapat
         const aSnd=conn.getSenders().find(s=>s.track&&s.track.kind==='audio'&&s.track.label&&s.track.label.includes('System'));
         if(aSnd) try{conn.removeTrack(aSnd);}catch(e){}
@@ -4878,6 +4990,7 @@ $('screenBtn').onclick=async()=>{
         try{
           const vs=conn.getSenders().find(s=>s.track&&s.track.kind==='video');
           if(vs) await vs.replaceTrack(null);
+          await _restoreCamAfterScreen([conn]);
         }catch(e){}
       }
       // Karşı taraflara screen_ended gönder
@@ -5323,6 +5436,30 @@ function _restoreAllAvatars(){
   });
 }
 
+// 🐛 [3.8.1] Video'yu bir bağlantıya GÖNDER.
+// Arayan taraf offerToReceiveVideo ile "recvonly" bir video transceiver açıyor; karşı
+// tarafta da offer'dan doğan transceiver "recvonly" kalıyor. Eskiden replaceTrack(track)
+// çağrılıp bırakılıyordu — yön recvonly olduğu için kamera HİÇ gönderilmiyordu (sender
+// null track görünse de). Şimdi yön 'sendrecv' yapılıyor (→ renegotiation) ve stream
+// bağlanıyor ki karşı taraf track'i stream'siz kalıp yok saymasın.
+async function _sendVideoOnConn(conn, track, stream){
+  const trs=conn.getTransceivers().filter(t=>t.receiver&&t.receiver.track&&t.receiver.track.kind==='video'&&t.currentDirection!=='stopped');
+  const tr=trs.find(t=>!t.sender.track)||trs.find(t=>t.sender.track&&t.sender.track.kind==='video');
+  if(!tr){ conn.addTrack(track, stream); return; }
+  await tr.sender.replaceTrack(track);
+  try{ if(tr.sender.setStreams) tr.sender.setStreams(stream); }catch(e){}
+  if(tr.direction!=='sendrecv' && tr.direction!=='sendonly') tr.direction='sendrecv';
+}
+// Ekran paylaşımı bittiğinde kamera hâlâ açıksa kamerayı geri ver
+async function _restoreCamAfterScreen(conns){
+  if(!_videoEnabled||!_localVideoStream) return;
+  const ct=_localVideoStream.getVideoTracks()[0];
+  if(!ct||ct.readyState!=='live') return;
+  for(const conn of conns){
+    try{ await _sendVideoOnConn(conn, ct, _localVideoStream); }catch(e){}
+  }
+}
+
 async function toggleVideo(){
   const btn=$('videoBtn');
   if(!_videoEnabled){
@@ -5364,16 +5501,15 @@ async function toggleVideo(){
         }
         localVid.srcObject=_localVideoStream;
       }
-      // Video track'i tüm peer'lara ekle — null-track sender varsa replaceTrack kullan
-      const videoTrack=_localVideoStream.getVideoTracks()[0];
-      const conns=[pc,...Object.values(groupCallPeers).map(p=>p.pc)].filter(Boolean);
-      for(const conn of conns){
-        try{
-          // Null-track (önceden kaldırılmış) veya aktif video sender varsa replaceTrack
-          const existSender=conn.getSenders().find(s=>s.track===null?s.track===null:s.track?.kind==='video');
-          if(existSender) await existSender.replaceTrack(videoTrack);
-          else conn.addTrack(videoTrack, _localVideoStream);
-        }catch(e){}
+      // Video track'i tüm peer'lara ekle. [3.8.1] Ekran paylaşımı sürerken kamera, paylaşımın
+      // yerine geçmesin — paylaşım bitince _restoreCamAfterScreen kamerayı geri verir.
+      if(screenOwner!==ME.user_id){
+        const videoTrack=_localVideoStream.getVideoTracks()[0];
+        const conns=[pc,...Object.values(groupCallPeers).map(p=>p.pc)].filter(Boolean);
+        for(const conn of conns){
+          try{ await _sendVideoOnConn(conn, videoTrack, _localVideoStream); }
+          catch(e){ console.warn('[VIDEO] gönderilemedi:', e); }
+        }
       }
       showToast('Kamera','Görüntülü arama başladı 📷');
     }catch(e){
@@ -5396,10 +5532,12 @@ async function toggleVideo(){
     }
     if(btn){btn.textContent='📷';btn.style.background='rgba(59,130,246,.35)!important';btn.title='Kamera Aç';}
     // Video track'i null yap (sender'ı koru — replaceTrack ile yeniden açılabilsin)
-    const conns=[pc,...Object.values(groupCallPeers).map(p=>p.pc)].filter(Boolean);
-    for(const conn of conns){
-      const sender=conn.getSenders().find(s=>s.track&&s.track.kind==='video');
-      if(sender) try{await sender.replaceTrack(null);}catch(e){}
+    if(screenOwner!==ME.user_id){
+      const conns=[pc,...Object.values(groupCallPeers).map(p=>p.pc)].filter(Boolean);
+      for(const conn of conns){
+        const sender=conn.getSenders().find(s=>s.track&&s.track.kind==='video');
+        if(sender) try{await sender.replaceTrack(null);}catch(e){}
+      }
     }
     showToast('Kamera','Kamera kapatıldı.');
   }
@@ -5942,6 +6080,11 @@ function updateParticipantsGrid(){
     </div>`;
   }).join('');
 
+  // 🐛 [3.8.1] Grid yeniden çizilince karşı tarafın kamerası da siliniyordu
+  // (yalnızca kendi önizleme geri ekleniyordu) → görüntü "hiç gelmiyor" gibiydi.
+  for(const _u of Object.keys(_remoteVideoTracks)){
+    if(_u!==ME.user_id && !_isScreenFrom(_u)) _attachRemoteCam(_u);
+  }
   // 🐛 [FIX] Grid her yeniden çizildiğinde (örn. peer'ın sesi/görüntüsü ilk
   // geldiğinde onTrack → updateParticipantsGrid tetiklenir) kendi kamera
   // önizlememiz kayboluyordu çünkü yukarıdaki innerHTML ataması eski video
@@ -6034,23 +6177,19 @@ async function broadcastGroupCallOffer(targetUser){
   ls.getTracks().forEach(t=>gpc.addTrack(t,ls));
   gpc.onicecandidate=()=>{};
   gpc.ontrack=e=>{
-    const s=e.streams[0];if(!s)return;
+    if(e.track.kind==='video'){ _handleRemoteVideoTrack(targetUser, e); return; }
+    const s=(e.streams&&e.streams[0])||new MediaStream([e.track]);
+    // Zaten ses akışı varsa (örn. ekran paylaşımı sistem sesi) sesi bozma
+    if(groupCallPeers[targetUser]&&groupCallPeers[targetUser]._audio){
+      try{const _sa=new Audio();_sa.srcObject=new MediaStream([e.track]);_sa.play().catch(()=>{});}catch(_){}
+      return;
+    }
     groupCallPeers[targetUser].stream=s;
     // ── Bug fix: sağır moddayken yeni kişinin sesini hemen kapat ──
     if(isDeafened){
       s.getAudioTracks().forEach(t=>{t.enabled=false;});
     }
-    if(s.getVideoTracks().length>0){
-      const card=document.getElementById(`pcard_${targetUser}`);
-      const av=card?.querySelector('.part-av');
-      if(av){
-        av.classList.add('has-video');
-        let vid=av.querySelector('video.remote-feed');
-        if(!vid){vid=document.createElement('video');vid.className='remote-feed';vid.autoplay=true;vid.playsInline=true;vid.muted=false;vid.ondblclick=toggleVideoFullscreen;av.innerHTML='';av.appendChild(vid);}
-        vid.srcObject=s;
-        const rv=$('remoteVideo');if(rv)rv.srcObject=s;
-      }
-    } else {
+    {
       const a=new Audio(); a.srcObject=s;
       if(isDeafened) a.muted=true;
       // [FIX] play() hatasını yakala; autoplay engeli varsa muted ile başlat
@@ -6500,23 +6639,19 @@ async function _joinGroupPeer(d){
   ls.getTracks().forEach(t=>gpc.addTrack(t,ls));
   gpc.onicecandidate=()=>{};
   gpc.ontrack=e=>{
-    const s=e.streams[0];if(!s)return;
+    if(e.track.kind==='video'){ _handleRemoteVideoTrack(d.from, e); return; }
+    const s=(e.streams&&e.streams[0])||new MediaStream([e.track]);
+    // Zaten ses akışı varsa (örn. ekran paylaşımı sistem sesi) sesi bozma
+    if(groupCallPeers[d.from]&&groupCallPeers[d.from]._audio){
+      try{const _sa=new Audio();_sa.srcObject=new MediaStream([e.track]);_sa.play().catch(()=>{});}catch(_){}
+      return;
+    }
     groupCallPeers[d.from].stream=s;
     // ── Bug fix: sağır moddayken yeni kişinin sesini hemen kapat ──
     if(isDeafened){
       s.getAudioTracks().forEach(t=>{t.enabled=false;});
     }
-    if(s.getVideoTracks().length>0){
-      const card=document.getElementById(`pcard_${d.from}`);
-      const av=card?.querySelector('.part-av');
-      if(av){
-        av.classList.add('has-video');
-        let vid=av.querySelector('video.remote-feed');
-        if(!vid){vid=document.createElement('video');vid.className='remote-feed';vid.autoplay=true;vid.playsInline=true;vid.muted=false;vid.ondblclick=toggleVideoFullscreen;av.innerHTML='';av.appendChild(vid);}
-        vid.srcObject=s;
-        const rv=$('remoteVideo');if(rv)rv.srcObject=s;
-      }
-    } else {
+    {
       const a=new Audio(); a.srcObject=s;
       if(isDeafened) a.muted=true;
       // [FIX] play() hatasını yakala; autoplay engeli varsa muted ile başlat
@@ -6595,7 +6730,11 @@ $('acceptCallBtn').onclick=async()=>{
     return;
   }
 
-  cleanCall();isMuted=false;isDeafened=false;
+  // 🐛 [3.8.1] Arayan taraf ICE adaylarını teklifle birlikte hemen göndermeye
+  // başlıyor; bunlar kabul tuşuna basılana kadar iceQ'da bekliyordu ama aşağıdaki
+  // cleanCall() iceQ=[] yapıp hepsini siliyordu → ilk aramada bağlantı kurulamıyordu.
+  const _earlyIce=iceQ.slice();
+  cleanCall();iceQ=_earlyIce;isMuted=false;isDeafened=false;
   if(_persistentRawStream&&!isMuted) _persistentRawStream.getAudioTracks().forEach(t=>t.enabled=true);
   $('participantsGrid').classList.remove('hidden');
   $('audioPh').classList.add('hidden');
@@ -7573,10 +7712,16 @@ window.closeGifModal=()=>{
   $('gifUrlInput').value='';
 };
 window.submitGifUrl=()=>{
-  const url=$('gifUrlInput').value.trim();
-  if(!url){showToast('Hata','GIF URL giriniz.');return;}
+  const raw=$('gifUrlInput').value.trim();
+  if(!raw){showToast('Hata','GIF URL giriniz.');return;}
+  // [3.8.1] Giphy/Imgur sayfa adreslerini görsel adresine çevir
+  const url=normalizeGifUrl(raw);
   // 🛡️ [AZ RİSK FIX] Yalnızca güvenilir GIF CDN'lerinden gelen bağlantılara izin ver.
-  if(!sanitizeGifUrl(url)){showToast('Hata','Yalnızca Tenor, Giphy veya Imgur bağlantılarına izin veriliyor.');return;}
+  if(!url||!sanitizeGifUrl(url)){
+    if(/tenor\.com\/view\//i.test(raw)) showToast('Tenor Bağlantısı','Tenor sayfa adresi çalışmaz. GIF üzerine sağ tıkla → "Görsel adresini kopyala" (media.tenor.com ile başlayan) bağlantıyı yapıştır.');
+    else showToast('Hata','Yalnızca Tenor (media.tenor.com), Giphy veya Imgur GIF bağlantılarına izin veriliyor.');
+    return;
+  }
   closeGifModal();
   sendGif(url);
 };
@@ -7585,23 +7730,36 @@ window.sendGif=url=>{
   const msgId=uid();
   _sessionFiles.set(msgId, url); // URL'yi de oturum belleğine al
   const msg={id:msgId,from:ME.user_id,text:'GIF',time:gt(),fileType:'gif',fileData:url};
+  // 🐛 [3.8.1] GIF bağlantısı küçük — kalıcı sakla. Eskiden '__session__' referansı yazılıyor,
+  // sayfa yenilenince bellek boşalıp GIF "yazı" olarak görünüyordu.
+  const _persist=_isPersistentGifMsg(msg);
   const db=getDB();
   if(chatType==='private'){
     const k=[ME.user_id,chatId].sort().join('_');
     if(!db.messages[k])db.messages[k]=[];
-    db.messages[k].push({...msg, fileData:'__session__'+msgId});
+    db.messages[k].push(_persist?{...msg}:{...msg, fileData:'__session__'+msgId});
     saveDB(db);
     broadcast({type:'private_msg',to:chatId,from:ME.user_id,msg});
   } else {
     const k='g_'+chatId;
     if(!db.messages[k])db.messages[k]=[];
-    db.messages[k].push({...msg, fileData:'__session__'+msgId});
+    db.messages[k].push(_persist?{...msg}:{...msg, fileData:'__session__'+msgId});
     saveDB(db);
     const g=db.groups[chatId];
     g.members.forEach(m=>{if(m!==ME.user_id)broadcast({type:'group_msg',to:m,groupId:chatId,from:ME.user_id,msg});});
   }
   renderChat();
 };
+// 🐛 [3.8.1] GIF yüklenemezse (404/engel) kırık resim + "GIF" alt yazısı yerine tıklanabilir bağlantı göster.
+// 'error' olayı kabarcıklanmaz → capture ile dinleniyor (inline handler gerekmez, CSP'ye uygun).
+document.addEventListener('error',e=>{
+  const t=e.target;
+  if(!t||t.tagName!=='IMG'||!t.classList.contains('msg-gif')) return;
+  const a=document.createElement('a');
+  a.href=t.currentSrc||t.src; a.target='_blank'; a.rel='noopener noreferrer';
+  a.className='msg-text'; a.textContent='🎬 GIF yüklenemedi — bağlantıyı aç';
+  t.replaceWith(a);
+},true);
 // Enter ile gönder
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&$('gifUrlModal').style.display==='flex') submitGifUrl();
