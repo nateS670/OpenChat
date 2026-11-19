@@ -227,6 +227,8 @@ const CHANGELOG_HTML = `
     <li>🎬 Düzeltme: GIF'ler sayfa yenilenince veya bazen "GIF" yazısı olarak görünüyordu — artık kalıcı ve yüklenemezse bağlantıya dönüşüyor; Giphy sayfa bağlantıları otomatik çevriliyor</li>
     <li>📝 Düzeltme: Eksik olan chat-summary.js eklendi (404 / MIME hatası giderildi), Sohbet Özeti çalışıyor</li>
     <li>🌐 İngilizce giriş ekranında "Ayşe" → "Ayse"</li>
+    <li>👥 Düzeltme: Birden fazla kişi aynı anda arayıp katılınca oluşan bozulmalar giderildi (karşılıklı teklif çakışması, ikinci arayana meşgul yanıtı, grup aramasındayken gelen özel aramanın mikrofonu kapatması, sonradan katılanların birbirini duymaması)</li>
+    <li>💬 Düzeltme: Arama bitince sohbette art arda "arama sonlandı" mesajlarının spamlanması giderildi; bitmiş aramanın hayalet "aktif arama" göstergesi kalmıyor</li>
   </ul>
 </div>
 <div style="margin-bottom:18px">
@@ -2923,7 +2925,10 @@ async function handleSig(d){
       return;
     }
     // Zaten aktif bir 1-1 arama varsa yeni gelen offer'ı reddet
-    if(pc&&pc.iceConnectionState!=='closed'&&pc.iceConnectionState!=='failed'){
+    // 🐛 [3.8.1] Grup aramasındayken (pc null) gelen özel arama, aşağıdaki cleanCall() ile
+    // grup aramasının mikrofonunu kapatıp aramayı bozuyordu → artık meşgul yanıtı verilir.
+    if((pc&&pc.iceConnectionState!=='closed'&&pc.iceConnectionState!=='failed')||
+       callIv!==null||Object.keys(groupCallPeers||{}).length>0||!$('callUI').classList.contains('hidden')||window._callStarting){
       broadcastRTC({type:'rtc_busy',to:d.from,from:ME.user_id});
       return;
     }
@@ -2932,8 +2937,12 @@ async function handleSig(d){
     if(window[_offerKey]){return;} // Zaten işleniyor
     window[_offerKey]=true;
     setTimeout(()=>{window[_offerKey]=false;},3000);
-    // Modal zaten açıksa tekrar açma
-    if(!$('callModal').classList.contains('hidden')){return;}
+    // Modal zaten açıksa tekrar açma — ama BAŞKA biri arıyorsa ona meşgul de (eskiden
+    // ikinci arayan sessizce yok sayılıp sonsuza dek çalıyordu)
+    if(!$('callModal').classList.contains('hidden')){
+      if(!window._offer||window._offer.from!==d.from) broadcastRTC({type:'rtc_busy',to:d.from,from:ME.user_id});
+      return;
+    }
     cleanCall();window._offer=d;$('callerName').innerText=d.from;$('callModal').classList.remove('hidden');if(!isSilentMode())_notifyIncomingCall(d.from);
   }
   else if(d.type==='rtc_answer'&&pc){
@@ -2960,8 +2969,20 @@ async function handleSig(d){
     if(pc&&pc.remoteDescription){ try{await pc.addIceCandidate(new RTCIceCandidate(d.cand));}catch(e){console.warn('ICE add:',e);} }
     else iceQ.push(d.cand);
   }
-  else if(d.type==='rtc_end')endCall(`Çağrı ${d.from} tarafından kapatıldı.`);
-  else if(d.type==='rtc_reject')endCall(`${d.from} aramayı reddetti.`);
+  else if(d.type==='rtc_end'){
+    // 🐛 [3.8.1] Eskiden her rtc_end (yinelenen/geç gelen/başkasından) koşulsuz endCall yapıp
+    // mesaj yazıyordu. Şimdi: (a) çalan çağrıyı arayan iptal ettiyse cevapsız arama kaydı,
+    // (b) yalnızca gerçekten bu kişiyle aktif aramadaysak kapat.
+    const _ringFrom=(!$('callModal').classList.contains('hidden')&&window._offer&&!window._offer.isGroup)?window._offer.from:null;
+    if(_ringFrom&&_ringFrom===d.from&&!_isCallActive()){
+      _stopCallNotif(); $('callModal').classList.add('hidden'); window._offer=null; iceQ=[];
+      _saveMissedCall(d.from,'incoming_missed');
+    } else if(_isCallActive()&&(activeChatType||chatType)!=='group'&&(!activeChatId||activeChatId===d.from)){
+      window._noEchoEnd=true;
+      try{ endCall(`Çağrı ${d.from} tarafından kapatıldı.`); }finally{ window._noEchoEnd=false; }
+    }
+  }
+  else if(d.type==='rtc_reject'){ if(_isCallActive()) endCall(`${d.from} aramayı reddetti.`); }
   else if(d.type==='rtc_busy'){_hideRinging();_stopCallNotif();showToast('Meşgul',`${d.from} şu anda başka bir aramada.`);endCall('');}
   else if(d.type==='screen_started'){
     screenOwner=d.from;
@@ -4449,7 +4470,48 @@ if($('confirmGroupBtn')) $('confirmGroupBtn').onclick=()=>{
 };
 
 // ── WEBRTC ────────────────────────────────────────────────────────
+// 🐛 [3.8.1] Şu an gerçekten bir arama var mı? (arayüz açık / minimize / bağlanıyor / grup peer'ı var).
+// Eskiden grp_end, rtc_end, ICE zamanlayıcıları vb. arama bittikten SONRA da endCall() çağırıp
+// her seferinde sohbete yeni bir "arama sonlandı" mesajı yazıyordu (mesaj spam'i).
+function _isCallActive(){
+  try{
+    return !!(window._callStarting || callIv!==null || pc ||
+      !$('callUI').classList.contains('hidden') ||
+      Object.keys(groupCallPeers||{}).length>0);
+  }catch(e){ return false; }
+}
+// 🐛 [3.8.1] Mikrofon akışını TEK sefer al: startGroupCall ile gelen grp_offer'ın _joinGroupPeer'i
+// aynı anda getMicStream() çağırınca iki ayrı akış açılıp biri sızıyor/yanlış track gidiyordu.
+let _callGen=0, _lsPromise=null;
+async function _ensureLs(){
+  if(ls) return ls;
+  if(!_lsPromise){
+    const gen=_callGen;
+    _lsPromise=getMicStream().then(st=>{
+      if(gen!==_callGen || ls){ st.getTracks().forEach(t=>{try{t.stop();}catch(e){}}); if(ls) return ls; throw new Error('call-ended'); }
+      ls=st; return st;
+    }).finally(()=>{ _lsPromise=null; });
+  }
+  return _lsPromise;
+}
+// Gruptaki "gerçekten aramada olan" üyeler: gid -> {user: ts}
+const _grpActiveSenders={};
+function _meshComplete(gid){
+  try{
+    if(!ME||!ls||!_isCallActive()||activeChatType!=='group'||(activeChatId||chatId)!==gid) return;
+    const g=getDB().groups[gid]; if(!g) return;
+    const nowT=Date.now();
+    for(const [u,ts] of Object.entries(_grpActiveSenders[gid]||{})){
+      if(u===ME.user_id||nowT-ts>20000||!g.members.includes(u)) continue;
+      const ex=groupCallPeers[u];
+      if(ex&&ex.pc&&ex.pc.signalingState!=='closed'&&!['closed','failed'].includes(ex.pc.connectionState)) continue;
+      // İki taraf aynı anda teklif göndermesin: id'si küçük olan teklif verir
+      if(ME.user_id<u) broadcastGroupCallOffer(u).catch(()=>{});
+    }
+  }catch(e){ console.warn('[GRP] mesh tamamlama hatası:',e); }
+}
 function cleanCall(){
+  _callGen++;
   if(pc){try{pc.close()}catch(e){}pc=null;}
   if(ls){
     ls.getTracks().forEach(t=>{ try{t.stop();}catch(e){} });
@@ -5909,19 +5971,27 @@ setInterval(()=>{
 }, 10000);
 
 function _broadcastGroupCallActive(){
-  if(!ME||chatType!=='group') return;
-  const members=[ME.user_id,...callParticipants];
-  broadcast({type:'grp_call_active',groupId:chatId,from:ME.user_id,members});
-  updateChatCallBanner(chatId);
+  // [3.8.1] Kullanıcı başka sohbete geçse de aramanın grubu (activeChatId) esas alınır
+  if(!ME) return;
+  const gid=activeChatId||chatId, typ=activeChatType||chatType;
+  if(typ!=='group'||!_isCallActive()) return;
+  // Henüz bağlanmamış/kopmuş kişileri "aramada" gösterme
+  const live=[...callParticipants].filter(u=>{
+    const p=groupCallPeers[u]; return p&&p.pc&&!['closed','failed','disconnected'].includes(p.pc.connectionState);
+  });
+  broadcast({type:'grp_call_active',groupId:gid,from:ME.user_id,members:[ME.user_id,...live]});
+  updateChatCallBanner(gid);
 }
 
 function _stopGroupCallBroadcast(){
-  if(!ME||chatType!=='group') return;
   if(window._grpCallBcastIv){clearInterval(window._grpCallBcastIv);window._grpCallBcastIv=null;}
-  broadcast({type:'grp_call_ended',groupId:chatId,from:ME.user_id});
+  if(!ME) return;
+  const gid=activeChatId||chatId, typ=activeChatType||chatType;
+  if(typ!=='group'||!gid) return;
+  broadcast({type:'grp_call_ended',groupId:gid,from:ME.user_id});
   updateChatCallBanner(null);
   // Kendi grubunu temizle
-  delete activeGroupCalls[chatId||activeChatId];
+  delete activeGroupCalls[gid];
   updateFriends();
 }
 
@@ -6110,6 +6180,12 @@ function updateParticipantsGrid(){
 
 // ── GRUP ARAMASI (WebRTC mesh) ────────────────────────────────────
 async function startGroupCall(){
+  const gid=chatId; // [3.8.1] mikrofon izni beklenirken sohbet değişse de doğru grup kullanılsın
+  if(!gid||!getDB().groups[gid]) return;
+  window._callStarting=true; // bu sırada gelen teklifler "meşgul" sayılsın
+  try{ await _startGroupCallInner(gid); } finally { window._callStarting=false; }
+}
+async function _startGroupCallInner(gid){
   cleanCall();
   isMuted=false;isDeafened=false;
   if(_persistentRawStream&&!isMuted) _persistentRawStream.getAudioTracks().forEach(t=>t.enabled=true);
@@ -6122,14 +6198,15 @@ async function startGroupCall(){
   const _grpMicOk = await _ensureMicPermForCall();
   if(!_grpMicOk) return;
 
-  startCallUI(getDB().groups[chatId].name);
+  startCallUI(getDB().groups[gid].name);
+  activeChatId=gid; activeChatType='group';
   $('participantsGrid').classList.remove('hidden');
   $('audioPh').classList.add('hidden');
   // Sohbet içi banner'ı gizle — artık aramadayız
   updateChatCallBanner(null);
 
   try{
-    ls=await getMicStream();
+    await _ensureLs();
   }catch(e){
     let errMsg='Mikrofon izni alınamadı.';
     if(e&&e.name==='NotAllowedError') errMsg='Mikrofon erişimi reddedildi. Tarayıcı ayarlarından izin ver.';
@@ -6143,7 +6220,7 @@ async function startGroupCall(){
   _startSpeakDetect(ME.user_id, null, true);
   if(!_speakInterval) _startSpeakLoop();
 
-  const g=getDB().groups[chatId];
+  const g=getDB().groups[gid];
   // 🐛 [3.6 FIX] Önceden sadece isOn() (genel presence, 20sn'lik pencere)
   // kontrolüne bakılıyordu — bir üyenin presence sinyali kısa bir an
   // gecikirse (arka plan sekmesi, ufak ağ titremesi) o kişi tamamen
@@ -6155,7 +6232,7 @@ async function startGroupCall(){
   // güncel "bu aramada gerçekten kim var" listesi — isOn() ile birleştirilip
   // kullanılıyor. Böylece "zaten aramada olduğu kesin olarak bilinen"
   // kişiler, anlık presence gecikmesi yüzünden asla atlanmıyor.
-  const _activeCallMembers = activeGroupCalls[chatId]?.members || [];
+  const _activeCallMembers = activeGroupCalls[gid]?.members || [];
   const _joinTargets = new Set([
     ..._activeCallMembers.filter(m=>g.members.includes(m)),
     ...g.members.filter(m=>isOn(m))
@@ -6172,6 +6249,9 @@ async function startGroupCall(){
 }
 
 async function broadcastGroupCallOffer(targetUser){
+  if(!ls) return;
+  const _ex=groupCallPeers[targetUser];
+  if(_ex&&_ex.pc&&_ex.pc.signalingState!=='closed'&&!['closed','failed'].includes(_ex.pc.connectionState)) return;
   const gpc=new RTCPeerConnection(rtcCfg);
   groupCallPeers[targetUser]={pc:gpc,stream:null};
   ls.getTracks().forEach(t=>gpc.addTrack(t,ls));
@@ -6233,7 +6313,9 @@ async function broadcastGroupCallOffer(targetUser){
       _computeAndApplyScreenQuality();
     }
   }
-  broadcastRTC({type:'grp_offer',to:targetUser,from:ME.user_id,groupId:chatId,sdp:gpc.localDescription});
+  // [3.8.1] bekleme sırasında arama bitmiş ya da bağlantı değiştirilmiş olabilir
+  if(groupCallPeers[targetUser]?.pc!==gpc){ try{gpc.close();}catch(e){} return; }
+  broadcastRTC({type:'grp_offer',to:targetUser,from:ME.user_id,groupId:activeChatId||chatId,sdp:gpc.localDescription});
   callParticipants.add(targetUser);
   updateParticipantsGrid();
 }
@@ -6261,26 +6343,50 @@ const _patchedGroupCallSignals=async(d)=>{
     if(window[_grpKey]){return;}
     window[_grpKey]=true;
     setTimeout(()=>{window[_grpKey]=false;},3000);
-    const callOpen=!$('callUI').classList.contains('hidden');
-    if(!callOpen){
-      window._pendingGrpOffers=window._pendingGrpOffers||[];
-      window._pendingGrpOffers.push(d);
-      if(window._pendingGrpOffers.length===1){
-        const gName=getDB().groups[d.groupId]?.name||d.groupId;
-        $('callerName').innerText=`📞 ${d.from} — Grup: ${gName}`;
-        window._offer={...d,isGroup:true};
-        $('callModal').classList.remove('hidden');
+    const _callOn=_isCallActive();
+    if(_callOn){
+      // Başka bir aramadayız (özel arama ya da başka grup) → meşgul: teklif sahibine "yok" de
+      if((activeChatType||chatType)!=='group'||(activeChatId||chatId)!==d.groupId){
+        broadcast({type:'grp_end',to:d.from,from:ME.user_id,groupId:d.groupId});
+        return;
       }
+      // 🐛 [3.8.1] GLARE: iki kişi aynı anda birbirine teklif atınca ikisi de karşı teklifi
+      // kabul edip kendi teklifini ezdiğinden cevaplar eşleşmiyor, bağlantı hiç kurulmuyordu.
+      // Kural: id'si küçük olan teklif sahibi kalır, büyük olan kendi teklifini bırakıp cevaplar.
+      const ex=groupCallPeers[d.from];
+      if(ex&&ex.pc&&ex.pc.signalingState==='have-local-offer'){
+        if(ME.user_id<d.from) return;
+        try{ex.pc.close();}catch(e){}
+        delete groupCallPeers[d.from];
+      }
+      await _joinGroupPeer(d);
       return;
     }
-    await _joinGroupPeer(d);
+    // Henüz aramada değiliz → çalan arama penceresi. Zaten başka bir çağrı/grup çalıyorsa meşgul.
+    const _pend=window._pendingGrpOffers||[];
+    const _modalOpen=!$('callModal').classList.contains('hidden');
+    if((_modalOpen&&_pend.length===0)||(_pend.length&&_pend[0].groupId!==d.groupId)){
+      broadcast({type:'grp_end',to:d.from,from:ME.user_id,groupId:d.groupId});
+      return;
+    }
+    // Aynı kişiden gelen eski teklifi yenisiyle değiştir (kabulde eski/ölü teklif işlenmesin)
+    window._pendingGrpOffers=_pend.filter(o=>o.from!==d.from);
+    window._pendingGrpOffers.push(d);
+    if(window._pendingGrpOffers.length===1){
+      const gName=getDB().groups[d.groupId]?.name||d.groupId;
+      $('callerName').innerText=`📞 ${d.from} — Grup: ${gName}`;
+      window._offer={...d,isGroup:true};
+      $('callModal').classList.remove('hidden');
+    }
     return;
   }
 
   if(d.type==='grp_answer'&&d.to===ME.user_id){
     const gpc=groupCallPeers[d.from]?.pc;
-    if(gpc){
-      await gpc.setRemoteDescription(new RTCSessionDescription(d.sdp));
+    // [3.8.1] Yalnızca bizim teklifimize cevap bekleyen bağlantıya uygula (stable durumda hata veriyordu)
+    if(gpc&&gpc.signalingState==='have-local-offer'){
+      try{ await gpc.setRemoteDescription(new RTCSessionDescription(d.sdp)); }
+      catch(e){ console.warn('[GRP] answer uygulanamadı:',e); return; }
       startCallTimer();
       // ── Bug fix: aktif ekran paylaşımı varsa yeni katılana hemen gönder ──
       if(screenOwner===ME.user_id){
@@ -6309,6 +6415,17 @@ const _patchedGroupCallSignals=async(d)=>{
   }
 
   if(d.type==='grp_end'&&d.to===ME.user_id){
+    // Henüz kabul edilmemiş (çalan) teklif geri çekildi / reddedildi
+    if(window._pendingGrpOffers&&window._pendingGrpOffers.length){
+      window._pendingGrpOffers=window._pendingGrpOffers.filter(o=>o.from!==d.from);
+      if(!window._pendingGrpOffers.length&&window._offer&&window._offer.isGroup){
+        _stopCallNotif(); $('callModal').classList.add('hidden'); window._offer=null;
+      }
+    }
+    // 🐛 [3.8.1] ASIL SPAM KAYNAĞI: arama bittikten sonra gelen (her üyeden 2'şer tane) grp_end'ler
+    // callParticipants.size===0 görüp HER SEFERİNDE endCall("Grup araması sona erdi") çağırıyordu.
+    if(!_isCallActive()) return;
+    if(d.groupId&&(activeChatId||chatId)!==d.groupId) return;
     callParticipants.delete(d.from);
     if(groupCallPeers[d.from]){
       // ── Ses sızıntısı fix: peer'ın audio element'ini durdur ──
@@ -6483,6 +6600,8 @@ handleSig=async(d)=>{
   // ── Aktif grup araması — Discord tarzı sidebar göstergesi ──
   if(d.type==='grp_call_active'&&d.groupId){
     activeGroupCalls[d.groupId]={members:d.members||[d.from],ts:Date.now()};
+    (_grpActiveSenders[d.groupId]=_grpActiveSenders[d.groupId]||{})[d.from]=Date.now();
+    _meshComplete(d.groupId); // 🐛 [3.8.1] aramaya sonradan katılanlar arasında eksik bağlantıları tamamla
     if(chatId===d.groupId) updateChatCallBanner(d.groupId);
     updateFriends(); // sidebar'ı güncelle
     return;
@@ -6499,6 +6618,7 @@ handleSig=async(d)=>{
 // ── ICE BAĞLANTI DURUMU İZLEYİCİSİ ──────────────────────────────
 // connectionState: iceConnectionState'den daha güvenilir, ayrıca dinlenir
 function handleConnectionState(peerConnection, targetUser){
+  if(peerConnection!==pc) return; // [3.8.1] eski/yetim bağlantının gecikmiş olayı
   const s = peerConnection.connectionState;
   console.log(`[CONN] [${targetUser}]: connectionState=${s}`);
   if(s === 'connected'){
@@ -6568,6 +6688,10 @@ function handleConnectionState(peerConnection, targetUser){
 }
 
 function handleIceState(peerConnection, targetUser){
+  // 🐛 [3.8.1] Değiştirilmiş/kapatılmış eski bağlantıların gecikmiş olayları (özellikle 5 sn'lik
+  // "disconnected" zamanlayıcısı) yeni sağlıklı bağlantıyı kapatıyor ya da tüm aramayı bitirip
+  // art arda "bağlantı kesildi" mesajı yazıyordu. Yalnızca güncel bağlantıyı dikkate al.
+  if(peerConnection!==pc && !(groupCallPeers[targetUser]&&groupCallPeers[targetUser].pc===peerConnection)) return;
   const s=peerConnection.iceConnectionState;
   console.log(`ICE [${targetUser}]: iceState=${s}`);
   const el=$('callTime');
@@ -6609,13 +6733,13 @@ function handleIceState(peerConnection, targetUser){
         const rv=$('remoteVideo');
         rv.pause(); rv.srcObject=null; rv.classList.add('hidden');
         $('audioPh').classList.remove('hidden');
-        if(groupCallPeers[targetUser]){
+        if(groupCallPeers[targetUser]&&groupCallPeers[targetUser].pc===peerConnection){
           callParticipants.delete(targetUser);
           try{groupCallPeers[targetUser].pc.close();}catch(e){}
           delete groupCallPeers[targetUser];
           updateParticipantsGrid();
           showToast('Arama',`${targetUser} bağlantısı kesildi.`);
-        } else {
+        } else if(peerConnection===pc && _isCallActive()){
           endCall(`⚠️ ${targetUser} ile bağlantı kesildi.`);
         }
       }
@@ -6630,9 +6754,10 @@ function handleIceState(peerConnection, targetUser){
 
 async function _joinGroupPeer(d){
   if(!ls){
-    try{ls=await getMicStream();}
+    try{ await _ensureLs(); }
     catch(e){return;}
   }
+  if(!ls) return; // bu arada arama bitmiş
   if(groupCallPeers[d.from]){ try{groupCallPeers[d.from].pc.close();}catch(e){} }
   const gpc=new RTCPeerConnection(rtcCfg);
   groupCallPeers[d.from]={pc:gpc,stream:null};
@@ -6686,10 +6811,17 @@ async function _joinGroupPeer(d){
   const ans=await gpc.createAnswer();
   await gpc.setLocalDescription(ans);
   await waitForIceGathering(gpc);
+  if(groupCallPeers[d.from]?.pc!==gpc){ try{gpc.close();}catch(e){} return; } // bu arada değişti/bitti
   broadcastRTC({type:'grp_answer',to:d.from,from:ME.user_id,groupId:d.groupId,sdp:gpc.localDescription});
   callParticipants.add(d.from);
   updateParticipantsGrid();
   if(callIv===null) startCallTimer();
+  // 🐛 [3.8.1] Katılan (teklifi kabul eden) taraf aramada olduğunu hiç yayınlamıyordu (yayın sadece
+  // aramayı başlatanda vardı) → diğer katılımcılar birbirini bulamıyor, 3. kişi kimseyi duyamıyordu.
+  if(!window._grpCallBcastIv){
+    _broadcastGroupCallActive();
+    window._grpCallBcastIv=setInterval(_broadcastGroupCallActive, 8000);
+  }
 }
 
 $('acceptCallBtn').onclick=async()=>{
@@ -6723,6 +6855,9 @@ $('acceptCallBtn').onclick=async()=>{
     $('deafenBtn').textContent='🔊';$('deafenBtn').classList.remove('active-deafen');
     const gName=getDB().groups[o.groupId]?.name||o.groupId;
     startCallUI(gName);
+    // [3.8.1] startCallUI o an AÇIK olan sohbeti aktif sayıyordu; başka sohbette bakarken kabul
+    // edilirse mesajlar/grp_end yanlış gruba gidiyordu.
+    activeChatId=o.groupId; activeChatType='group';
     $('participantsGrid').classList.remove('hidden');$('audioPh').classList.add('hidden');
     const pending=window._pendingGrpOffers||[];
     window._pendingGrpOffers=[];
@@ -6926,6 +7061,11 @@ window.cancelOutgoingRing=()=>{
 
 const _origEndCall=endCall;
 endCall=reason=>{
+  // 🐛 [3.8.1] Bu override orijinal endCall'u çağırmadığı için _stopGroupCallBroadcast hiç
+  // çalışmıyordu: arama bittikten sonra 8 sn'lik "grp_call_active" yayını sonsuza dek sürüyor,
+  // sohbette hayalet "aktif arama" kalıyor ve yeni katılımcılar yanlış kişilere teklif atıyordu.
+  try{ _stopGroupCallBroadcast(); }catch(e){}
+  try{ for(const k of Object.keys(_grpActiveSenders)) delete _grpActiveSenders[k]; }catch(e){}
   if(Object.keys(groupCallPeers).length>0){
     const g=getDB().groups[activeChatId||chatId];
     g&&g.members.forEach(m=>{if(m!==ME.user_id)broadcast({type:'grp_end',to:m,from:ME.user_id,groupId:activeChatId||chatId});});
@@ -8601,17 +8741,21 @@ window.minimizeCallUI=function(){
 // Ek olarak: callUI'dan çıkıldığında (minimize veya endCall) tüm gruba bildir
 const _origEndCallBroadcast = endCall;
 endCall = (reason) => {
-  // Grup araması için tüm üyelere grp_end gönder (zaten yapılıyor, burada güvence)
+  // 🐛 [3.8.1] Aktif arama yoksa (yinelenen/geç gelen tetikleme) HİÇBİR ŞEY yapma:
+  // ne mesaj yaz, ne grp_end/rtc_end yayınla (bunlar ping-pong ve mesaj spam'ine yol açıyordu).
+  if(!_isCallActive()){ try{_stopMicStream();}catch(e){} return; }
   const gid = activeChatId || chatId;
-  if(gid && chatType === 'group' && Object.keys(groupCallPeers).length === 0) {
+  const _noEcho = !!window._noEchoEnd; // karşı tarafın kapatmasına yanıt olarak kapatıyorsak geri yankı yapma
+  if(!_noEcho && gid && (activeChatType||chatType) === 'group' && Object.keys(groupCallPeers).length === 0) {
     // Grup aramasında peer kapatılmadan endCall çağrıldıysa broadcast et
     const g = getDB().groups[gid];
     if(g) g.members.forEach(m=>{if(m!==ME.user_id) broadcast({type:'grp_end',to:m,from:ME.user_id,groupId:gid});});
   }
   // Birebir arama için rtc_end gönder (zaten yapılıyor ama güvence)
-  if(gid && chatType === 'private' && pc) {
+  if(!_noEcho && gid && (activeChatType||chatType) === 'private' && pc) {
     broadcast({type:'rtc_end',to:gid,from:ME.user_id});
   }
+  window._callStarting=false;
   _origEndCallBroadcast(reason);
 };
 
@@ -9149,6 +9293,8 @@ const _origHSbeforeMissed=handleSig;
 handleSig=async(d)=>{
   if(d.type==='rtc_reject'&&d.to===ME.user_id){
     // Arayan biz — karşı taraf reddetti → kendi sohbetimize cevapsız kart ekle
+    // [3.8.1] Aktif arama yoksa (yinelenen rtc_reject) tekrar kayıt/mesaj ekleme
+    if(!_isCallActive()) return;
     endCall(`${d.from} aramayı reddetti.`);
     _saveMissedCall(d.from,'outgoing_rejected');
     return;
