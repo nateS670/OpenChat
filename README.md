@@ -1,197 +1,53 @@
-🚀 **OpenChat 3.8.1 Beta**
+# OpenChat
 
-OpenChat is a modern, Peer-to-Peer (P2P), and End-to-End Encrypted (E2EE) WebRTC messaging application built around a serverless architecture with no centralized message database.
+OpenChat is an experimental browser based chat application built with WebRTC, MQTT signaling, and browser cryptography. It aims to send conversation traffic directly between connected peers and does not provide a central message history service.
 
-After a WebRTC connection is established, messages and files are exchanged directly between browsers through cryptographically secured Data Channels. Server-side infrastructure is used for signaling, configuration, and NAT traversal assistance rather than centralized message storage.
+> **Status:** Beta and not independently security audited. Do not rely on OpenChat for high risk or safety critical communication.
 
----
+## What it does
 
-📄 **License & Free Use**
+- Peer to peer text and file transfer over WebRTC DataChannels when network conditions allow.
+- MQTT based discovery and signaling, plus serverless endpoints for configuration and connectivity.
+- Browser side cryptography and locally stored application data.
+- PWA installation and browser notifications where supported.
 
-OpenChat is released under the MIT License.
+Signaling and connection services still observe some connection metadata. When TURN relaying is needed, traffic is relayed by the TURN service. WebRTC protects transport, but this repository's application level identity and key protocol has not received an independent cryptographic review. A server issued passport proves that a payload was signed by the deployment's shared server secret; it does not prove that a username belongs to a particular real person. Verify a peer fingerprint through a separate trusted channel before relying on it.
 
-You are free to:
+## Run locally
 
-- Use OpenChat for personal or commercial projects.
-- Modify and rebuild any part of the application.
-- Fork and redistribute your own version.
-- Integrate OpenChat's code into other projects.
+The frontend is static HTML and JavaScript, while `api/` contains Vercel serverless functions. Serve the project over HTTPS (or localhost) and deploy with Vercel to exercise the full application. Opening `index.html` directly does not provide the API endpoints.
 
-Please retain the original MIT License and copyright notice when redistributing the project.
+Configure these Vercel environment variables for the corresponding services:
 
----
+| Variable | Purpose |
+| --- | --- |
+| `CHAT_SECRET_KEY` | HMAC signing key used by identity and bootstrap endpoints |
+| `MQTT_BROKER_URL` | MQTT broker URL returned by `/api/config` |
+| `TOPIC_ROTATE_SECRET` | Secret used to derive the current signaling topic |
+| `MQTT_USERNAME` / `MQTT_PASSWORD` | Optional broker credentials |
+| `METERED_API_KEY` | Metered TURN credential endpoint |
+| `AUTH_API_KEY` | API key checked by the auth endpoint |
+| `ALLOWED_ORIGINS` | Optional comma separated origin allowlist used by middleware |
 
-✨ **Key Features**
+Use unique, high entropy values for secrets and configure production origins for your deployment. Never commit `.env` files or production credentials. API access checks based on Origin, Referer, or Fetch Metadata are browser request checks, not user authentication; clients outside browsers can forge some of these headers.
 
-⚡ Fully P2P Messaging
+## Architecture
 
-WebRTC establishes direct connections between users whenever network conditions allow it.
+`index.html` contains the UI, `app.js` currently owns most client behavior, `i18n.js` provides translations, and `chat-summary.js` handles chat summaries. `api/` contains the Vercel endpoints. The current frontend is intentionally dependency light, but `app.js` is a large legacy script; see [the architecture notes](docs/ARCHITECTURE.md) for a staged refactoring plan.
 
-Once a connection is established, messaging traffic is transferred directly between peers instead of passing through a centralized messaging server.
+## Privacy and security limits
 
-🔒 **End-to-End Encryption**
+- OpenChat is real time oriented. Undelivered messages may be lost when a peer disconnects.
+- Peer to peer connectivity may require STUN/TURN; TURN can relay encrypted transport packets and observe network metadata.
+- MQTT and serverless endpoints process metadata needed for discovery and setup.
+- Browser local storage is available to scripts running on the same origin. A successful XSS or compromised deployment can undermine client side protections.
+- First contact does not establish a real world identity. Compare fingerprints out of band.
+- The protocol and implementation have not been independently audited. See [SECURITY-MODEL.md](SECURITY-MODEL.md) and [SECURITY.md](SECURITY.md).
 
-OpenChat uses browser-side cryptographic mechanisms including ECDH (P-256) and Ed25519 for its peer security model.
+## Contributing
 
-Cryptographic keys are generated and handled on the client side, while application data is protected using authenticated encryption mechanisms.
+Keep changes small and reviewable, document security relevant behavior, and include reproducible checks for changes to cryptography, signaling, storage, or message parsing. Avoid claims of anonymity or audited end to end security unless supported by independent review.
 
-OpenChat does not maintain a centralized database containing users' chat histories.
+## License
 
-☁️ **Serverless Signaling**
-
-Signaling is handled through Vercel Serverless Functions and an MQTT-based discovery/signaling layer.
-
-The signaling infrastructure is used to help peers discover and establish connections. Once the WebRTC connection is established, messaging traffic moves to the P2P DataChannel.
-
-🛡️ **Protected Configuration**
-
-Sensitive configuration such as broker credentials and TURN service credentials are kept outside the public frontend source code through Vercel Environment Variables and server-side configuration endpoints.
-
-🌐 **Browser Security**
-
-OpenChat uses security headers and a strict Content Security Policy (CSP) as an additional defense layer against XSS and other browser-side attacks.
-
-User-controlled data is validated and sanitized where appropriate.
-
-📱 **PWA & Notifications**
-
-OpenChat can be installed as a Progressive Web App (PWA) and supports browser notifications where the platform and browser allow them.
-
----
-
-🛠️ **Technology Stack**
-
-Component| Technology
-Frontend| Vanilla JavaScript (ES6+), HTML5, CSS3
-Messaging| WebRTC DataChannels
-Signaling| MQTT / EMQX
-Backend| Vercel Serverless Functions
-Cryptography| Web Crypto API, ECDH P-256, Ed25519, AES-GCM, PBKDF2
-NAT Traversal| STUN / TURN
-TURN Provider| Metered
-Application| Progressive Web App (PWA)
-
----
-
-🏗️ **How It Works**
-
-1. Secure Configuration
-
-When OpenChat starts, the client communicates with the required serverless endpoints to obtain configuration and connection information.
-
-Sensitive service credentials are kept outside the public frontend source code.
-
-2. Peer Discovery & Signaling
-
-Users discover each other through the MQTT signaling infrastructure.
-
-The peers exchange the information required to establish a WebRTC connection and perform the cryptographic handshake.
-
-3. Direct P2P Connection
-
-Once the WebRTC connection is established, the signaling layer is no longer responsible for transporting chat messages.
-
-The peers communicate directly through a WebRTC DataChannel:
-
-User A
-   │
-   │  Signaling / Discovery
-   ▼
-Serverless + MQTT
-   │
-   │  Connection established
-   ▼
-User A ◄──────── WebRTC DataChannel ────────► User B
-                    P2P
-
-4. No Centralized Message Database
-
-OpenChat does not use a centralized database to store users' conversations.
-
-This means there is no central chat-history database containing everyone's messages that can be compromised in a conventional server-side database breach.
-
----
-
-⚠️ **Important Notes & Architectural Limitations**
-
-OpenChat is an experimental open-source project. Its security model is based on client-side cryptography and peer-to-peer communication, but no software can guarantee absolute security.
-
-🌐 **P2P Connectivity**
-
-WebRTC attempts to establish direct peer-to-peer connections. Depending on network configuration, NAT behavior, firewalls, and connectivity conditions, STUN/TURN infrastructure may be required.
-
-📬 **Offline Messaging**
-
-Because OpenChat does not rely on a centralized message database, it is primarily designed for real-time communication.
-
-Messages that have not been delivered before a peer disconnects may not be recoverable.
-
-👤 **First-Contact Identity Verification**
-
-OpenChat can protect the cryptographic communication channel, but it cannot independently guarantee that a user's claimed real-world identity corresponds to their cryptographic identity when starting a conversation for the first time.
-
-For security-sensitive communication, users should verify the relevant identity fingerprint or safety information through an independent trusted channel.
-
-🔐 **Privacy Model**
-
-The absence of a centralized message database significantly reduces the amount of persistent message data available to a compromised server.
-
-However, signaling and connectivity infrastructure may still process technical metadata required to establish connections.
-
-Therefore, OpenChat should not be interpreted as providing complete anonymity.
-
----
-
-🛡️ **Security**
-
-OpenChat is designed around a privacy-first, peer-to-peer architecture.
-
-Security-sensitive components include:
-
-- Peer authentication and identity verification
-- Cryptographic key generation and management
-- WebRTC signaling
-- P2P message validation
-- Local encrypted storage
-- API security
-- Session management
-- Browser-side security and CSP
-- File transfer validation
-
-Security issues may still exist, particularly because OpenChat is an actively developed experimental project.
-
-If you discover a security vulnerability, please report it privately rather than publicly disclosing exploit details.
-
----
-
-🤖 **Development**
-
-OpenChat was developed with extensive assistance from artificial intelligence as part of an experimental approach to modern web application development.
-
-AI-assisted development does not imply that the project is automatically secure or bug-free. The codebase is continuously reviewed, tested, and improved.
-
-The project is intentionally open-source so that developers can inspect, audit, modify, and improve the implementation.
-
----
-
-🚀 **Project Philosophy**
-
-OpenChat aims to explore what is possible when modern browser technologies such as:
-
-WebRTC + Web Crypto + MQTT + Serverless Functions
-
-are combined into a communication platform without relying on a centralized message database.
-
-The goal is to minimize centralized infrastructure while keeping communication private, transparent, and accessible.
-
-Contributions, security reviews, improvements, and forks are welcome.
-
----
-
-📜 **License**
-
-OpenChat is licensed under the **MIT** License.
-
-<img width="1917" height="907" alt="image" src="https://github.com/user-attachments/assets/423f57e5-459a-430c-bde3-448c1848c2e5" />
-
-<img width="1917" height="907" alt="image" src="https://github.com/user-attachments/assets/6a7a8422-e966-4abb-85c6-26ef25787e30" />
+MIT. See [LICENSE](LICENSE).
