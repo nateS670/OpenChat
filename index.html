@@ -604,7 +604,11 @@ body.no-hover-flash .msg-wrap:hover .msg-actions{display:none}
    sürekli, kalıcı olarak görünür duruyordu. */
 .li-swipe{position:relative;overflow:hidden;border-radius:10px;margin-bottom:1px}
 .li-swipe .li{position:relative;z-index:1;background:var(--sidebar-bg);margin-bottom:0;touch-action:pan-y}
-.li-swipe-actions{position:absolute;top:0;right:0;bottom:0;z-index:0;display:flex;align-items:stretch;width:72px}
+.li-swipe-actions{position:absolute;top:0;right:0;bottom:0;z-index:0;display:flex;align-items:stretch;width:72px;
+  /* [3.8.1] .li hover/seçili durumda yarı saydam olunca arkadaki kırmızı çubuk satırın sağında
+     görünüyordu. Artık yalnızca gerçekten kaydırılırken (.swiping) ya da açıkken (.swiped) görünür. */
+  opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s}
+.li-swipe.swiping .li-swipe-actions,.li-swipe.swiped .li-swipe-actions{opacity:1;visibility:visible;pointer-events:auto}
 .li-swipe-btn{flex:1;border:none;border-radius:0;background:var(--danger);color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
 .li-swipe-btn:hover{opacity:.85}
 
@@ -1060,6 +1064,61 @@ html.dark .tslider{background:#475569}
 #callUI.has-screen #participantsGrid .part-av:not(.has-video){width:48px!important;height:48px!important;font-size:18px!important}
 #callUI.has-screen #participantsGrid .part-av.has-video{width:120px!important;height:90px!important}
 #callUI.has-screen #participantsGrid .part-vol-bar{display:none}
+
+/* 🎥 [3.8.1] Görüntülü arama — kameralar ekranı bölüşür:
+   2 kişi → yan yana yarı yarıya · 3 kişi → üstte 2, altta ortada 1 · 4 kişi → 2×2 · 5+ → 3 sütun.
+   (JS, kamera açık biri varsa #callUI'ya .video-mode ve grid'e data-n=<kişi sayısı> ekler) */
+#callUI.video-mode #participantsGrid{
+  display:grid!important;flex:1 1 0!important;min-height:0;width:min(1240px,100%);max-width:none;
+  gap:10px;padding:0!important;margin:8px 0;align-content:stretch;align-items:stretch;justify-items:stretch;
+  grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:minmax(0,1fr);
+}
+#callUI.video-mode #participantsGrid[data-n="1"]{grid-template-columns:minmax(0,1fr)}
+#callUI.video-mode #participantsGrid[data-n="2"]{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:minmax(0,1fr)}
+#callUI.video-mode #participantsGrid[data-n="3"]{grid-template-columns:repeat(4,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr))}
+#callUI.video-mode #participantsGrid[data-n="3"] .part-card:nth-child(1){grid-column:1 / 3}
+#callUI.video-mode #participantsGrid[data-n="3"] .part-card:nth-child(2){grid-column:3 / 5}
+#callUI.video-mode #participantsGrid[data-n="3"] .part-card:nth-child(3){grid-column:2 / 4}
+#callUI.video-mode #participantsGrid[data-n="4"]{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr))}
+#callUI.video-mode #participantsGrid[data-n="5"]{grid-template-columns:repeat(6,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr))}
+#callUI.video-mode #participantsGrid[data-n="5"] .part-card{grid-column:span 2}
+#callUI.video-mode #participantsGrid[data-n="5"] .part-card:nth-child(4){grid-column:2 / 4}
+#callUI.video-mode #participantsGrid[data-n="5"] .part-card:nth-child(5){grid-column:4 / 6}
+#callUI.video-mode #participantsGrid[data-n="6"]{grid-template-rows:repeat(2,minmax(0,1fr))}
+#callUI.video-mode #participantsGrid .part-card{
+  min-width:0!important;width:auto!important;height:100%;padding:0!important;gap:0!important;
+  overflow:hidden;justify-content:center!important;border-radius:16px!important;
+}
+#callUI.video-mode #participantsGrid .part-av.has-video,
+#callUI.video-mode #participantsGrid .part-av.has-video.is-local{
+  width:100%!important;height:100%!important;max-width:none!important;flex:1 1 auto;min-height:0;
+  border-radius:0!important;border:none!important;box-shadow:none!important;
+}
+#callUI.video-mode #participantsGrid .part-av:not(.has-video){
+  width:clamp(64px,16vmin,130px)!important;height:clamp(64px,16vmin,130px)!important;
+  font-size:clamp(24px,6vmin,50px)!important;
+}
+#callUI.video-mode #participantsGrid .part-name{
+  position:absolute;left:10px;bottom:10px;z-index:2;max-width:70%;
+  background:rgba(0,0,0,.55);padding:3px 10px;border-radius:10px;
+}
+#callUI.video-mode #participantsGrid .part-vol-bar{display:none!important}
+#callUI.video-mode #participantsGrid .part-vol-btn{bottom:10px;left:auto;right:10px}
+#callUI.video-mode #participantsGrid .part-vol-indicator{bottom:40px}
+@media(max-width:768px){
+  /* Dar ekran: 2 kişi alt alta, 3 kişide üstte 2 + altta 1 geniş, 4 kişi 2×2 */
+  #callUI.video-mode #participantsGrid[data-n="2"]{grid-template-columns:minmax(0,1fr);grid-template-rows:repeat(2,minmax(0,1fr))}
+  #callUI.video-mode #participantsGrid[data-n="3"],
+  #callUI.video-mode #participantsGrid[data-n="5"],
+  #callUI.video-mode #participantsGrid[data-n="6"],
+  #callUI.video-mode #participantsGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #callUI.video-mode #participantsGrid[data-n="3"] .part-card:nth-child(n),
+  #callUI.video-mode #participantsGrid[data-n="5"] .part-card:nth-child(n){grid-column:auto}
+  #callUI.video-mode #participantsGrid[data-n="3"] .part-card:nth-child(3){grid-column:1 / -1}
+  #callUI.video-mode #participantsGrid[data-n="5"] .part-card:nth-child(5){grid-column:1 / -1}
+  #callUI.video-mode #participantsGrid[data-n="3"],
+  #callUI.video-mode #participantsGrid[data-n="5"]{grid-template-rows:none;grid-auto-rows:minmax(0,1fr)}
+}
 
 /* Video içinde avatar — profil foto yerini video alır ([3.8.1] #participantsGrid ile özgüllük artırıldı:
    önceden .solo/.few kuralları (100px) kamerayı küçük bir kutuya sıkıştırıyordu) */
@@ -2831,7 +2890,7 @@ html.dark .af-lang-b[aria-pressed="true"]{color:#1A0505!important}
   </div>
 </div>
 
-<script src="i18n.js" integrity="sha384-ntGQ+HZ7+m8hS2tqkCPqZfdY7onzElzH2cgXW7MmFXpWBL7VNJm0X1mS9rxH9VVC" crossorigin="anonymous"></script>
+<script src="i18n.js" integrity="sha384-QXHTlPi+3SWiufRFJkNUt64jVp2/6WlnSOpv2SW+eW9XQAglv/fhENEnKU4ZSNHB" crossorigin="anonymous"></script>
 <script src="app.js"></script>
 <script src="chat-summary.js"></script>
 </body></html>
