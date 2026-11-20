@@ -229,6 +229,12 @@ const CHANGELOG_HTML = `
     <li>🌐 İngilizce giriş ekranında "Ayşe" → "Ayse"</li>
     <li>👥 Düzeltme: Birden fazla kişi aynı anda arayıp katılınca oluşan bozulmalar giderildi (karşılıklı teklif çakışması, ikinci arayana meşgul yanıtı, grup aramasındayken gelen özel aramanın mikrofonu kapatması, sonradan katılanların birbirini duymaması)</li>
     <li>💬 Düzeltme: Arama bitince sohbette art arda "arama sonlandı" mesajlarının spamlanması giderildi; bitmiş aramanın hayalet "aktif arama" göstergesi kalmıyor</li>
+    <li>📊 Düzeltme: Anket oyları karşıdaki kişiye hiç ulaşmıyordu — artık oylar herkeste sayılıyor, oyunu değiştirebilir ya da aynı seçeneğe tekrar basıp geri alabilirsin</li>
+    <li>➕ Düzeltme: Gruplar bölümündeki "+ Yeni" butonu grup oluşturma penceresini açmıyordu</li>
+    <li>🎥 Görüntülü aramada kameralar ekranı bölüşüyor: 2 kişide yan yana, 3 kişide üstte 2 + altta 1, 4 kişide 2×2</li>
+    <li>🔔 Aramaya biri katılınca ve aramadan çıkınca farklı birer ses çalıyor</li>
+    <li>🎨 Düzeltme: Sohbet listesinde (kişi ve gruplarda) satırların sağında beliren kırmızı şerit kaldırıldı</li>
+    <li>🌐 İngilizce: giriş ekranındaki kayıtlı hesapta "Giriş →" ve Yenilikler penceresi artık tamamen İngilizce</li>
   </ul>
 </div>
 <div style="margin-bottom:18px">
@@ -374,10 +380,10 @@ const P2P_ALLOWED_TYPES = new Set([
   'msg_read','group_read','msg_edit','msg_delete','msg_react','msg_vanish','reaction',
   'dc_offer','dc_answer','dc_ice','rtc_offer','rtc_answer','rtc_ice','rtc_end','rtc_reject','rtc_busy','rtc_renego','rtc_renego_ans',
   'call_state','grp_offer','grp_answer','grp_ice','grp_end','grp_call_active','grp_call_ended',
-  'screen_started','screen_ended','screen_offer','screen_answer'
+  'screen_started','screen_ended','screen_offer','screen_answer','poll_vote'
 ]);
 const DC_ONLY_TYPES = new Set([
-  'private_msg','group_msg','group_invite','group_update','group_kick',
+  'poll_vote','private_msg','group_msg','group_invite','group_update','group_kick',
   'friend_req','friend_accept','friend_remove','profile_sync',
   'msg_read','group_read','msg_edit','msg_delete','msg_react','msg_vanish','reaction','typing'
 ]);
@@ -2537,7 +2543,7 @@ async function _reloadOutboxAfterKeyReady(){
 const _OUTBOX_KEY = 'shareview_outbox_v1';
 let _outbox=[]; // Senkron erişim için boş başlar — gerçek içerik aşağıda asenkron yüklenir
 _loadOutbox().then(arr=>{ _outbox.push(...arr); }).catch(()=>{});
-const _RELIABLE_TYPES=['private_msg','group_msg','group_invite','friend_req','friend_accept','friend_remove','msg_read','group_read','msg_edit','msg_delete','reaction','msg_vanish'];
+const _RELIABLE_TYPES=['poll_vote','private_msg','group_msg','group_invite','friend_req','friend_accept','friend_remove','msg_read','group_read','msg_edit','msg_delete','reaction','msg_vanish'];
 async function _flushOutbox(){
   if(!_outbox.length) return;
   // 🛡️ [HIGH-02] Outbox sadece DC üzerinden gönderilir — MQTT'ye mesaj içeriği gönderilmez
@@ -2797,6 +2803,7 @@ async function handleSig(d){
     // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/null (bkz. _verifyMessageSig).
     // Sadece false (imza VAR ama geçersiz) durumunda UI'da uyarı gösterilir.
     d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg);
+    _sanitizePollMsg(d.msg);
     // Gelen dosya/gif verisini oturum belleğine kaydet
     if(d.msg.fileData&&d.msg.fileData&&!d.msg.fileData.startsWith('__')&&!_isPersistentGifMsg(d.msg)){
       // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
@@ -2848,6 +2855,7 @@ async function handleSig(d){
     if(d.msg.id&&db.messages[k].some(m=>m.id===d.msg.id))return;
     // 🛡️ [YENİ] Mesaj imzasını doğrula — true/false/null (bkz. _verifyMessageSig).
     d.msg._sigVerified = await _verifyMessageSig(d.from, d.msg);
+    _sanitizePollMsg(d.msg);
     // Gelen dosya/gif verisini oturum belleğine kaydet
     if(d.msg.fileData&&!d.msg.fileData.startsWith('__')&&!_isPersistentGifMsg(d.msg)){
       // 🛡️ [ORTA FIX] Alıcı taraflı boyut sınırı — bkz. MAX_INCOMING_FILE_CHARS tanımı.
@@ -2979,6 +2987,7 @@ async function handleSig(d){
       _saveMissedCall(d.from,'incoming_missed');
     } else if(_isCallActive()&&(activeChatType||chatType)!=='group'&&(!activeChatId||activeChatId===d.from)){
       window._noEchoEnd=true;
+      playCallSfx('leave'); // 🔔 [3.8.1]
       try{ endCall(`Çağrı ${d.from} tarafından kapatıldı.`); }finally{ window._noEchoEnd=false; }
     }
   }
@@ -4560,12 +4569,29 @@ function _remoteVideoStreamOf(e){
 
 function _isScreenFrom(user_id){ return !!(screenOwner && screenOwner!==ME.user_id && screenOwner===user_id); }
 
+// 🎥 [3.8.1] Görüntülü aramada kameralar ekranı bölüşsün (CSS: #callUI.video-mode + grid[data-n])
+function _syncVideoMode(){
+  const ui=$('callUI'), grid=$('participantsGrid');
+  if(!ui||!grid) return;
+  const anyVid=!!grid.querySelector('.part-av.has-video');
+  ui.classList.toggle('video-mode', anyVid && !ui.classList.contains('has-screen'));
+  grid.dataset.n=String(Math.min(grid.children.length,9));
+}
+(function(){
+  const g=document.getElementById('participantsGrid');
+  if(!g||!window.MutationObserver) return;
+  let q=false;
+  new MutationObserver(()=>{ if(q) return; q=true; requestAnimationFrame(()=>{ q=false; _syncVideoMode(); }); })
+    .observe(g,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
+})();
+
 function _showScreenStage(stream){
   const rv=$('remoteVideo'); if(!rv) return;
   rv.srcObject=stream;
   rv.muted=true; // ses ayrı <audio> ile çalıyor
   rv.classList.remove('hidden'); rv.classList.add('screen-stage');
   $('callUI')?.classList.add('has-screen');
+  _syncVideoMode();
   rv.play?.().catch(()=>{});
 }
 function _hideScreenStage(){
@@ -4576,6 +4602,7 @@ function _hideScreenStage(){
   rv.srcObject=null;
   rv.classList.add('hidden'); rv.classList.remove('screen-stage');
   $('callUI')?.classList.remove('has-screen');
+  _syncVideoMode();
 }
 
 // Kamerayı kişinin profil kutusuna koy (kutu yoksa false döner)
@@ -5472,14 +5499,12 @@ function _restoreAvatar(av, user_id, isLocal){
   if(!av) return;
   av.classList.remove('has-video','is-local');
   av.innerHTML='';
-  // Kullanıcı avatar verisini bul
-  const db=getDB();
-  let user=null;
-  if(user_id===ME?.user_id) user=ME;
-  else if(db.friends) user=Object.values(db.friends||{}).find(u=>u.user_id===user_id)||null;
-  if(user?.avatar){
+  // [3.8.1] Kullanıcı avatarı: kendi avatarımız ya da avatars haritası (eskiden olmayan db.friends'e bakılıyordu)
+  const rawAv=(user_id===ME?.user_id)?ME.avatar:avatars[user_id];
+  const safeAv=sanitizeAvatarUrl(rawAv);
+  if(safeAv){
     const img=document.createElement('img');
-    img.src=user.avatar;img.alt='';
+    img.src=safeAv;img.alt='';img.style.cssText='width:100%;height:100%;object-fit:cover';
     av.appendChild(img);
   } else {
     av.textContent=(user_id||'?').charAt(0).toUpperCase();
@@ -6426,6 +6451,9 @@ const _patchedGroupCallSignals=async(d)=>{
     // callParticipants.size===0 görüp HER SEFERİNDE endCall("Grup araması sona erdi") çağırıyordu.
     if(!_isCallActive()) return;
     if(d.groupId&&(activeChatId||chatId)!==d.groupId) return;
+    // 🔔 [3.8.1] Gerçekten bağlı olan biri aramadan çıktı → farklı bir ses (reddeden/hiç bağlanmamış için çalmaz)
+    { const _px=groupCallPeers[d.from]&&groupCallPeers[d.from].pc;
+      if(_px&&['connected','completed'].includes(_px.iceConnectionState)) playCallSfx('leave'); }
     callParticipants.delete(d.from);
     if(groupCallPeers[d.from]){
       // ── Ses sızıntısı fix: peer'ın audio element'ini durdur ──
@@ -6698,6 +6726,10 @@ function handleIceState(peerConnection, targetUser){
   if(s==='connected'||s==='completed'){
     console.log('✅ Bağlantı kuruldu:',targetUser);
     _hideRinging(); // Çaldırma ekranını kapat — bağlantı kuruldu
+    // 🔔 [3.8.1] Aramaya biri katıldı → ses (ICE yeniden bağlanmalarında tekrar çalmasın)
+    if(groupCallPeers[targetUser]&&groupCallPeers[targetUser].pc===peerConnection&&!peerConnection._joinSnd){
+      peerConnection._joinSnd=true; playCallSfx('join');
+    }
     // [FIX] Timer koşulu genişletildi: 'ICE yeniden bağlanıyor...' durumundan da geçmeli
     // Eski: sadece 'Bağlanıyor...' veya 'ICE hazırlanıyor...' için çalışıyordu
     if(callIv===null) startCallTimer();
@@ -6738,6 +6770,7 @@ function handleIceState(peerConnection, targetUser){
           try{groupCallPeers[targetUser].pc.close();}catch(e){}
           delete groupCallPeers[targetUser];
           updateParticipantsGrid();
+          playCallSfx('leave');
           showToast('Arama',`${targetUser} bağlantısı kesildi.`);
         } else if(peerConnection===pc && _isCallActive()){
           endCall(`⚠️ ${targetUser} ile bağlantı kesildi.`);
@@ -7983,6 +8016,31 @@ function playSound(type){
   }catch(e){}
 }
 
+// 🔔 [3.8.1] Arama içi sesler: biri katılınca YUKARI çıkan iki nota, ayrılınca AŞAĞI inen iki nota.
+// (tek, paylaşılan AudioContext — playSound() her seferinde yenisini açtığı için tarayıcı
+// sınırına takılabiliyordu)
+let _sfxCtx=null;
+function playCallSfx(kind){
+  try{
+    if(isSilentMode()||isDeafened) return;
+    const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
+    if(!_sfxCtx||_sfxCtx.state==='closed') _sfxCtx=new AC();
+    const ac=_sfxCtx; if(ac.state==='suspended') ac.resume().catch(()=>{});
+    const notes=kind==='join' ? [[523.25,0],[783.99,0.12]] : [[587.33,0],[392.0,0.12]];
+    const t0=ac.currentTime+0.01;
+    notes.forEach(([f,dt])=>{
+      const o=ac.createOscillator(), g=ac.createGain();
+      o.type=kind==='join'?'sine':'triangle';
+      o.frequency.setValueAtTime(f,t0+dt);
+      g.gain.setValueAtTime(0.0001,t0+dt);
+      g.gain.exponentialRampToValueAtTime(0.22,t0+dt+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001,t0+dt+0.22);
+      o.connect(g); g.connect(ac.destination);
+      o.start(t0+dt); o.stop(t0+dt+0.24);
+    });
+  }catch(e){}
+}
+
 // ── OKUNDU BİLGİSİ ────────────────────────────────────────────────
 function markAsRead(fromUser){
   if(!ME||chatType!=='private')return;
@@ -8977,6 +9035,16 @@ window.removePollOpt=btn=>{
   if(rows.length<=2){showToast('Anket','En az 2 seçenek gerekli.');return;}
   btn.closest('.poll-opt-row').remove();
 };
+// 🛡️ [3.8.1] Gelen anketi normalize et: oy listeleri sıfırlanır (sahte önceden-oy yok), boyut sınırlanır
+function _sanitizePollMsg(msg){
+  if(!msg||typeof msg!=='object') return;
+  if(msg.type!=='poll'){ delete msg.poll; return; }
+  const p=msg.poll;
+  if(!p||typeof p!=='object'||typeof p.question!=='string'||!Array.isArray(p.options)){ delete msg.type; delete msg.poll; return; }
+  const opts=p.options.slice(0,8).map(o=>({text:String((o&&o.text)||'').slice(0,100),voters:[]})).filter(o=>o.text);
+  if(opts.length<2){ delete msg.type; delete msg.poll; return; }
+  msg.poll={question:p.question.slice(0,200),options:opts};
+}
 window.submitPoll=()=>{
   const q=$('pollQuestion').value.trim();
   if(!q){showToast('Anket','Soru giriniz.');return;}
@@ -9034,13 +9102,19 @@ window.castVote=(msgId, optIdx)=>{
   const k=chatType==='private'?[ME.user_id,chatId].sort().join('_'):'g_'+chatId;
   const m=(db.messages[k]||[]).find(x=>x.id===msgId);
   if(!m||!m.poll) return;
+  optIdx=parseInt(optIdx,10);
+  if(!Number.isInteger(optIdx)||optIdx<0||optIdx>=m.poll.options.length) return;
+  const _had=(m.poll.options[optIdx].voters||[]).includes(ME.user_id);
   // Mevcut oyu kaldır
   m.poll.options.forEach(o=>{o.voters=(o.voters||[]).filter(v=>v!==ME.user_id);});
-  // Yeni oy
-  m.poll.options[optIdx].voters.push(ME.user_id);
+  // Yeni oy — aynı seçeneğe tekrar basmak oyu geri alır
+  if(_had) optIdx=-1; else m.poll.options[optIdx].voters.push(ME.user_id);
   saveDB(db);
   // Karşıya bildir
-  const upd={type:'poll_vote',msgId,optIdx,voter:ME.user_id};
+  // 🐛 [3.8.1] Alan adı 'msgId' idi: broadcast() ve handleSig'in tekrar-önleme (seen) kontrolü bunu
+  // "mesaj kimliği" sanıp aynı ankete gelen 2. ve sonraki oyları (oy değiştirme / başka oy veren)
+  // çöpe atıyordu. Ayrıca 'poll_vote' güvenlik izin listesinde yoktu → hiç ulaşmıyordu.
+  const upd={type:'poll_vote',pollId:msgId,optIdx};
   if(chatType==='private') broadcast({...upd,to:chatId,from:ME.user_id});
   else{const g=db.groups[chatId];g.members.forEach(mbr=>{if(mbr!==ME.user_id)broadcast({...upd,to:mbr,groupId:chatId,from:ME.user_id});});}
   renderChat();
@@ -9050,12 +9124,16 @@ window.castVote=(msgId, optIdx)=>{
 const _origHSpollBefore=handleSig;
 handleSig=async(d)=>{
   if(d.type==='poll_vote'&&d.to===ME.user_id){
+    const idx=parseInt(d.optIdx,10);
+    if(typeof d.pollId!=='string'||!d.from||!Number.isInteger(idx)||idx<-1) return;
     const db=getDB();
+    // Oy veren HER ZAMAN gönderen kişidir (eskiden d.voter'a güveniliyordu → sahte oy atılabilirdi)
+    if(d.groupId && !((db.groups[d.groupId]&&db.groups[d.groupId].members)||[]).includes(d.from)) return;
     const k=d.groupId?'g_'+d.groupId:[ME.user_id,d.from].sort().join('_');
-    const m=(db.messages[k]||[]).find(x=>x.id===d.msgId);
-    if(m&&m.poll){
-      m.poll.options.forEach(o=>{o.voters=(o.voters||[]).filter(v=>v!==d.voter);});
-      if(d.optIdx>=0&&d.optIdx<m.poll.options.length) m.poll.options[d.optIdx].voters.push(d.voter);
+    const m=(db.messages[k]||[]).find(x=>x.id===d.pollId);
+    if(m&&m.poll&&idx<m.poll.options.length){
+      m.poll.options.forEach(o=>{o.voters=(o.voters||[]).filter(v=>v!==d.from);});
+      if(idx>=0) m.poll.options[idx].voters.push(d.from);
       saveDB(db);
       if(chatId&&(k===([ME.user_id,chatId].sort().join('_'))||k==='g_'+chatId)) renderChat();
     }
@@ -9843,11 +9921,13 @@ window._haptic = function(ms){
     }
     if(!dragging) return;
     const already = curEl.classList.contains('swiped') ? -MAX : 0;
+    curEl.classList.add('swiping'); // [3.8.1] kırmızı eylem çubuğu yalnızca sürüklerken görünsün
     curX = Math.max(-MAX, Math.min(0, dx+already));
     curEl.querySelector('.li').style.transform = `translateX(${curX}px)`;
   },{passive:true});
 
   document.addEventListener('touchend', ()=>{
+    if(curEl) curEl.classList.remove('swiping');
     if(!curEl || !dragging){ curEl=null; return; }
     const li=curEl.querySelector('.li');
     if(curX <= -THRESH){
@@ -9971,7 +10051,7 @@ window._haptic = function(ms){
       case '_uiGsSelChat':    closeGlobalSearch(); selChat(a, a2); break;
       // ── Gruplar ──
       case 'openGroupDetail':   e.stopPropagation(); openGroupDetail(a); break;
-      case '_uiNewGroup':       if(!window.ME) return; openGroupModal(); break;
+      case '_uiNewGroup':       if(!ME) return; openGroupModal(); break;   // [3.8.1] window.ME (let ile tanımlı) hep undefined'dı → buton hiç açmıyordu
       case 'addMemberToGroup':  addMemberToGroup(); break;
       case 'kickMember':        kickMember(a); break;
       case 'promoteAdmin':      promoteAdmin(a); break;
@@ -10081,7 +10161,7 @@ window._haptic = function(ms){
   if(esMsg) esMsg.textContent='Sohbet seçmek için 💬 tuşuna dokun';
   window.addEventListener('load',()=>{
     setTimeout(()=>{
-      if(window.ME && window.innerWidth<=768) openMobileSidebar();
+      if(ME && window.innerWidth<=768) openMobileSidebar();
     },200);
   });
 })();
